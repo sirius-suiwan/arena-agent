@@ -1,7 +1,7 @@
 // Independent Tank Trouble tactic for the privileged Laika seat. Does not change the base bot.
 import {traceLaser} from '../engine/laser-geometry.js';
 
-export const LAIKA_INSIGHT_POLICY='laika-insight/3';
+export const LAIKA_INSIGHT_POLICY='laika-insight/4';
 
 const TANK_RADIUS=12, SHELL_RADIUS=3;
 const EPS=1e-7;
@@ -208,6 +208,52 @@ function safeToRecover(obs,me,p) {
   });
 }
 
+// A forecast is a possible spawn, not a reservation. Stage outside the
+// referee's 30px exclusion radius, only through an immediately clear route.
+function stageForPickup(message,base,me,obs) {
+  const forecast=message.pickupForecast,crate=forecast?.candidate;
+  const rate=obs.profile.tickRate,cell=64;
+  if(!crate||!Number.isInteger(obs.roundTick)||!Number.isInteger(forecast.ticksUntil)||
+     forecast.attemptTick!==obs.roundTick+forecast.ticksUntil||
+     forecast.ticksUntil<1||forecast.ticksUntil>2*rate||
+     ![crate.x,crate.y,obs.width,obs.height].every(Number.isFinite)||
+     crate.x<=0||crate.x>=obs.width||crate.y<=0||crate.y>=obs.height||
+     me.weapon||base.fire||base.throttle<0||base.turn&&!base.throttle) return base;
+  const cells=Math.abs(Math.floor(me.x/cell)-Math.floor(crate.x/cell))+
+    Math.abs(Math.floor(me.y/cell)-Math.floor(crate.y/cell));
+  const distance2=d2(me,crate);
+  if(cells>1||distance2<30**2||distance2>92**2||
+     (obs.pickups??[]).some(p=>d2(me,p)<92**2)) return base;
+  const others=obs.tanks.filter(t=>t.alive&&t!==me);
+  if(others.some(t=>!teamMate(obs,me,t)&&d2(me,t)<88**2)) return base;
+
+  const direction=Math.atan2(me.y-crate.y,me.x-crate.x);
+  const stage=[direction,...Array.from({length:8},(_,i)=>i*Math.PI/4)]
+    .map(a=>({x:crate.x+34*Math.cos(a),y:crate.y+34*Math.sin(a)}))
+    .filter(p=>p.x>=TANK_RADIUS&&p.x<=obs.width-TANK_RADIUS&&p.y>=TANK_RADIUS&&p.y<=obs.height-TANK_RADIUS&&
+      !blockedByWall(me,p,obs.walls,TANK_RADIUS))
+    .sort((a,b)=>d2(me,a)-d2(me,b))[0];
+  if(!stage||!safeToRecover(obs,me,me)) return base;
+  const neutral={turn:0,throttle:0,fire:false};
+  if(d2(me,stage)<=4**2) {
+    const currentPlan=pose(me,base,obs);
+    return forecast.ticksUntil<=rate*0.4||d2(currentPlan,crate)<30**2?neutral:base;
+  }
+  // Predict the next pose so no steering step drives through the exclusion
+  // radius or another tank.
+  const targetAngle=Math.atan2(stage.y-me.y,stage.x-me.x);
+  const angleError=Math.atan2(Math.sin(targetAngle-me.angle),Math.cos(targetAngle-me.angle));
+  const turn=Math.abs(angleError)>obs.profile.turnSpeed/2?Math.sign(angleError):0;
+  const errorAfter=angleError-turn*obs.profile.turnSpeed;
+  const action={turn,throttle:Math.abs(errorAfter)<0.45?1:0,fire:false};
+  const next=pose(me,action,obs);
+  const padding=2*TANK_RADIUS+obs.profile.forwardSpeed;
+  if(d2(next,crate)<30**2||others.some(t=>d2(next,t)<padding**2)||
+     !safeToRecover(obs,me,next)) return base;
+  if(action.throttle&&d2(next,stage)>=d2(me,stage)) return base;
+  return action;
+}
+
 // Detect repeated *attempted* wall-blocked movement without mistaking waiting,
 // tank collisions, or a single turn at a corner for a stuck bot.
 function makeWallRecovery() {
@@ -257,8 +303,10 @@ function makeWallRecovery() {
     }
     if(exit&&!base.throttle) exit=null;
     const mayRecover=normal===base&&!base.fire&&!nearbyFire&&safeToRecover(obs,me,me);
-    const action=exit&&mayRecover?(choose(me,obs)??normal):normal;
+    const wasRecovering=exit!==null;
+    let action=exit&&mayRecover?(choose(me,obs)??normal):normal;
     if(exit&&mayRecover&&action===normal) exit=null;
+    if(!wasRecovering&&normal===base&&!nearbyFire&&message.pickupForecast) action=stageForPickup(message,base,me,obs);
     const wallBlocked=action.throttle!==0&&d2(pose(me,action,obs),me)<0.1**2;
     prior={me,wallBlocked,tick:message.tick,round:obs.round};
     return action;
@@ -272,12 +320,12 @@ export function withLaikaInsight(seat) {
     start(message) { recovery.reset();return seat.start?.(message); },
     async act(message,budget) {
       const began=performance.now();
-      const {opponentActions,opponentActionsTick,...ordinaryMessage}=message;
+      const {opponentActions,opponentActionsTick,pickupForecast,...ordinaryMessage}=message;
       // Reserve a small margin for the synchronous overlay. If a deadline is
       // already too close, still give the base process its ordinary decision.
       const hasBudget=Number.isFinite(budget)&&budget>2;
       const hasInputs=opponentActions!==undefined&&opponentActionsTick===message.tick;
-      const response=await seat.act(ordinaryMessage,hasBudget&&hasInputs?budget-1:budget);
+      const response=await seat.act(ordinaryMessage,hasBudget&&(hasInputs||pickupForecast)?budget-1:budget);
       if(!response||response.error||Number.isFinite(budget)&&performance.now()-began>=budget) {
         recovery.reset();
         return response;

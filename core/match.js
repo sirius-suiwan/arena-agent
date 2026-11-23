@@ -31,7 +31,8 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
     format:MATCH_FORMAT, protocol:1, game:game.id, rulesVersion:game.version, tickRate:game.tickRate,
     mode, realtime, timeoutMs, seed, config, players, maxTicks, botVersions,
     ...(matchId?{matchId}:{}), ...(humanControls?{humanControls}:{}),
-    ...(insight.length?{inputInsight:{seats:insight,contract:'accepted-opponent-actions',timing:'same-tick-after-ordinary'}}:{})
+    ...(insight.length?{inputInsight:{seats:insight,contract:'accepted-opponent-actions',timing:'same-tick-after-ordinary',
+      ...(game.insightCapabilities?.length?{capabilities:[...game.insightCapabilities]}:{})}}:{})
   };
   try {
     let state = game.init({seed,config,players});
@@ -67,11 +68,16 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
         const tickExpiry=Math.min(now+timeoutMs,realtime?deadline:Infinity);
         const ordinaryExpiry=now+Math.max(0,tickExpiry-now)*ORDINARY_BUDGET_SHARE;
         const collect=async(ids,expiry,opponentActions)=>{
+          const hints=opponentActions!==undefined&&expiry-performance.now()>=1
+            ?game.privilegedObservation?.(state):undefined;
           const replies=await Promise.all(ids.map(id=>{
             const view=messages[players.indexOf(id)];
             if (opponentActions!==undefined) {
               view.opponentActionsTick=tick;
               view.opponentActions=structuredClone(opponentActions);
+              if (hints) for (const [key, value] of Object.entries(hints)) {
+                if (!(key in view)) view[key]=structuredClone(value);
+              }
             }
             const budget=Math.floor(expiry-performance.now());
             return budget<1?{error:'timeout'}:seats[id].act(view,budget);

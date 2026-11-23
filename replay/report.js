@@ -72,6 +72,8 @@ function matchDetails(manifest,readiness,state) {
   return {...info,config:shortConfig(manifest.config),
     ...(Array.isArray(manifest.inputInsight?.seats)?{inputInsight:{
       seats:manifest.inputInsight.seats.filter(id=>manifest.players.includes(id)).slice(0,8),
+      ...(Array.isArray(manifest.inputInsight.capabilities)
+        ?{capabilities:manifest.inputInsight.capabilities.filter(id=>typeof id==='string').slice(0,8).map(text)}:{}),
       ...pick(manifest.inputInsight,['contract','timing','policy'])
     }}:{}),
     ...(state?.config?{effectiveConfig:shortConfig(state.config)}:{}),

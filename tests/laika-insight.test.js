@@ -76,6 +76,7 @@ test('the overlay honors tick zero but refuses delayed, missing, or inactive inp
 
 test('ordinary bot call receives untouched common tick and no read-input metadata',async()=>{
   const b=tank('B',124,82,-Math.PI/2), original=observe({B:moving},b);
+  original.pickupForecast={attemptTick:16,ticksUntil:8,candidate:{x:160,y:96,type:'laser'}};
   let opened=false,closed=false;
   const originalResponse={error:'timeout',value:null};
   const seat=withLaikaInsight({
@@ -85,6 +86,7 @@ test('ordinary bot call receives untouched common tick and no read-input metadat
       assert.equal(message.observation,original.observation);
       assert.equal(message.opponentActions,undefined);
       assert.equal(message.opponentActionsTick,undefined);
+      assert.equal(message.pickupForecast,undefined);
       assert.ok(budget<=50);
       return originalResponse;
     },
@@ -138,4 +140,37 @@ test('an active curved laser can veto a recovery even when its tangent misses',a
   const {laserSpeed}=classicProfile(25);
   const curved={kind:'laser',owner:'B',x:195,y:118,heading:Math.PI,curved:true,vx:-laserSpeed,vy:0,ttl:8};
   assert.deepEqual((await seat.act(wallCase(3,{bullets:[curved]}))).value,moving);
+});
+
+function crateCase(me=tank('A',106,96,0),ticksUntil=40,overrides={}) {
+  return {...observe({},null,{tanks:[me,tank('B',228,228,0)],...overrides}),
+    pickupForecast:{attemptTick:8+ticksUntil,ticksUntil,candidate:{x:160,y:96,type:'laser'}}};
+}
+
+test('a near forecast stages an empty hull for up to two seconds, without blocking the spawn',async()=>{
+  assert.deepEqual((await wrap().act(crateCase())).value,moving);
+  const atStage=tank('A',126,96,0);
+  assert.deepEqual((await wrap(moving).act(crateCase(atStage,5))).value,neutral);
+  const beforeStage=tank('A',121,96,0);
+  const command=(await wrap().act(crateCase(beforeStage,8))).value;
+  assert.deepEqual(command,moving);
+  assert.ok(160-(beforeStage.x+classicProfile(25).forwardSpeed)>=30);
+  assert.deepEqual((await wrap().act(crateCase(undefined,51))).value,neutral);
+  const missing=crateCase();
+  delete missing.pickupForecast.candidate;
+  assert.deepEqual((await wrap().act(missing)).value,neutral);
+  const stale=crateCase();
+  stale.pickupForecast.attemptTick--;
+  assert.deepEqual((await wrap().act(stale)).value,neutral);
+});
+
+test('a forecast yields to current combat, a closed route, or an observable crate',async()=>{
+  const me=tank('A',106,96,0),closeEnemy=tank('B',156,140,0);
+  assert.deepEqual((await wrap(shooting).act(crateCase(me))).value,shooting);
+  assert.deepEqual((await wrap().act(crateCase({...me,weapon:'laser'}))).value,neutral);
+  assert.deepEqual((await wrap().act(crateCase(me,40,{tanks:[me,closeEnemy]}))).value,neutral);
+  assert.deepEqual((await wrap().act(crateCase(me,40,{walls:[{x1:128,y1:0,x2:128,y2:256}]}))).value,neutral);
+  const shell={kind:'shell',owner:'B',x:124,y:96,vx:-3,vy:0};
+  assert.deepEqual((await wrap().act(crateCase(me,40,{bullets:[shell]}))).value,neutral);
+  assert.deepEqual((await wrap().act(crateCase(me,40,{pickups:[{x:96,y:96,type:'mine'}]}))).value,neutral);
 });

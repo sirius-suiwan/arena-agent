@@ -597,19 +597,36 @@ function chooseClassicCrate(rng) {
   return pool.at(-1)?.[0];
 }
 
+function samplePickup(s,rng) {
+  const spots=[];
+  for (let y=CELL/2;y<s.height;y+=CELL) for (let x=CELL/2;x<s.width;x+=CELL) {
+    if (s.pickups.some(p=>p.x===x&&p.y===y) || s.tanks.some(t=>t.alive&&Math.hypot(t.x-x,t.y-y)<30)) continue;
+    spots.push({x,y});
+  }
+  if (!spots.length) return null;
+  const spot=spots[Math.floor(next(rng)*spots.length)];
+  const type=s.config.classicSolo?CLASSIC_DATA.crates.soloType:chooseClassicCrate(rng);
+  return {...spot,type};
+}
+
+// An informational hint: does not consume RNG or reserve a spot. Any intervening
+// random draw or change to viable cells may shift the candidate before spawn.
+export function pickupForecast(s) {
+  if (!s.config.pickups || s.phase!=='playing' || s.settleUntil!==null || !Number.isInteger(s.nextPickupAt)) return undefined;
+  const ticksUntil=Math.max(0,s.nextPickupAt-s.roundTick);
+  const candidate=ticksUntil<=2*s.profile.tickRate&&s.pickups.length<s.profile.crateLimit
+    ?samplePickup(s,{value:s.rng}):null;
+  return {attemptTick:s.nextPickupAt,ticksUntil,...(candidate?{candidate}:{})};
+}
+
 function awardPickups(s, events, spawn=true) {
   if (!s.config.pickups) return;
   const rng = {value:s.rng};
   const attempt=spawn&&s.tick>=s.nextPickupAt;
   if (attempt && s.pickups.length < s.profile.crateLimit) {
-    const spots=[];
-    for (let y=CELL/2;y<s.height;y+=CELL) for (let x=CELL/2;x<s.width;x+=CELL) {
-      if (s.pickups.some(p=>p.x===x&&p.y===y) || s.tanks.some(t=>t.alive&&Math.hypot(t.x-x,t.y-y)<30)) continue;
-      spots.push({x,y});
-    }
-    if (spots.length) {
-      const p={id:'p'+s.nextPickup++,...spots[Math.floor(next(rng)*spots.length)],
-        type:s.config.classicSolo?CLASSIC_DATA.crates.soloType:chooseClassicCrate(rng)};
+    const candidate=samplePickup(s,rng);
+    if (candidate) {
+      const p={id:'p'+s.nextPickup++,...candidate};
       s.pickups.push(p);
       events.push({type:'pickup-spawn',pickupType:p.type,pickupId:p.id,x:p.x,y:p.y});
     }

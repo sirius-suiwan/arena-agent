@@ -44,6 +44,11 @@ function makeClassic(tickRate) {
     tickRate,
     init:input=>classic.init(input,tickRate),
     observe,
+    insightCapabilities:Object.freeze(['pickup-forecast']),
+    privilegedObservation(state) {
+      const pickupForecast=classic.pickupForecast(state);
+      return pickupForecast?{pickupForecast}:undefined;
+    },
     validateAction,
     neutralAction() { return {throttle:0,turn:0,fire:false}; },
     step:classic.step,

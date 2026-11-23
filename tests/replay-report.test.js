@@ -6,6 +6,7 @@ const manifest={game:'tank-trouble',rulesVersion:'8-25',tickRate:25,seed:12,maxT
   players:['A','B','D'],config:{cols:12,teams:{A:'1',B:'1',D:'4'}},
   botVersions:{A:{id:'gpt-dots',file:'/private/absolute-not-for-report.js',sha256:'abcdef'},
     B:{kind:'human'},D:{id:'laika',packageSha256:'012345'}},
+  inputInsight:{seats:['D'],timing:'same-tick-after-ordinary',capabilities:['pickup-forecast']},
   playerNames:{A:'GPT-dots',B:'Local',D:'Laika'}};
 const state={round:1,width:768,height:576,shellLimit:10,config:{cols:12,rows:9},walls:[{huge:'skip'}],
   profile:{crateMinSeconds:10,crateMaxSeconds:16,crateLimit:3},
@@ -37,6 +38,7 @@ test('report counts authoritative seat telemetry and includes only shareable ide
   assert.equal(report.match.layout.shellLimit,10);
   assert.equal(report.match.effectiveConfig.rows,9);
   assert.deepEqual(report.match.pickupTiming,{crateMinSeconds:10,crateMaxSeconds:16,crateLimit:3});
+  assert.deepEqual(report.match.inputInsight.capabilities,['pickup-forecast']);
   assert.deepEqual(report.match.players[0],{seat:'A',name:'GPT-dots',id:'gpt-dots',sha256:'abcdef',readiness:'ready'});
   assert.equal(report.seats.D.fallbacks,2);
   assert.equal(report.seats.D.longestFallbackStreak,2);

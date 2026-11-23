@@ -89,7 +89,7 @@ const script=`
     const msg=JSON.parse(line);
     if(msg.type==='start') console.log(JSON.stringify({type:'ready',protocol:1,name:'Laika'}));
     if(msg.type==='observe') console.log(JSON.stringify({
-      type:'action',tick:msg.tick,action:{throttle:0,turn:0,fire:Object.hasOwn(msg,'opponentActions')||Object.hasOwn(msg,'opponentActionsTick')}
+      type:'action',tick:msg.tick,action:{throttle:0,turn:0,fire:['opponentActions','opponentActionsTick','pickupForecast'].some(key=>Object.hasOwn(msg,key))}
     }));
   });
 `;
@@ -125,7 +125,8 @@ async function fetchManifest(t, registryFolder, paths, options={}) {
 test('only registered builtin Laika or its actual default entry receives the privilege',async t=>{
   const genuine=await fetchManifest(t,'laika',{B:'laika'});
   assert.deepEqual(genuine.inputInsight.seats,['B']);
-  assert.equal(genuine.botVersions.B.policy,'laika-insight/3');
+  assert.equal(genuine.botVersions.B.policy,'laika-insight/4');
+  assert.deepEqual(genuine.inputInsight.capabilities,['pickup-forecast']);
   assert.equal(Object.hasOwn(genuine.botVersions.A,'policy'),false);
 
   const fake=await fetchManifest(t,'fake',{B:'laika'});
@@ -136,4 +137,46 @@ test('only registered builtin Laika or its actual default entry receives the pri
 
   const nonTank=await fetchManifest(t,'laika',{B:'laika'},{game:{...game,id:'other-fixture'}});
   assert.equal(Object.hasOwn(nonTank,'inputInsight'),false);
+});
+
+test('only privileged seats receive the forecast after ordinary acts; replay has no forecast payload',async()=>{
+  const records=[];
+  const seen=[];
+  const neutral=game.neutralAction();
+  const seats=Object.fromEntries([...'ABCD'].map(id=>[id,{act(msg){
+    seen.push(id);
+    assert.equal(Object.hasOwn(msg.observation,'pickupForecast'),false);
+    if (id==='A'||id==='B') assert.equal(Object.hasOwn(msg,'pickupForecast'),false);
+    else {
+      assert.deepEqual(seen.slice(0,2),['A','B']);
+      assert.deepEqual(Object.keys(msg.opponentActions),['A','B']);
+      const expected=game.privilegedObservation(records[0].state).pickupForecast;
+      assert.deepEqual(msg.pickupForecast,expected);
+      msg.pickupForecast.candidate.x=-100;
+    }
+    return {value:neutral};
+  }}]));
+  await runMatch({game,seats,seed:7,maxTicks:1,timeoutMs:1000,config:{pickupInterval:1},
+    humanControls:{A:'arrows'},inputInsightSeats:['C','D'],record:row=>records.push(row)});
+  const hinted=game.privilegedObservation(records[0].state).pickupForecast;
+  const spawned=records[1].events.find(event=>event.type==='pickup-spawn');
+  assert.deepEqual(hinted,{attemptTick:1,ticksUntil:1,candidate:{x:spawned.x,y:spawned.y,type:spawned.pickupType}});
+  assert.equal(Object.hasOwn(records[1].input.C,'pickupForecast'),false);
+  assert.deepEqual(game.step(records[0].state,Object.fromEntries(seen.map(id=>[id,neutral]))).state,records[1].state);
+});
+
+test('forecast is absent during settlement or disabled pickups and omits distant or capped candidates',()=>{
+  const input={seed:7,players:['A','B']};
+  const state=game.init(input);
+  const hint=s=>game.privilegedObservation(s)?.pickupForecast;
+  assert.deepEqual(hint(state),{attemptTick:state.nextPickupAt,ticksUntil:state.nextPickupAt});
+  const near={...state,roundTick:state.nextPickupAt-1};
+  assert.ok(hint(near).candidate);
+  const rng=near.rng;
+  assert.deepEqual(hint(near),hint(near));
+  assert.equal(near.rng,rng);
+  assert.equal(hint({...near,pickups:Array(near.profile.crateLimit).fill({x:32,y:32})}).candidate,undefined);
+  assert.equal(hint({...near,phase:'intermission'}),undefined);
+  assert.equal(hint({...near,settleUntil:40}),undefined);
+  assert.equal(hint(game.init({...input,config:{pickups:false}})),undefined);
 });

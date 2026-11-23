@@ -429,10 +429,12 @@ function render() {
   const currentSeed = match.manifest?.seed;
   el['match-seed'].hidden = !Number.isSafeInteger(currentSeed);
   setText(el['match-seed'], Number.isSafeInteger(currentSeed) ? `种子 ${currentSeed}` : '');
-  const insightSeats = match.manifest?.inputInsight?.seats;
+  const insight = match.manifest?.inputInsight;
+  const insightSeats = insight?.seats;
   const privileged = Array.isArray(insightSeats) ? insightSeats.filter((id) => typeof id === 'string' && /^[A-H]$/.test(id)).slice(0, 8) : [];
   el['match-insight'].hidden = privileged.length === 0;
-  setText(el['match-insight'], privileged.length ? `读指令：${privileged.join('、')}` : '');
+  const ability = Array.isArray(insight?.capabilities) && insight.capabilities.includes('pickup-forecast') ? '读指令／刷箱预报' : '读指令';
+  setText(el['match-insight'], privileged.length ? `${ability}：${privileged.join('、')}` : '');
   el.menu.hidden = !menuVisible;
   el.stage.hidden = menuVisible;
   renderMatchId(match.manifest);
