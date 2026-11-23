@@ -1,7 +1,7 @@
 // Independent Tank Trouble tactic for the privileged Laika seat. Does not change the base bot.
 import {traceLaser} from '../engine/laser-geometry.js';
 
-export const LAIKA_INSIGHT_POLICY='laika-insight/4';
+export const LAIKA_INSIGHT_POLICY='laika-insight/5';
 
 const TANK_RADIUS=12, SHELL_RADIUS=3;
 const EPS=1e-7;
@@ -45,143 +45,11 @@ function pose(t,a,obs) {
   return p;
 }
 
-function couldCollide(p,others,predicted,padding=0) {
-  const radius2=(2*TANK_RADIUS+padding)**2;
-  return others.some(t=>d2(p,t)<radius2||d2(p,predicted.get(t.id))<radius2);
-}
-
-// Only clear direct shots are considered: no ricochet or opponent-motion guess past this tick.
-function directHit(from,to,limit,radius,walls,blockers) {
-  const dx=Math.cos(from.angle),dy=Math.sin(from.angle),rx=to.x-from.x,ry=to.y-from.y;
-  const front=rx*dx+ry*dy,side2=(rx*dy-ry*dx)**2,extent=TANK_RADIUS+radius;
-  if(front<=0||side2>=extent**2) return false;
-  const touch=Math.max(0,front-Math.sqrt(extent**2-side2));
-  if(touch>limit) return false;
-  const end={x:from.x+dx*touch,y:from.y+dy*touch};
-  return !blockedByWall(from,end,walls,radius)&&!blockers.some(t=>
-    t.id!==from.id&&t.id!==to.id&&!t.invulnerable&&segmentDistance2(t,from,end)<extent**2);
-}
-
 function laserPath(obs,start,range) {
   if(![obs.width,obs.height,obs.profile.laserSpeed,obs.profile.laserMaxSegment,range]
     .every(n=>Number.isFinite(n)&&n>0)||!Number.isFinite(obs.profile.laserBendPerTick)||
     !Number.isFinite(start.heading)) return null;
   return traceLaser(obs,start,range).path;
-}
-
-// First intersection along a chord; compare the target to any tank capable
-// of absorbing the laser. Invulnerability and friendly-fire eligibility
-// are established by the callers.
-function chordEntry(a,b,t,radius) {
-  const dx=b.x-a.x,dy=b.y-a.y,px=t.x-a.x,py=t.y-a.y;
-  const len2=dx*dx+dy*dy,distance2=px*px+py*py;
-  if(distance2<radius**2-EPS) return 0;
-  if(len2<=EPS) return Infinity;
-  const dot=px*dx+py*dy,disc=dot*dot-len2*(distance2-radius**2);
-  if(disc<=0) return Infinity;
-  const f=(dot-Math.sqrt(disc))/len2;
-  return f>=0&&f<=1?f:Infinity;
-}
-
-function laserHits(path,t,blockers) {
-  for(let i=1;i<path.length;i++) {
-    const a=path[i-1],b=path[i],touch=chordEntry(a,b,t,TANK_RADIUS);
-    if(blockers.some(o=>chordEntry(a,b,o,TANK_RADIUS)<touch)) return false;
-    if(touch<Infinity) return true;
-  }
-  return false;
-}
-
-function safeToChangeAim(obs,t,p) {
-  const zone=obs.zone;
-  const outside=q=>zone?Math.max(0,Math.abs(q.x-zone.x)-zone.halfWidth,Math.abs(q.y-zone.y)-zone.halfHeight):0;
-  if(outside(p)>outside(t)) return false;
-  // Leave evasive decisions to the base bot around other uncertain hazards.
-  if((obs.mines??[]).some(m=>Math.min(d2(t,m),d2(p,m))<45**2)) return false;
-  return !obs.bullets.some(b=>Math.min(d2(t,b),d2(p,b))<(26+Math.hypot(b.vx,b.vy))**2);
-}
-
-function insight(message,base) {
-  const obs=message.observation,commands=message.opponentActions;
-  if(!commands||!Number.isInteger(message.tick)||message.tick<0||message.opponentActionsTick!==message.tick||
-     !obs||obs.phase!=='playing'||obs.result||!validAction(base)||
-     !Array.isArray(obs.tanks)||!Array.isArray(obs.walls)||!Array.isArray(obs.bullets)||
-     !['tickRate','turnSpeed','forwardSpeed','reverseSpeed','shellSpeed','shellLimit','laserSpeed']
-       .every(k=>Number.isFinite(obs.profile?.[k])&&obs.profile[k]>0)) return base;
-  const me=obs.tanks.find(t=>t.id===obs.playerId&&t.alive);
-  if(!me||hullLocked(me,obs)) return base;
-  const others=obs.tanks.filter(t=>t.alive&&t!==me);
-  const known=new Map(others.filter(t=>Object.hasOwn(commands,t.id)&&validAction(commands[t.id]))
-    .map(t=>[t.id,commands[t.id]]));
-  if(!known.size) return base;
-  const predicted=new Map(others.map(t=>[t.id,pose(t,known.get(t.id),obs)]));
-  const collisionPadding=Math.max(obs.profile.forwardSpeed,obs.profile.reverseSpeed);
-  if(couldCollide(pose(me,base,obs),others,predicted,collisionPadding)||
-     others.some(t=>known.has(t.id)&&couldCollide(predicted.get(t.id),others.filter(o=>o!==t),predicted,collisionPadding))) return base;
-  const blockers=[...predicted.values()];
-  const p=obs.profile;
-  const mine=pose(me,base,obs);
-  const shellsByOwner=new Map();
-  for(const b of obs.bullets) if(b.kind==='shell') shellsByOwner.set(b.owner,(shellsByOwner.get(b.owner)??0)+1);
-  const ordinaryAmmo=t=>(shellsByOwner.get(t.id)??0)<p.shellLimit;
-  // Honor fresh presses only. Automatic/special trajectories are left to the
-  // base bot unless they are the immediate and predictable direct laser.
-  const threats=me.invulnerable?[]:others.flatMap(t=>{
-    if(!known.get(t.id)?.fire||t.fireHeld||(teamMate(obs,t,me)&&!obs.friendlyFire)) return [];
-    const from=predicted.get(t.id);
-    const isLaser=t.weapon==='laser';
-    if(!isLaser&&(t.weapon||!ordinaryAmmo(t))) return [];
-    const eligible=blockers.filter(other=>!other.invulnerable&&
-      (obs.friendlyFire||!teamMate(obs,t,other)));
-    if(isLaser) {
-      const path=laserPath(obs,{...from,heading:from.angle},p.laserSpeed);
-      return path?[{path,blockers:eligible.filter(o=>o.id!==me.id&&o.id!==t.id)}]:[];
-    }
-    return [{from,limit:p.shellSpeed*p.tickRate*0.22,blockers:eligible}];
-  });
-  const risk=point=>threats.reduce((n,s)=>n+Number(s.path?laserHits(s.path,point,s.blockers):
-    directHit(s.from,point,s.limit,SHELL_RADIUS,obs.walls,s.blockers)),0);
-  const danger=risk(mine);
-  if(danger) {
-    const choices=[];
-    for(const throttle of new Set([base.throttle,0,-1,1])) for(const turn of new Set([base.turn,0,-1,1])) {
-      const point=pose(me,{throttle,turn},obs);
-      if(couldCollide(point,others,predicted,collisionPadding)||!safeToChangeAim(obs,me,point)) continue;
-      const remaining=risk(point);
-      if(remaining<danger) choices.push({throttle,turn,remaining,
-        cost:Number(throttle!==base.throttle)+Number(turn!==base.turn)+0.1*Math.abs(throttle-base.throttle)});
-    }
-    choices.sort((a,b)=>a.remaining-b.remaining||a.cost-b.cost);
-    if(!choices.length) return base;
-    const {throttle,turn}=choices[0];
-    return {throttle,turn,fire:false};
-  }
-  if(me.weapon||me.fireHeld||!ordinaryAmmo(me)) return base;
-  const targets=others.filter(t=>!teamMate(obs,me,t)&&!t.invulnerable);
-  // Enemy movement this tick is accepted, but behavior in later ticks is not
-  // known. Consider a short direct line, never speculative ricochets.
-  const range=p.shellSpeed*p.tickRate*0.5;
-  const canHit=(from,target)=>directHit(from,target,range,SHELL_RADIUS,obs.walls,blockers);
-  const hit=targets.some(t=>canHit(mine,predicted.get(t.id)));
-  if(base.fire&&hit) return base;
-  // Keep the original throttle. Add a shot for newly exposed targets or a
-  // very short clear line at the accepted pose, not a distant stationary guess.
-  for(const turn of new Set([base.turn,0,-1,1])) {
-    const candidate={...base,turn,fire:true},point=pose(me,candidate,obs);
-    if(couldCollide(point,others,predicted,collisionPadding)||!safeToChangeAim(obs,me,point)||risk(point)) continue;
-    if(targets.some(t=>known.has(t.id)&&(
-      directHit(point,predicted.get(t.id),p.shellSpeed*p.tickRate*0.16,SHELL_RADIUS,obs.walls,blockers)||
-      known.get(t.id).throttle&&canHit(point,predicted.get(t.id))&&
-      !directHit(point,t,range,SHELL_RADIUS,obs.walls,others)))) return candidate;
-  }
-  // Release only when the accepted movement takes a previously clear target
-  // out of the line, not just because another tank may block it.
-  if(base.fire&&targets.some(t=>known.get(t.id)?.throttle&&
-    directHit(mine,t,range,SHELL_RADIUS,obs.walls,others)&&
-    !directHit(mine,predicted.get(t.id),range,SHELL_RADIUS,obs.walls,[]))) {
-    return {...base,fire:false};
-  }
-  return base;
 }
 
 // Recovery cares whether a projectile can intersect its current or proposed
@@ -283,17 +151,14 @@ function makeWallRecovery() {
     }
     return best;
   }
-  function apply(message,base,normal) {
+  function apply(message,base) {
     const obs=message.observation;
     const me=obs?.tanks?.find(t=>t.id===obs.playerId&&t.alive);
     if(!me||obs.phase!=='playing'||obs.result||hullLocked(me,obs)||!validAction(base)||
        !Array.isArray(obs.walls)||!Array.isArray(obs.bullets)||!['tickRate','forwardSpeed','reverseSpeed','turnSpeed']
-        .every(k=>Number.isFinite(obs.profile?.[k])&&obs.profile[k]>0)) {reset();return normal;}
+        .every(k=>Number.isFinite(obs.profile?.[k])&&obs.profile[k]>0)) {reset();return base;}
     if(prior&&(prior.round!==obs.round||prior.tick!==message.tick-1)) reset();
     const distance2=prior?d2(prior.me,me):Infinity;
-    const sameTick=message.opponentActionsTick===message.tick;
-    const nearbyFire=sameTick&&obs.tanks.some(t=>t.alive&&t!==me&&d2(t,me)<120**2&&
-      (!teamMate(obs,t,me)||obs.friendlyFire)&&message.opponentActions?.[t.id]?.fire);
     if(distance2<0.1**2&&prior.wallBlocked) blocked++;
     else if(distance2<4**2) blocked=Math.max(0,blocked-2);
     else blocked=0;
@@ -302,11 +167,11 @@ function makeWallRecovery() {
       exit={origin:me,until:message.tick+Math.ceil(obs.profile.tickRate*0.3)};
     }
     if(exit&&!base.throttle) exit=null;
-    const mayRecover=normal===base&&!base.fire&&!nearbyFire&&safeToRecover(obs,me,me);
+    const mayRecover=!base.fire&&safeToRecover(obs,me,me);
     const wasRecovering=exit!==null;
-    let action=exit&&mayRecover?(choose(me,obs)??normal):normal;
-    if(exit&&mayRecover&&action===normal) exit=null;
-    if(!wasRecovering&&normal===base&&!nearbyFire&&message.pickupForecast) action=stageForPickup(message,base,me,obs);
+    let action=exit&&mayRecover?(choose(me,obs)??base):base;
+    if(exit&&mayRecover&&action===base) exit=null;
+    if(!wasRecovering&&message.pickupForecast) action=stageForPickup(message,base,me,obs);
     const wallBlocked=action.throttle!==0&&d2(pose(me,action,obs),me)<0.1**2;
     prior={me,wallBlocked,tick:message.tick,round:obs.round};
     return action;
@@ -320,18 +185,16 @@ export function withLaikaInsight(seat) {
     start(message) { recovery.reset();return seat.start?.(message); },
     async act(message,budget) {
       const began=performance.now();
-      const {opponentActions,opponentActionsTick,pickupForecast,...ordinaryMessage}=message;
+      const {pickupForecast,...ordinaryMessage}=message;
       // Reserve a small margin for the synchronous overlay. If a deadline is
       // already too close, still give the base process its ordinary decision.
       const hasBudget=Number.isFinite(budget)&&budget>2;
-      const hasInputs=opponentActions!==undefined&&opponentActionsTick===message.tick;
-      const response=await seat.act(ordinaryMessage,hasBudget&&(hasInputs||pickupForecast)?budget-1:budget);
+      const response=await seat.act(ordinaryMessage,hasBudget?budget-1:budget);
       if(!response||response.error||Number.isFinite(budget)&&performance.now()-began>=budget) {
         recovery.reset();
         return response;
       }
-      const normal=hasInputs?insight(message,response.value):response.value;
-      const value=recovery.apply(message,response.value,normal);
+      const value=recovery.apply(message,response.value);
       if(Number.isFinite(budget)&&performance.now()-began>=budget) {
         recovery.reset();
         return response;

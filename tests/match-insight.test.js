@@ -9,78 +9,37 @@ import {loadBotRegistry} from '../apps/cli/bot-registry.js';
 import {game} from '../games/tank-trouble/adapter/index.js';
 import {jumpGame} from './fixtures/jump-game.js';
 
-test('insight sees validated same-tick ordinary and human actions, and never other privileged actions',async()=>{
-  const records=[];
-  const ordinaryStarts=new Set();
-  const insightStarts=new Set();
-  const ordinaryTicks={};
-  const seat=(id,fn)=>({act(msg,budget){return fn(msg,budget,id);}});
-  const ordinary=(id, action)=>seat(id,async(msg,budget)=>{
+test('eight seats dispatch together at full budget even with private forecast seats',async()=>{
+  const records=[], started=[];
+  const ids=[...'ABCDEFGH'];
+  const game={...jumpGame,insightCapabilities:['sample'],privilegedObservation:()=>({pickupForecast:{attemptTick:1}})};
+  const seats=Object.fromEntries(ids.map(id=>[id,{async act(msg,budget){
+    assert.equal(budget,250);
+    assert.equal(msg.tick,0);
     assert.equal(msg.observation.height,0);
     assert.equal(Object.hasOwn(msg,'opponentActions'),false);
     assert.equal(Object.hasOwn(msg,'opponentActionsTick'),false);
-    assert.ok(budget>0&&budget<=600);
-    ordinaryStarts.add(id);
+    assert.equal(Object.hasOwn(msg,'pickupForecast'),id==='D'||id==='H');
+    started.push(id);
+    // A serial or staged dispatch cannot satisfy this before its first await.
     await Promise.resolve();
-    assert.deepEqual([...ordinaryStarts],['A','B','C']);
-    ordinaryTicks[id]=msg.tick;
-    return action;
-  });
-  const insight=(id)=>seat(id,async(msg,budget)=>{
-    assert.equal(msg.observation.height,0);
-    assert.equal(msg.opponentActionsTick,msg.tick);
-    assert.equal(ordinaryTicks.A,msg.tick);
-    assert.equal(ordinaryTicks.B,msg.tick);
-    assert.equal(ordinaryTicks.C,msg.tick);
-    assert.ok(budget>0&&budget<=1000);
-    assert.deepEqual(msg.opponentActions,{A:{jump:true},B:{jump:false},C:{jump:false}});
-    msg.opponentActions.A.jump=false;
-    insightStarts.add(id);
-    await Promise.resolve();
-    assert.deepEqual([...insightStarts],['D','E']);
-    return {value:{jump:false}};
-  });
-  await runMatch({
-    game:jumpGame,seed:1,maxTicks:1,timeoutMs:1000,
-    seats:{E:insight('E'),D:insight('D'),C:ordinary('C',{error:'timeout'}),B:ordinary('B',{value:{bad:true}}),
-      A:ordinary('A',{value:{jump:true}})},
-    humanControls:{A:'arrows'},inputInsightSeats:['E','D'],
-    record:row=>records.push(row)
-  });
-  assert.deepEqual(records[0].manifest.inputInsight,{seats:['D','E'],contract:'accepted-opponent-actions',timing:'same-tick-after-ordinary'});
-  assert.deepEqual(records[0].readiness,{A:'ready',B:'ready',C:'ready',D:'ready',E:'ready'});
+    assert.deepEqual(started,ids);
+    if(id==='C') return {error:'timeout'};
+    if(id==='B') return {value:{bad:true}};
+    return {value:{jump:id==='A'}};
+  }}]));
+  await runMatch({game,seats,seed:1,maxTicks:1,timeoutMs:250,humanControls:{A:'arrows'},
+    privilegedSeats:['D','H'],record:row=>records.push(row)});
+  assert.deepEqual(records[0].manifest.inputInsight,{seats:['D','H'],timing:'concurrent',capabilities:['sample']});
   assert.deepEqual(records[1].input.C,{submitted:null,accepted:{jump:false},fallback:'timeout'});
   assert.deepEqual(records[1].input.B,{submitted:{bad:true},accepted:{jump:false},fallback:'invalid_action'});
-  assert.deepEqual(records[1].state.heights,{A:1,B:0,C:0,D:0,E:0});
-  assert.ok(Object.values(records[1].input).every(entry=>!Object.hasOwn(entry,'opponentActions')));
+  assert.deepEqual(records[1].state.heights,{A:1,B:0,C:0,D:0,E:0,F:0,G:0,H:0});
 });
 
-test('all-privileged brief is empty, phases share remaining deadline, and stop finishes the in-flight tick',async()=>{
-  const empty={act({opponentActions,opponentActionsTick,tick}){
-    assert.equal(opponentActionsTick,tick);assert.deepEqual(opponentActions,{});return {value:{jump:false}};
-  }};
-  await runMatch({game:jumpGame,seats:{A:empty,B:empty},seed:1,maxTicks:1,
-    timeoutMs:1000,inputInsightSeats:['B','A'],record:()=>{}});
-  const controller=new AbortController();
-  const seen=[];
-  let ordinaryBudget,insightBudget;
-  const result=await runMatch({
-    game:jumpGame,seed:1,maxTicks:10,timeoutMs:250,signal:controller.signal,inputInsightSeats:['B'],
-    seats:{
-      A:{async act(_msg,budget){ordinaryBudget=budget;controller.abort();return {value:{jump:true}};}},
-      B:{act(msg,budget){
-        insightBudget=budget;
-        assert.equal(msg.opponentActionsTick,msg.tick);
-        assert.deepEqual(msg.opponentActions,{A:{jump:true}});
-        return {value:{jump:false}};
-      }}
-    },
-    record:row=>seen.push(row)
-  });
-  assert.ok(ordinaryBudget>0&&ordinaryBudget<150);
-  assert.ok(insightBudget>0&&insightBudget<250);
-  assert.deepEqual(seen.map(row=>row.type),['start','tick','end']);
-  assert.deepEqual(result,{winner:null,reason:'stopped'});
+test('ordinary-only matches do not compute private hints',async()=>{
+  const game={...jumpGame,privilegedObservation(){assert.fail('computed unneeded hints');}};
+  const bot={act(_msg,budget){assert.equal(budget,250);return {value:{jump:false}};}};
+  await runMatch({game,seats:{A:bot,B:bot},seed:1,maxTicks:1,timeoutMs:250,record:()=>{}});
 });
 
 const script=`
@@ -125,7 +84,7 @@ async function fetchManifest(t, registryFolder, paths, options={}) {
 test('only registered builtin Laika or its actual default entry receives the privilege',async t=>{
   const genuine=await fetchManifest(t,'laika',{B:'laika'});
   assert.deepEqual(genuine.inputInsight.seats,['B']);
-  assert.equal(genuine.botVersions.B.policy,'laika-insight/4');
+  assert.equal(genuine.botVersions.B.policy,'laika-insight/5');
   assert.deepEqual(genuine.inputInsight.capabilities,['pickup-forecast']);
   assert.equal(Object.hasOwn(genuine.botVersions.A,'policy'),false);
 
@@ -139,7 +98,7 @@ test('only registered builtin Laika or its actual default entry receives the pri
   assert.equal(Object.hasOwn(nonTank,'inputInsight'),false);
 });
 
-test('only privileged seats receive the forecast after ordinary acts; replay has no forecast payload',async()=>{
+test('only privileged seats receive the forecast from pre-tick state; replay has no forecast payload',async()=>{
   const records=[];
   const seen=[];
   const neutral=game.neutralAction();
@@ -148,8 +107,8 @@ test('only privileged seats receive the forecast after ordinary acts; replay has
     assert.equal(Object.hasOwn(msg.observation,'pickupForecast'),false);
     if (id==='A'||id==='B') assert.equal(Object.hasOwn(msg,'pickupForecast'),false);
     else {
-      assert.deepEqual(seen.slice(0,2),['A','B']);
-      assert.deepEqual(Object.keys(msg.opponentActions),['A','B']);
+      assert.equal(Object.hasOwn(msg,'opponentActions'),false);
+      assert.equal(Object.hasOwn(msg,'opponentActionsTick'),false);
       const expected=game.privilegedObservation(records[0].state).pickupForecast;
       assert.deepEqual(msg.pickupForecast,expected);
       msg.pickupForecast.candidate.x=-100;
@@ -157,7 +116,7 @@ test('only privileged seats receive the forecast after ordinary acts; replay has
     return {value:neutral};
   }}]));
   await runMatch({game,seats,seed:7,maxTicks:1,timeoutMs:1000,config:{pickupInterval:1},
-    humanControls:{A:'arrows'},inputInsightSeats:['C','D'],record:row=>records.push(row)});
+    humanControls:{A:'arrows'},privilegedSeats:['C','D'],record:row=>records.push(row)});
   const hinted=game.privilegedObservation(records[0].state).pickupForecast;
   const spawned=records[1].events.find(event=>event.type==='pickup-spawn');
   assert.deepEqual(hinted,{attemptTick:1,ticksUntil:1,candidate:{x:spawned.x,y:spawned.y,type:spawned.pickupType}});

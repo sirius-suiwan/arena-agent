@@ -433,7 +433,9 @@ function render() {
   const insightSeats = insight?.seats;
   const privileged = Array.isArray(insightSeats) ? insightSeats.filter((id) => typeof id === 'string' && /^[A-H]$/.test(id)).slice(0, 8) : [];
   el['match-insight'].hidden = privileged.length === 0;
-  const ability = Array.isArray(insight?.capabilities) && insight.capabilities.includes('pickup-forecast') ? '读指令／刷箱预报' : '读指令';
+  const hasForecast = Array.isArray(insight?.capabilities) && insight.capabilities.includes('pickup-forecast');
+  const ability = insight?.contract === 'accepted-opponent-actions' ?
+    (hasForecast ? '读指令／刷箱预报' : '读指令') : '刷箱预报';
   setText(el['match-insight'], privileged.length ? `${ability}：${privileged.join('、')}` : '');
   el.menu.hidden = !menuVisible;
   el.stage.hidden = menuVisible;

@@ -84,7 +84,7 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks,timeoutM
       }
       return await runMatch({
         game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,signal,playerNames:names,humanControls,record:message => recording.write(message),
-        inputInsightSeats:plans.filter(p=>p.insight).map(p=>p.id),
+        privilegedSeats:plans.filter(p=>p.insight).map(p=>p.id),
         botVersions:Object.fromEntries(plans.map(p=>[p.id,p.version]))
       });
     } finally {
