@@ -37,7 +37,7 @@ node apps/cli/arena.js run --seed 42 --bot-a laika --bot-b scout --bot-c turret 
   --bot-e turret --bot-f laika --bot-g turret --bot-h scout
 ```
 
-[Laika（复刻）](laika/README.md) 与现有 `turret`、`scout` 都用相同的声明注册。注册不是安全审核；脚本依旧是本地进程，只运行可信的 bot。
+[Laika（复刻）](laika/README.md)、[GPT-dots](gpt-dots/README.md) 与现有 `turret`、`scout` 都用相同的声明注册。注册不是安全审核；脚本依旧是本地进程，只运行可信的 bot。
 
 ```sh
 # 从仓库根目录运行。标准输出每行都有该场目录和结果。

@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "protocol": 1,
+  "id": "gpt-dots",
+  "name": "GPT-dots",
+  "game": "tank-trouble",
+  "entry": "bot.js",
+  "files": ["policy.js"]
+}
