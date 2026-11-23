@@ -155,6 +155,26 @@ function routeAction(me,goal,walls) {
   return {throttle,turn,fire:false};
 }
 
+// Prefer an actual escape trajectory over alternating blind reverse turns.
+function recover(me,goal,walls,enemies,preferTurn) {
+  let best=null;
+  for(const model of MOVES) {
+    if(!model.throttle) continue;
+    let x=me.x,y=me.y,a=me.angle,steps=0;
+    for(let i=0;i<11;i++) {
+      a+=model.turn*TURN;
+      const p={x:x+model.throttle*MOVE*Math.cos(a),y:y+model.throttle*MOVE*Math.sin(a)};
+      if(!canOccupy(p.x,p.y,walls)||enemies.some(e=>d2(e,p)<(2*R)**2)) continue;
+      x=p.x;y=p.y;steps++;
+    }
+    const p={x,y};
+    const toward=goal?Math.sqrt(d2(me,goal))-Math.sqrt(d2(p,goal)):0;
+    const value=steps*2+Math.sqrt(d2(me,p))+toward*0.35+Number(model.turn===preferTurn)*0.01;
+    if(steps&&(!best||value>best.value)) best={...model,value};
+  }
+  return best?{throttle:best.throttle,turn:best.turn,fire:false}:{throttle:0,turn:preferTurn,fire:false};
+}
+
 // Minimum separation of two linear tracks over their common time window.
 function trackGap(x,y,dx,dy,begin,bullet) {
   const left=Math.max(begin,bullet.start),right=Math.min(begin+1,bullet.start+bullet.t);
@@ -220,34 +240,73 @@ function aimPlan(me,enemies,walls,weapon,speed,tick) {
   return best;
 }
 
+function zoneAt(zone,tick) {
+  const f=clamp((tick-zone.startTick)/Math.max(1,zone.endTick-zone.startTick),0,1);
+  return {
+    x:zone.x,y:zone.y,
+    halfWidth:zone.initialHalfWidth+(zone.finalHalfWidth-zone.initialHalfWidth)*f,
+    halfHeight:zone.initialHalfHeight+(zone.finalHalfHeight-zone.initialHalfHeight)*f
+  };
+}
+
+function insideRect(p,z,margin=0) {
+  return Math.abs(p.x-z.x)+margin<=z.halfWidth&&Math.abs(p.y-z.y)+margin<=z.halfHeight;
+}
+
+function zoneNavigation(zone,me,map,costs,tick) {
+  if(!zone||me.invulnerable||![zone.x,zone.y,zone.halfWidth,zone.halfHeight,zone.initialHalfWidth,zone.initialHalfHeight,
+    zone.finalHalfWidth,zone.finalHalfHeight,zone.startTick,zone.endTick].every(Number.isFinite)) return null;
+  let shelter=null,score=Infinity;
+  for(let i=0;i<costs.length;i++) if(costs[i]>=0) {
+    const p=map.center(i), eta=costs[i]*45+35;
+    const projected=zoneAt(zone,tick+eta+70);
+    const dx=Math.abs(p.x-zone.x),dy=Math.abs(p.y-zone.y);
+    const over=Math.max(0,dx+15-projected.halfWidth)+Math.max(0,dy+15-projected.halfHeight);
+    const rank=over*30+eta*0.35+Math.hypot(dx,dy)*0.6;
+    if(rank<score) {score=rank;shelter={...p,eta};}
+  }
+  if(!shelter) return null;
+  const future=zoneAt(zone,tick+shelter.eta+55);
+  const pressure=!insideRect(me,zone)||!insideRect(me,future,24);
+  return {pressure,shelter,crateSafe:(p,eta)=>insideRect(p,zoneAt(zone,tick+eta+45),18)};
+}
+
 export function makePolicy() {
-  let map=null,round=null,oldPose=null,stuck=0,escape=0,waypoint=null,lockAim=null;
+  let map=null,round=null,oldPose=null,stuck=0,escape=null,waypoint=null,cornerCell=-1,steer=1;
+  let lockAim=null,aimStarted=null,navUntil=0;
   let routeCache=null,routeCell=-1;
   return obs=>{
     if (!Array.isArray(obs?.tanks)||!Array.isArray(obs.walls)||!Array.isArray(obs.bullets)) return neutral();
     const me=obs.tanks.find(t=>t.id===obs.playerId&&t.alive);
     if(!me||obs.phase==='intermission') return neutral();
     if(!map||round!==(obs.round??1)) {
-      map=newMap(obs);round=obs.round??1;oldPose=null;stuck=0;escape=0;waypoint=null;lockAim=null;
+      map=newMap(obs);round=obs.round??1;oldPose=null;stuck=0;escape=null;waypoint=null;cornerCell=-1;steer=1;
+      lockAim=null;aimStarted=null;navUntil=0;
       routeCache=null;routeCell=-1;
     }
     const tick=obs.roundTick??obs.tick??0;
     const enemies=obs.tanks.filter(t=>t.alive&&t.id!==me.id).sort((a,b)=>d2(me,a)-d2(me,b));
     const nearbyEnemies=enemies.filter(t=>d2(me,t)<500**2).slice(0,4);
-    const obstacles=nearWalls(me,map.walls,50);
+    const obstacles=nearWalls(me,map.walls,60);
     const ammo=obs.bullets.reduce((n,b)=>n+Number(b.owner===me.id&&(b.kind==='shell'||b.kind===undefined)),0);
     const armed=ammo<(obs.shellLimit??5);
     const cell=map.index(me);
     if(routeCell!==cell) {routeCache=bfs(map,cell);routeCell=cell;}
     const {costs,next}=routeCache;
     const nearest=enemies.reduce((a,b)=>!a||costs[map.index(b)]<costs[map.index(a)]?b:a,null);
-    let destination=nearest;
-    if(!me.weapon) {
-      const supply=(obs.pickups??[]).filter(p=>p.type!=='mine').filter(p=>costs[map.index(p)]>=0&&costs[map.index(p)]<=4)
-        .sort((a,b)=>costs[map.index(a)]-costs[map.index(b)]||d2(me,a)-d2(me,b))[0];
-      if(supply&&(armed||!nearest||d2(me,nearest)>110**2)) destination=supply;
-    }
-    if(!armed&&!me.weapon&&nearest&&d2(me,nearest)<185**2) {
+    const safe=zoneNavigation(obs.zone,me,map,costs,tick),zonePressure=safe?.pressure===true;
+    // Empty weapon slot: gather a reachable crate before chasing. A slightly
+    // longer path to a strong weapon beats an equally close mine, not all mines.
+    const supplies=me.weapon||zonePressure?[]:(obs.pickups??[]).filter(p=>{
+      const cost=costs[map.index(p)];
+      return cost>=0&&cost<=8&&(!safe||safe.crateSafe(p,cost*45+35));
+    }).sort((a,b)=>{
+      const value=p=>costs[map.index(p)]*1.2+Math.sqrt(d2(me,p))/160+Number(p.type==='mine')*0.45;
+      return value(a)-value(b);
+    });
+    const supply=supplies[0];
+    let destination=zonePressure?safe.shelter:supply??nearest;
+    if(!zonePressure&&!supply&&!armed&&!me.weapon&&nearest&&d2(me,nearest)<185**2) {
       let best=-Infinity;
       const foe=map.index(nearest);
       const avoid=bfs(map,foe).costs;
@@ -259,45 +318,85 @@ export function makePolicy() {
     let goal=destination;
     if(destination) {
       const destCell=map.index(destination);
-      if(waypoint&&d2(me,waypoint)>12**2 && map.index(waypoint)===cell) goal=waypoint;
-      else if (next[destCell]>=0) {goal=map.center(next[destCell]);waypoint=goal;}
+      if(waypoint&&d2(me,waypoint)>8**2&&map.index(waypoint)===cell&&waypoint.destination===(destination.id??destCell)) goal=waypoint;
+      else if(next[destCell]>=0) {goal={...map.center(next[destCell]),destination:destination.id??destCell};waypoint=goal;}
       else waypoint=null;
     } else waypoint=null;
-    let preferred=routeAction(me,goal,obstacles);
-    if(oldPose?.throttle&&d2(oldPose,me)<0.15) stuck++;
-    else stuck=Math.max(0,stuck-1);
-    if(stuck===7){escape=9;stuck=0;waypoint=null;}
+    if(cornerCell!==cell) cornerCell=-1;
+    const center=map.center(cell);
+    if(cornerCell===cell&&d2(me,center)<=8**2) cornerCell=-1;
+    let route=routeAction(me,cornerCell===cell?center:goal,obstacles);
+    // If the hull cannot take the guessed diagonal through an opening, round
+    // the wall end from the center of the current cell before retrying.
+    if(goal&&d2(me,goal)>8**2&&!route.throttle&&!route.turn&&d2(me,center)>8**2){
+      cornerCell=cell;
+      route=routeAction(me,center,obstacles);
+    }
+    const hasRoute=Boolean(goal&&d2(me,goal)>8**2);
+    if(oldPose?.navigating&&hasRoute) {
+      const idle=d2(oldPose,me)<0.15;
+      const rotating=Math.abs(wrap(me.angle-oldPose.angle))>0.02;
+      const reversal=route.turn&&Math.sign(oldPose.turn)===-Math.sign(route.turn);
+      if(idle&&(oldPose.throttle||!rotating||reversal)) stuck++;
+      else stuck=Math.max(0,stuck-1);
+    } else stuck=0;
+    if(stuck>=7&&!escape) {
+      steer=-steer;escape={action:recover(me,goal,obstacles,nearbyEnemies,steer),until:tick+10};
+      waypoint=null;cornerCell=-1;stuck=0;navUntil=tick+17;aimStarted=null;lockAim=null;
+    }
+    let preferred=route,navigating=hasRoute;
     const weapon=me.weapon;
     const shotSpeed=weapon==='frag'?4.5:weapon==='gatling'?7.5:obs.shellSpeed??6;
-    const canUse=weapon!=='mine'&&!(weapon==='frag'&&me.fragId)&&(weapon||armed);
-    if(canUse&&nearbyEnemies.length) {
-      const plan=aimPlan(me,nearbyEnemies,map.walls,weapon,shotSpeed,tick);
-      if(plan) lockAim={...plan,tick};
-      else if(lockAim&&tick-lockAim.tick>5) lockAim=null;
-      if(lockAim) {
-        const err=wrap(lockAim.angle-me.angle);
-        if(Math.abs(err)<0.8||(weapon&&weapon!=='gatling')) {
-          preferred={throttle:0,turn:Math.abs(err)>0.03?Math.sign(err):0,fire:false};
-          if(Math.abs(err)<0.12) {
-            const beam=weapon==='laser'||weapon==='death-ray';
-            const h=shot(me,me.angle+preferred.turn*TURN,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,beam?576:58);
-            const presses=weapon==='laser'||weapon==='frag';
-            preferred.fire=Boolean(h&&h.hit!==me.id&&(!presses||!me.fireHeld));
-          }
+    const ready=weapon?!(weapon==='gatling'&&me.weaponGap>0):armed&&(me.cooldown??0)<=1;
+    const canUse=ready&&weapon!=='mine'&&!(weapon==='frag'&&me.fragId);
+    if(!zonePressure&&canUse&&nearbyEnemies.length&&tick>=navUntil) {
+      const beam=weapon==='laser'||weapon==='death-ray';
+      const press=weapon==='laser'||weapon==='frag';
+      const canPress=!press||!me.fireHeld;
+      const directRange=beam?576:58;
+      const currentShot=shot(me,me.angle,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange);
+      const immediatelyUseful=currentShot&&currentShot.hit!==me.id&&currentShot.travel<=12;
+      if(supply) {
+        // One quick shot is worth taking; waiting or turning repeatedly over a
+        // promising long-range shot is not worth abandoning a crate.
+        lockAim=null;aimStarted=null;
+        if(immediatelyUseful&&canPress) {
+          preferred={...neutral(),fire:true};
+          navigating=false;
         }
+      } else {
+        // Keep an aim for a few ticks to avoid oscillating between banks/targets.
+        if(!lockAim||tick-lockAim.tick>=4) {
+          const plan=aimPlan(me,nearbyEnemies,map.walls,weapon,shotSpeed,tick);
+          lockAim=plan?{...plan,tick}:null;
+        }
+        if(lockAim) {
+          const err=wrap(lockAim.angle-me.angle);
+          if(Math.abs(err)<0.8||(weapon&&weapon!=='gatling')) {
+            aimStarted??=tick;
+            if(tick-aimStarted>=13) {
+              navUntil=tick+11;lockAim=null;aimStarted=null;
+            } else {
+              preferred={throttle:0,turn:Math.abs(err)>0.03?Math.sign(err):0,fire:false};
+              navigating=false;
+              if(Math.abs(err)<0.12) {
+                const h=shot(me,me.angle+preferred.turn*TURN,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange);
+                preferred.fire=Boolean(h&&h.hit!==me.id&&canPress);
+              }
+            }
+          }
+        } else aimStarted=null;
       }
-    } else lockAim=null;
-    if(weapon==='death-ray'&&me.weaponCharge>0&&enemies.length) preferred={...neutral(),fire:true};
-    if(weapon==='frag'&&me.fragId&&!me.fireHeld) {
+    } else {lockAim=null;aimStarted=null;}
+    if(!zonePressure&&weapon==='death-ray'&&me.weaponCharge>0&&enemies.length) {preferred={...neutral(),fire:true};navigating=false;}
+    if(!zonePressure&&weapon==='frag'&&me.fragId&&!me.fireHeld) {
       const bomb=obs.bullets.find(b=>b.id===me.fragId);
       if(bomb&&d2(me,bomb)>75**2&&enemies.some(e=>d2(e,bomb)<70**2)) preferred.fire=true;
     }
-    if(weapon==='mine'&&!me.fireHeld&&enemies[0]&&d2(me,enemies[0])<110**2&&
+    if(!zonePressure&&weapon==='mine'&&!me.fireHeld&&enemies[0]&&d2(me,enemies[0])<110**2&&
       Math.abs(wrap(heading(me,enemies[0])-me.angle))>2.0) preferred.fire=true;
-    if(escape>0) {
-      const turn=tick%24<12?1:-1;
-      preferred={throttle:-1,turn,fire:false};escape--;
-    }
+    if(escape&&tick>=escape.until) escape=null;
+    if(escape) {preferred=escape.action;navigating=false;}
     const mineThreat=(obs.mines??[]).filter(m=>d2(me,m)<65**2);
     const projectiles=hazardTrack(me,obs.bullets,map.walls);
     if(projectiles.length||mineThreat.length) {
@@ -310,10 +409,11 @@ export function makePolicy() {
           const cost=run.risk+Math.sqrt(d2(run,base))*0.013+0.15;
           if(cost<best){best=cost;candidate=model;}
         }
+        if(candidate!==preferred) navigating=false;
         preferred={...candidate};
       }
     }
-    oldPose={x:me.x,y:me.y,throttle:preferred.throttle};
+    oldPose={x:me.x,y:me.y,angle:me.angle,throttle:preferred.throttle,turn:preferred.turn,navigating};
     return preferred;
   };
 }

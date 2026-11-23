@@ -60,3 +60,59 @@ test('GPT-dots process speaks JSONL, answers the exact host tick and announces i
   assert.equal(reply.tick,123);
   assert.deepEqual(game.validateAction(reply.action),reply.action);
 });
+
+test('GPT-dots rounds a wall tip and collects the crate that previously kept it stationary',()=>{
+  let s=game.init({seed:1,players:['A','B']});
+  s.walls=[{x1:64,y1:0,x2:64,y2:64}];
+  Object.assign(s.tanks[0],{x:50,y:64.1,angle:Math.atan2(31.9,46)});
+  Object.assign(s.tanks[1],{x:700,y:520});
+  s.pickups=[{id:'corner',x:96,y:96,type:'laser'}];
+  const bot=makePolicy();
+  for(let i=0;i<78&&!s.tanks[0].weapon;i++) {
+    s=game.step(s,{A:bot(game.observe(s,'A'))}).state;
+  }
+  assert.equal(s.tanks[0].weapon,'laser');
+  assert.equal(s.pickups.some(p=>p.id==='corner'),false);
+});
+
+test('GPT-dots advances for a reachable crate while the primary cannon is cooling down',()=>{
+  const state=observation({
+    tanks:[{...A,x:32,y:32,cooldown:18},{...B,x:165,y:32}],
+    pickups:[{id:'crate',x:96,y:32,type:'mine'}]
+  });
+  assert.deepEqual(makePolicy()(state),{throttle:1,turn:0,fire:false});
+});
+
+test('GPT-dots still takes a short clean shot before advancing on a crate',()=>{
+  const state=observation({
+    tanks:[{...A,x:32,y:32,cooldown:1},{...B,x:90,y:32}],
+    pickups:[{id:'crate',x:96,y:32,type:'gatling'}]
+  });
+  assert.deepEqual(makePolicy()(state),{throttle:0,turn:0,fire:true});
+});
+
+const testZone={x:128,y:128,halfWidth:95,halfHeight:95,initialHalfWidth:128,initialHalfHeight:128,
+  finalHalfWidth:64,finalHalfHeight:64,startTick:0,endTick:900,graceTicks:120,outsideTicks:5};
+
+test('GPT-dots abandons unsafe loot to move toward the shrinking rectangle',()=>{
+  const obs=observation({
+    tick:900,roundTick:900,zone:{...testZone,halfWidth:64,halfHeight:64},
+    tanks:[{...A,x:32,y:96,angle:0},{...B,x:220,y:220}],
+    pickups:[{id:'loot',x:12,y:96,type:'laser'}]
+  });
+  const noZone=makePolicy()({...obs,zone:undefined});
+  const safe=makePolicy()(obs);
+  assert.equal(noZone.throttle,-1);
+  assert.deepEqual(safe,{throttle:1,turn:0,fire:false});
+  // An invulnerable round survivor need not flee the zone.
+  assert.deepEqual(makePolicy()({...obs,tanks:[{...obs.tanks[0],invulnerable:true},obs.tanks[1]]}),noZone);
+});
+
+test('GPT-dots anticipates the boundary before the rectangle has started shrinking',()=>{
+  const obs=observation({
+    tick:62,roundTick:62,zone:{...testZone,halfWidth:128,halfHeight:128,startTick:65,endTick:155},
+    tanks:[{...A,x:32,y:96,angle:0},{...B,x:220,y:220}],
+    pickups:[{id:'loot',x:12,y:96,type:'laser'}]
+  });
+  assert.equal(makePolicy()(obs).throttle,1);
+});
