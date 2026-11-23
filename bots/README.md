@@ -8,6 +8,33 @@
 - Python：[examples/scout.py](examples/scout.py)
 - 把新策略另存为 `bots/<bot-name>.mjs` 或 `bots/<bot-name>.py`。示例是基线，不是推荐战术。
 
+## 注册到对战菜单
+
+把脚本和声明放到 `bots/<你的目录>/`，例如 `bots/maze-hunter/bot.json`：
+
+```json
+{
+  "schema": 1,
+  "protocol": 1,
+  "id": "maze-hunter",
+  "name": "迷宫猎手",
+  "game": "tank-trouble",
+  "entry": "bot.py",
+  "files": ["strategy.py"]
+}
+```
+
+- `id` 在同一游戏下唯一，长 1–48 位，以小写字母开头，支持小写字母、数字和连字符；`name` 最多 24 字，作为菜单和默认席位显示名。
+- `entry` 是包内 `.js`、`.mjs` 或 `.py` 入口；宿主按后缀选择 Node.js 或 Python 3，不接受自定义命令。路径用包内相对路径，不能跨出目录。额外模块和策略数据通过可选的 `files` 列出；日志记录声明、入口及这些依赖的组合 SHA-256，便于复盘。依赖不会自动安装。
+- 刷新坦克页面，新 bot 就会出现在选座菜单里，无需修改宿主。一个目录也可使用多个 `<name>.bot.json`。声明或路径错误会提示对应清单；修正后刷新即可。
+- CLI 接受注册 ID，也保留直接指定脚本路径的用法。两个或三个席位都可选不同 bot，例如：
+
+```sh
+node apps/cli/arena.js run --seed 42 --bot-a laika --bot-b maze-hunter --bot-c scout
+```
+
+[Laika（复刻）](laika/README.md) 与现有 `turret`、`scout` 都用相同的声明注册。注册不是安全审核；脚本依旧是本地进程，只运行可信的 bot。
+
 ```sh
 # 从仓库根目录运行。标准输出每行都有该场目录和结果。
 node apps/cli/arena.js run --seed 12 --score-to-win 1 \
@@ -35,4 +62,4 @@ node apps/cli/arena.js run --seed 12 --rounds 3 --score-to-win 1 \
 
 每轮只改一个假设，例如「射击前预测一次反弹是否打回自己」，再用相同的多组种子与交换座位复测。看胜负之外，也看自伤次数和回退比例。
 
-如需给 bot 命名，在握手的 `ready` 里加 `"name":"迷宫斥候"`；不需要改 `playerId`。CLI 也可通过 `--name-a`、`--name-b` 或 `--name-c` 给这场测试指定显示名。
+不需要改 `playerId` 来命名。注册 bot 默认使用声明的 `name`；未注册的脚本可在 `ready` 中加 `"name":"迷宫斥候"`。CLI 的 `--name-a`、`--name-b` 或 `--name-c` 可为本场指定显示名。

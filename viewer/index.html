@@ -31,6 +31,20 @@
         <button type="submit" name="mode" value="local3">三人对战</button>
         <button type="submit" id="bot-start" name="mode" value="bots">Bot 对战</button>
       </form>
+      <fieldset class="bot-seat-picker" aria-describedby="bot-seat-help">
+        <legend>机器人选手</legend>
+        <label for="seat-bot-A">A
+          <select id="seat-bot-A" disabled></select>
+        </label>
+        <label for="seat-bot-B">B
+          <select id="seat-bot-B" disabled></select>
+        </label>
+        <label for="seat-bot-C">C
+          <select id="seat-bot-C" disabled></select>
+        </label>
+        <p id="bot-catalog-status" role="status">正在读取已注册机器人…</p>
+        <p id="bot-seat-help">单人对战只使用 B；Bot 对战使用 A、B，可选 C。本地多人不使用此设置。</p>
+      </fieldset>
       <button type="button" id="continue-match" hidden>返回对局</button>
     </section>
 

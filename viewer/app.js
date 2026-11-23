@@ -11,7 +11,7 @@ const el = Object.fromEntries([
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
   'scoreboard', 'kill-board', 'arena-round-mode', 'arena-round', 'arena-round-target', 'round-label', 'round-notice', 'canvas-wrap',
   'kill-panel', 'kill-markers', 'kill-status',
-  'seat-name-A', 'seat-name-B', 'seat-name-C',
+  'seat-name-A', 'seat-name-B', 'seat-name-C', 'seat-bot-A', 'seat-bot-B', 'seat-bot-C', 'bot-catalog-status',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
 ].map((id) => [id, byId(id)]));
 
@@ -25,6 +25,7 @@ let frameIndex = 0;
 let playback = null;
 let requestedMode = null;
 let starting = false;
+let botCatalog = new Map();
 let stopRequest = null;
 let menuVisible = true;
 let streamOpen = false;
@@ -401,7 +402,9 @@ function render() {
   el.battle.classList.toggle('pointer-control', activeMode() === 'local3');
   el['back-live'].hidden = !replay;
   el['timeline-panel'].hidden = !replay;
-  for (const button of el['match-form'].querySelectorAll('button')) button.disabled = starting || matchActive;
+  for (const button of el['match-form'].querySelectorAll('button')) {
+    button.disabled = starting || matchActive || (!botCatalog.size && ['bots', 'human'].includes(button.value));
+  }
   el.seed.disabled = starting || matchActive;
   if (replay) {
     el.timeline.max = String(Math.max(0, match.frames.length - 1));
@@ -600,6 +603,51 @@ function humanSeats(mode) {
   return mode === 'local3' ? ['A', 'B', 'C'] : mode === 'local2' ? ['A', 'B'] : mode === 'human' ? ['A'] : [];
 }
 
+async function loadBotCatalog() {
+  const status = el['bot-catalog-status'];
+  try {
+    const response = await fetch('/api/bots', { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) {
+      const problem = await response.json().catch(() => ({}));
+      throw new Error(typeof problem.error === 'string' ? problem.error : `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    if (!Array.isArray(data?.bots)) throw new Error('机器人目录格式不正确。');
+    const entries = data.bots.filter(bot => typeof bot?.id === 'string' && bot.id && typeof bot.name === 'string' && bot.name);
+    entries.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    botCatalog = new Map(entries.map(({ id, name }) => [id, name]));
+    if (!botCatalog.size) {
+      status.textContent = '没有已注册的机器人，本地多人仍可开局。';
+      return;
+    }
+    const preferred = botCatalog.has('turret') ? 'turret' : botCatalog.keys().next().value;
+    for (const seat of ['A', 'B', 'C']) {
+      const select = el[`seat-bot-${seat}`];
+      const options = document.createDocumentFragment();
+      if (seat === 'C') {
+        const off = document.createElement('option');
+        off.value = '';
+        off.textContent = '不参赛';
+        options.append(off);
+      }
+      for (const [id, name] of botCatalog) {
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = name;
+        options.append(option);
+      }
+      select.replaceChildren(options);
+      select.value = seat === 'C' ? '' : preferred;
+      select.disabled = false;
+    }
+    status.hidden = true;
+  } catch (error) {
+    status.textContent = `无法读取机器人目录（${error.message}）。修正后可刷新重试，本地多人仍可开局。`;
+  } finally {
+    queueDraw();
+  }
+}
+
 el['match-form'].addEventListener('submit', async (event) => {
   event.preventDefault();
   if (starting || (live.manifest && !live.done)) return;
@@ -608,7 +656,11 @@ el['match-form'].addEventListener('submit', async (event) => {
   const mode = matchMode(requested) ? requested : 'human';
   const seed = Number(el.seed.value);
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return setError('种子必须是有效的非负整数。');
-  const seats = mode === 'local3' ? ['A', 'B', 'C'] : ['A', 'B'];
+  const thirdBot = mode === 'bots' && Boolean(el['seat-bot-C'].value);
+  const botSeats = mode === 'bots' ? (thirdBot ? ['A', 'B', 'C'] : ['A', 'B']) : mode === 'human' ? ['B'] : [];
+  const bots = Object.fromEntries(botSeats.map(id => [id, el[`seat-bot-${id}`].value]));
+  if (botSeats.some(id => !botCatalog.has(bots[id]))) return setError('请先选择有效的已注册机器人。');
+  const seats = mode === 'local3' || thirdBot ? ['A', 'B', 'C'] : ['A', 'B'];
   const playerNames = {};
   for (const id of seats) {
     const name = tidyName(el[`seat-name-${id}`].value);
@@ -630,7 +682,11 @@ el['match-form'].addEventListener('submit', async (event) => {
   setStatus('正在启动对局…');
   queueDraw(true);
   try {
-    await post('/api/match', { mode, seed, ...(Object.keys(playerNames).length ? { playerNames } : {}) });
+    await post('/api/match', {
+      mode, seed,
+      ...(botSeats.length ? { bots } : {}),
+      ...(Object.keys(playerNames).length ? { playerNames } : {}),
+    });
   } catch (error) {
     if (!replay) {
       if (!live.manifest || live.done) menuVisible = true;
@@ -850,4 +906,5 @@ addEventListener('keyup', (event) => {
 addEventListener('blur', releaseInput);
 document.addEventListener('visibilitychange', () => { if (document.hidden) releaseInput(); });
 new ResizeObserver(() => queueDraw()).observe(el.battle);
+void loadBotCatalog();
 queueDraw();
