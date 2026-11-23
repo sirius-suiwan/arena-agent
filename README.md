@@ -24,7 +24,7 @@ node apps/cli/arena.js run --seed 42 --bot-b bots/examples/scout.py
 node apps/cli/arena.js serve
 ```
 
-CLI 输出本局目录。打开 [本地观战](http://127.0.0.1:8765/)，可启动 bot 对战或人机对战。A 使用方向键移动和转向，M 或空格开火；本地多人时 B 使用 ESDF / Q，三人模式的 C 使用鼠标。实时和回放共享同一套绘图。网页只监听本机，不提供网络联机。选择「打开回放」并载入 `match.jsonl`，即可播放、逐 tick 前后步进或点事件跳转。
+CLI 输出本局目录。打开 [游戏选择页](http://127.0.0.1:8765/) 进入《坦克动荡 2》，或直接打开 [坦克菜单](http://127.0.0.1:8765/tank)。可启动 bot 对战、人机对战或本机同屏。A 使用方向键移动和转向，M 或空格开火；本地多人时 B 使用 ESDF / Q，三人模式的 C 使用鼠标。实时和回放共享同一套绘图。网页只监听本机，不提供网络联机。选择「打开回放」并载入 `match.jsonl`，即可播放、逐 tick 前后步进或点事件跳转。
 
 ```sh
 node apps/cli/arena.js verify runs/tank-trouble/<match-id>/match.jsonl
