@@ -48,7 +48,8 @@ export class LocalBot {
         this.settle({error:'protocol_mismatch'});
         continue;
       }
-      this.settle({value: type === 'action' ? reply.action : null});
+      this.settle(type === 'action' ? {value:reply.action}
+        : typeof reply.name === 'string' ? {value:null,name:reply.name} : {value:null});
     }
   }
 

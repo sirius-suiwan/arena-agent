@@ -22,18 +22,22 @@ try {
     args,allowPositionals:true,options:{
       seed:{type:'string'}, 'max-ticks':{type:'string'}, 'timeout-ms':{type:'string'},
       'bot-a':{type:'string'},'bot-b':{type:'string'},'bot-c':{type:'string'},'score-to-win':{type:'string'},port:{type:'string'},
-      rounds:{type:'string'},out:{type:'string'},cols:{type:'string'},rows:{type:'string'}
+      rounds:{type:'string'},out:{type:'string'},'name-a':{type:'string'},'name-b':{type:'string'},'name-c':{type:'string'},cols:{type:'string'},rows:{type:'string'}
     }
   });
   const config=Object.fromEntries([['cols',values.cols],['rows',values.rows],['scoreToWin',values['score-to-win']]]
     .filter(([,value])=>value!==undefined).map(([key,value])=>[key,integer(value)]));
+  const playerNames=Object.fromEntries(['A','B','C'].flatMap(id=>{
+    const value=values['name-'+id.toLowerCase()];
+    return value===undefined?[]:[[id,value]];
+  }));
   if (command === 'run') {
     const rounds = integer(values.rounds) ?? 1;
     if (rounds < 1 || rounds > 1000) throw new Error('rounds must be 1-1000');
     if (positionals.length) throw new Error('run does not accept positional arguments');
     for (let i = 0; i < rounds; i++) {
       const match = await makeMatch({
-        game,root,base:resolve(values.out ?? 'runs'),seed:(integer(values.seed) ?? 42)+i,
+        game,root,playerNames,base:resolve(values.out ?? 'runs'),seed:(integer(values.seed) ?? 42)+i,
         maxTicks:integer(values['max-ticks']),timeoutMs:integer(values['timeout-ms']),
         paths:{A:values['bot-a'],B:values['bot-b'],C:values['bot-c']},config,recorder
       });

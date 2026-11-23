@@ -4,7 +4,7 @@ import sys
 for line in sys.stdin:
     msg = json.loads(line)
     if msg["type"] == "start":
-        response = {"type": "ready", "protocol": 1}
+        response = {"type": "ready", "protocol": 1, "name": "斥候"}
     elif msg["type"] == "observe":
         tick = msg["tick"]
         response = {

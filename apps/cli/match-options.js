@@ -7,7 +7,7 @@ import {LocalBot} from '../../runners/local-process/index.js';
 export const playersForMode = (mode,paths={}) => mode==='local3' || paths.C ? ['A','B','C'] : ['A','B'];
 export const humansForMode = mode => mode==='local3'?['A','B','C']:mode==='local2'?['A','B']:mode==='human'?['A']:[];
 
-export async function makeMatch({game,root,base,seed,config={},maxTicks=game.defaultMatchTicks??3600,timeoutMs=50,mode='bots',realtime=false,paths={},human={},recorder,onRecord}) {
+export async function makeMatch({game,root,base,seed,config={},maxTicks=game.defaultMatchTicks??3600,timeoutMs=50,mode='bots',realtime=false,paths={},human={},playerNames={},recorder,onRecord}) {
   const plans = await Promise.all(playersForMode(mode,paths).map(async id => {
     if (humansForMode(mode).includes(id)) {
       if (!human[id]) throw new Error('no local controller for seat '+id);
@@ -29,7 +29,7 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks=game.def
         seats[plan.id] = plan.human ? human[plan.id] : new LocalBot(plan.command,[plan.path]);
       }
       return await runMatch({
-        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,pause,record:message => recording.write(message),
+        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,pause,playerNames,record:message => recording.write(message),
         botVersions:Object.fromEntries(plans.map(p=>[p.id,p.version]))
       });
     } finally {

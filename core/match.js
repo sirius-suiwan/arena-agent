@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import {setTimeout as delay} from 'node:timers/promises';
+import {normalizePlayerName} from '../protocol/bot/player-name.js';
 
 export function canonical(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -11,7 +12,7 @@ export function canonical(value) {
 export const stateHash = state => createHash('sha256').update(canonical(state)).digest('hex');
 export const playerIds = seats => Object.keys(seats).sort();
 
-export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3600,timeoutMs=50,realtime=false,record,botVersions={},matchId,pause}) {
+export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3600,timeoutMs=50,realtime=false,record,botVersions={},matchId,pause,playerNames={}}) {
   const players = playerIds(seats);
   if (!Number.isSafeInteger(seed) || !Number.isSafeInteger(maxTicks) || maxTicks < 1 ||
       maxTicks > 100_000 || !Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error('invalid match limits');
@@ -24,6 +25,10 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
     const starts = await Promise.all(players.map(playerId => seats[playerId].start?.({
       type:'start', protocol:1, game:game.id, rulesVersion:game.version, playerId, tickRate:game.tickRate, config
     })));
+    manifest.playerNames=Object.fromEntries(players.map((id,i)=>[
+      id,normalizePlayerName(Object.hasOwn(playerNames,id)?playerNames[id]:null) ??
+        normalizePlayerName(starts[i]?.name) ?? id
+    ]));
     await record({type:'start',manifest,state,hash:stateHash(state),readiness:Object.fromEntries(players.map((id,i)=>[id,starts[i]?.error ?? 'ready']))});
     const period = 1000 / game.tickRate;
     let deadline = performance.now() + period;

@@ -81,10 +81,15 @@ export async function serve({game,root,base,port,config={}}) {
         const data = await requestBody(req);
         if (active) return json(res,409,{error:'match already in progress'});
         if (!['bots','human','local2','local3'].includes(data?.mode) || !Number.isSafeInteger(data.seed)) return json(res,400,{error:'invalid match options'});
+        const names=data.playerNames;
+        if (names!==undefined && (!names || typeof names!=='object' || Array.isArray(names) ||
+            Object.keys(names).some(id=>!['A','B','C'].includes(id) || typeof names[id]!=='string'))) {
+          return json(res,400,{error:'invalid player names'});
+        }
         active=true;mode=data.mode;epoch++;first=latest=terminal=matchPause=undefined;
         inputs=new Map(humansForMode(mode).map(id=>[id,{held:game.neutralAction(),fireQueued:false}]));
         try {
-          const match=await makeMatch({game,root,base,config,seed:data.seed,mode,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
+          const match=await makeMatch({game,root,base,config,seed:data.seed,mode,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
           matchPause=new MatchPause(match.matchId,status=>{
             if (status.paused) for (const input of inputs.values()) {
               input.held=game.neutralAction();

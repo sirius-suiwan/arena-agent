@@ -34,3 +34,5 @@ node apps/cli/arena.js run --seed 12 --rounds 3 --score-to-win 1 \
 4. 用 `node apps/cli/arena.js verify <该局的 match.jsonl 路径>` 检查记录是否能重算。回放验证不会重新运行 bot。
 
 每轮只改一个假设，例如「射击前预测一次反弹是否打回自己」，再用相同的多组种子与交换座位复测。看胜负之外，也看自伤次数和回退比例。
+
+如需给 bot 命名，在握手的 `ready` 里加 `"name":"迷宫斥候"`；不需要改 `playerId`。CLI 也可通过 `--name-a`、`--name-b` 或 `--name-c` 给这场测试指定显示名。

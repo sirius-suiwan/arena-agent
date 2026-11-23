@@ -9,6 +9,7 @@ import {recorder,verifyReplay} from '../replay/index.js';
 import {makeMatch} from '../apps/cli/match-options.js';
 import {LocalBot} from '../runners/local-process/index.js';
 import {game,gameV1,gameV2} from '../games/tank-trouble/adapter/index.js';
+import {normalizePlayerName} from '../protocol/bot/player-name.js';
 import {jumpGame} from './fixtures/jump-game.js';
 
 const root = fileURLToPath(new URL('../',import.meta.url));
@@ -44,12 +45,20 @@ test('generic host handles different game action schema and records same-tick fa
   await assert.rejects(verifyReplay(path,{'jump-fixture':jumpGame}), /tick 0: state differs/);
 });
 
+test('player display names strip controls and cap Unicode without changing seat identity',()=>{
+  assert.equal(normalizePlayerName('  红队   🐢  '),'红队 🐢');
+  assert.equal(normalizePlayerName('\u202e测试\u0000'),'测试');
+  assert.equal(normalizePlayerName('\u200b  '),null);
+  assert.equal([...normalizePlayerName('🐢'.repeat(26))].length,24);
+});
+
 test('runs independent JS and Python bots and replays a tank match',async t=>{
   const base=await folder(t);
-  const match=await makeMatch({game,root,base,seed:42,maxTicks:180,timeoutMs:1000,paths:{B:join(root,'bots/examples/scout.py')},recorder});
+  const match=await makeMatch({game,root,base,seed:42,maxTicks:180,timeoutMs:1000,paths:{B:join(root,'bots/examples/scout.py')},playerNames:{A:' 主机名 '},recorder});
   const result=await match.run();
   const dump=(await readFile(join(match.directory,'match.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(dump[0].readiness,{A:'ready',B:'ready'});
+  assert.deepEqual(dump[0].manifest.playerNames,{A:'主机名',B:'斥候'});
   assert.equal(dump[0].manifest.rulesVersion,'3');
   assert.equal(dump[0].manifest.matchId,match.matchId);
   assert.equal(basename(match.directory),match.matchId);
