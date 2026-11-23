@@ -19,7 +19,7 @@ async function requestBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-export async function serve({game,root,base,port}) {
+export async function serve({game,root,base,port,config={}}) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid port');
   const clients = new Set();
   let active=false, mode, first, latest, terminal, epoch=0, matchPause;
@@ -84,7 +84,7 @@ export async function serve({game,root,base,port}) {
         active=true;mode=data.mode;epoch++;first=latest=terminal=matchPause=undefined;
         inputs=new Map(humansForMode(mode).map(id=>[id,{held:game.neutralAction(),fireQueued:false}]));
         try {
-          const match=await makeMatch({game,root,base,seed:data.seed,mode,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
+          const match=await makeMatch({game,root,base,config,seed:data.seed,mode,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
           matchPause=new MatchPause(match.matchId,status=>{
             if (status.paused) for (const input of inputs.values()) {
               input.held=game.neutralAction();

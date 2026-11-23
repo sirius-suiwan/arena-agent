@@ -41,4 +41,16 @@ export const classicRoundGame = Object.freeze({
   step: classic.step
 });
 
-export const game = withClassicSeries(classicRoundGame);
+export const gameV2 = withClassicSeries(classicRoundGame);
+
+export const classicRoundGameV3 = Object.freeze({
+  ...classicRoundGame,
+  version: '3',
+  init: classic.initV3,
+  observe(state, playerId) {
+    return {...classicRoundGame.observe(state,playerId),pickupBlocks:state.pickupBlocks.map(block=>({...block}))};
+  },
+  step: classic.stepV3
+});
+
+export const game = withClassicSeries(classicRoundGameV3);

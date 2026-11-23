@@ -4,11 +4,11 @@ import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
-import {runMatch} from '../core/match.js';
+import {runMatch,stateHash} from '../core/match.js';
 import {recorder,verifyReplay} from '../replay/index.js';
 import {makeMatch} from '../apps/cli/match-options.js';
 import {LocalBot} from '../runners/local-process/index.js';
-import {game,gameV1} from '../games/tank-trouble/adapter/index.js';
+import {game,gameV1,gameV2} from '../games/tank-trouble/adapter/index.js';
 import {jumpGame} from './fixtures/jump-game.js';
 
 const root = fileURLToPath(new URL('../',import.meta.url));
@@ -50,6 +50,8 @@ test('runs independent JS and Python bots and replays a tank match',async t=>{
   const result=await match.run();
   const dump=(await readFile(join(match.directory,'match.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(dump[0].readiness,{A:'ready',B:'ready'});
+  assert.equal(dump[0].manifest.rulesVersion,'3');
+  assert.deepEqual([dump[0].state.width,dump[0].state.height],[768,576]);
   const ticks=dump.filter(r=>r.type==='tick');
   assert.ok(ticks.length>0 && ticks.every(r=>!r.input.A.fallback && !r.input.B.fallback));
   assert.deepEqual(await verifyReplay(join(match.directory,'match.jsonl'),{[game.id]:game}),{ticks:ticks.length,result});
@@ -57,14 +59,24 @@ test('runs independent JS and Python bots and replays a tank match',async t=>{
   await assert.rejects(verifyReplay(join(match.directory,'truncated.jsonl'),{[game.id]:game}), /missing end/);
 });
 
-test('prior v1 logs select the frozen rules even when v2 is present',async t=>{
+test('prior v1 logs select the frozen rules when v2 and v3 are present',async t=>{
   const base=await folder(t);
   const match=await makeMatch({game:gameV1,root,base,seed:42,maxTicks:12,timeoutMs:1000,recorder});
   const result=await match.run();
-  const registry={['tank-trouble@1']:gameV1,['tank-trouble@2']:game};
+  const registry={['tank-trouble@1']:gameV1,['tank-trouble@2']:gameV2,['tank-trouble@3']:game};
   const file=join(match.directory,'match.jsonl');
   assert.deepEqual((await verifyReplay(file,registry)).result,result);
   await assert.rejects(verifyReplay(file,{'tank-trouble':game}), /unknown rules version/);
+});
+
+test('v2 adapter retains its historical start state in a mixed-version registry',async t=>{
+  const starting=gameV2.init({seed:37,config:{},players:['A','B']});
+  assert.equal(stateHash(starting),'89f16e09b424459ef554ba7fb60e4394fe7f604a32172fddc468b7494c76b136');
+  const base=await folder(t);
+  const match=await makeMatch({game:gameV2,root,base,seed:37,maxTicks:12,timeoutMs:1000,recorder});
+  const result=await match.run();
+  const file=join(match.directory,'match.jsonl');
+  assert.deepEqual((await verifyReplay(file,{'tank-trouble@2':gameV2,[game.id]:game})).result,result);
 });
 
 test('local transport discards stale tick replies and bounds action timeout',async()=>{

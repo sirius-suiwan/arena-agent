@@ -41,4 +41,4 @@ node apps/cli/arena.js run --seed 42 --rounds 10
 - [游戏适配器契约](protocol/game/README.md)：游戏决定 tick 频率及动作语义，宿主不解释物理。现有 [坦克规则](games/tank-trouble/RULES.md)；测试包含不同动作结构、不同 tick 频率的小型第二游戏。
 - [本机界面协议](protocol/viewer/README.md)：画面与输入只是裁判的客户端。未来的《疯狂小人战斗》尚未接入。
 
-写 bot 的 Agent 请从 [bots/README.md](bots/README.md) 开始，再看每款游戏目录的规则文件。坦克规则目前为 v2；历史 v1 记录仍能校验。
+写 bot 的 Agent 请从 [bots/README.md](bots/README.md) 开始，再看每款游戏目录的规则文件。坦克使用 v3 规则，新局默认是 12×9 格；历史 v1/v2 记录仍能校验。也可以启动时加 `--cols 16 --rows 12` 自定义地图尺寸，不改变旧回放。

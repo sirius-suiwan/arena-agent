@@ -31,12 +31,14 @@ function seedValue(input) {
 }
 
 export const DEFAULT_CONFIG = Object.freeze({ cols: 8, rows: 6, maxTicks: 3600, pickupInterval: 360, pickups: true });
+export const DEFAULT_CONFIG_V3 = Object.freeze({ ...DEFAULT_CONFIG, cols:12, rows:9 });
+const CRATE_HALF_SIZE=8, PICKUP_PADDING=2;
 
-function normalizedConfig(input) {
-  if (input === undefined) return { ...DEFAULT_CONFIG };
+function normalizedConfig(input, defaults) {
+  if (input === undefined) return { ...defaults };
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('config must be an object');
   for (const key of Object.keys(input)) if (!Object.hasOwn(DEFAULT_CONFIG, key)) throw new Error('unknown config key: ' + key);
-  const c = { ...DEFAULT_CONFIG, ...input };
+  const c = { ...defaults, ...input };
   for (const [key, lo, hi] of [['cols',4,16],['rows',4,12],['maxTicks',1,36000],['pickupInterval',1,3600]]) {
     if (!Number.isInteger(c[key]) || c[key] < lo || c[key] > hi) throw new RangeError(key + ' must be an integer in [' + lo + ', ' + hi + ']');
   }
@@ -80,12 +82,12 @@ function generateMaze(cols, rows, rng) {
   return walls;
 }
 
-export function init({ seed, config, players }) {
+function initRound({ seed, config, players }, revised) {
   if (!Array.isArray(players) || ![2,3].includes(players.length) || new Set(players).size !== players.length ||
       players.some(x => typeof x !== 'string' || !x.trim() || x.length > 128)) {
     throw new TypeError('two or three distinct nonempty string player IDs are required');
   }
-  const c = normalizedConfig(config), rng = { value: seedValue(seed) };
+  const c = normalizedConfig(config,revised?DEFAULT_CONFIG_V3:DEFAULT_CONFIG), rng = { value: seedValue(seed) };
   const width = c.cols * CELL, height = c.rows * CELL;
   const walls = generateMaze(c.cols, c.rows, rng);
   const spawns = [
@@ -104,9 +106,13 @@ export function init({ seed, config, players }) {
     tick: 0, width, height, walls, config: c, rng: rng.value, nextBullet: 1, nextPickup: 1,nextMine:1,
     tanks: players.map((id,i) => ({ id, ...spawns[i], alive: true, cooldown: 0, weapon:null,
       weaponAmmo:0, weaponCharge:0, weaponGap:0, fragId:null, fireHeld:false, aimAngle:null, aimGuide:null })),
-    bullets: [], pickups: [], mines:[], settleUntil:null, result: null
+    bullets: [], pickups: [], mines:[], settleUntil:null, result: null,
+    ...(revised?{pickupBlocks:[]}:null)
   };
 }
+
+export const init = (input) => initRound(input, false);
+export const initV3 = (input) => initRound(input, true);
 
 function distanceToWallSquared(x, y, w) {
   return (x-between(x,w.x1,w.x2))**2 + (y-between(y,w.y1,w.y2))**2;
@@ -386,10 +392,10 @@ function advanceShell(b, s, events, impacts, deferred) {
   return b.ttl>0 || expire('ttl');
 }
 
-function awardPickups(s, events) {
+function awardPickups(s, events, revised=false, spawn=true) {
   if (!s.config.pickups) return;
   const rng = {value:s.rng};
-  if (s.tick % s.config.pickupInterval === 0 && s.pickups.length < 4) {
+  if (spawn && s.tick % s.config.pickupInterval === 0 && s.pickups.length < 4) {
     const spots=[];
     for (let y=CELL/2;y<s.height;y+=CELL) for (let x=CELL/2;x<s.width;x+=CELL) {
       if (s.pickups.some(p=>p.x===x&&p.y===y) || s.tanks.some(t=>t.alive&&Math.hypot(t.x-x,t.y-y)<30)) continue;
@@ -402,19 +408,40 @@ function awardPickups(s, events) {
       events.push({type:'pickup-spawn',pickupType:p.type,pickupId:p.id,x:p.x,y:p.y});
     }
   }
+  const blocked=[];
+  const blockedPreviously=s.pickupBlocks;
   s.pickups=s.pickups.filter(p=>{
-    const candidates=s.tanks.filter(t=>t.alive&&!t.weapon&&Math.hypot(t.x-p.x,t.y-p.y)<=TANK_RADIUS+8);
-    if (!candidates.length) return true;
+    const contact=(t)=>{
+      if (!revised) return Math.hypot(t.x-p.x,t.y-p.y)<=TANK_RADIUS+8;
+      const dx=Math.max(Math.abs(t.x-p.x)-CRATE_HALF_SIZE,0),dy=Math.max(Math.abs(t.y-p.y)-CRATE_HALF_SIZE,0);
+      return dx*dx+dy*dy <= (TANK_RADIUS+PICKUP_PADDING)**2;
+    };
+    const touched=s.tanks.filter(t=>t.alive&&contact(t));
+    const candidates=touched.filter(t=>!t.weapon);
+    if (!candidates.length) {
+      if (revised) for (const t of touched) {
+        blocked.push({tankId:t.id,pickupId:p.id});
+        if (!blockedPreviously?.some(b=>b.tankId===t.id&&b.pickupId===p.id)) {
+          events.push({type:'pickup-blocked',tankId:t.id,pickupId:p.id,pickupType:p.type,
+            heldWeapon:t.weapon,reason:'weapon-slot-occupied',x:p.x,y:p.y});
+        }
+      }
+      return true;
+    }
     const distances=candidates.map(t=>Math.hypot(t.x-p.x,t.y-p.y));
     const minimum=Math.min(...distances);
     const tied=candidates.filter((_t,i)=>Math.abs(distances[i]-minimum)<=EPS);
     const winner=tied.length===1?tied[0]:tied[Math.floor(next(rng)*tied.length)];
     winner.weapon=p.type;
     winner.weaponAmmo=p.type==='gatling'?GATLING_AMMO:p.type==='mine'?3:1;
-    events.push({type:'pickup',tankId:winner.id,pickupId:p.id,pickupType:p.type,x:p.x,y:p.y});
+    const needsPress=p.type!=='gatling'&&p.type!=='death-ray';
+    events.push({type:'pickup',tankId:winner.id,pickupId:p.id,pickupType:p.type,x:p.x,y:p.y,
+      ...(revised?{weaponAmmo:winner.weaponAmmo,activation:needsPress?'press':'hold',releaseRequired:needsPress&&winner.fireHeld}:null)});
+
     return false;
   });
   s.rng=rng.value;
+  if (revised) s.pickupBlocks=blocked;
 }
 
 function advanceMines(s,events,deferred) {
@@ -429,7 +456,7 @@ function advanceMines(s,events,deferred) {
   });
 }
 
-export function step(state, actions) {
+function stepRound(state, actions, revised) {
   if (state.result) return {state,events:[],result:state.result};
   const s={...state,tick:state.tick+1,bullets:state.bullets.map(b=>({...b})),pickups:[...state.pickups],
     mines:state.mines.map(m=>({...m}))};
@@ -456,14 +483,21 @@ export function step(state, actions) {
       events.push({type:'last-tank-pending',tankId:alive[0].id,settleUntil:s.settleUntil});
     }
     if (s.tick>=s.settleUntil) s.result={winner:alive[0].id,reason:'last-tank'};
+    else if (revised) awardPickups(s,events,true,false);
   } else {
-    awardPickups(s,events);
+    awardPickups(s,events,revised);
     if (s.tick>=s.config.maxTicks) s.result={winner:null,reason:'timeout'};
   }
   // The guide previews only geometry and stops earlier than a real shot. Freeze
   // nested geometry because the generic observation copies tank records shallowly.
   for (const t of s.tanks) t.aimGuide=t.alive&&t.weapon==='laser'
     ? Object.freeze(traceLaser(s,t,LASER_GUIDE,false).path.map(p=>Object.freeze(p))) : null;
-  if (s.result) events.push({type:'ended',...s.result});
+  if (s.result) {
+    if (revised) s.pickupBlocks=[];
+    events.push({type:'ended',...s.result});
+  }
   return {state:s,events,result:s.result};
 }
+
+export const step = (state, actions) => stepRound(state, actions, false);
+export const stepV3 = (state, actions) => stepRound(state, actions, true);
