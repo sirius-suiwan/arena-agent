@@ -1,4 +1,4 @@
-# 坦克动荡：原版参数档（v8）
+# 坦克动荡：原版参数档
 
 本项目用自己的引擎实现原版数值，不使用 Flash 程序或素材。普通炮弹、道具与刷新来自 [Classic v4.03](https://classic.tanktrouble.com/includes/TankTrouble_v4.03.swf)，并和 [4399 v4.0 历史存档](https://github.com/ruffle-rs/ruffle/issues/15017) 交叉核对；键盘移动数值来自官网 [GameTank.swf](https://classic.tanktrouble.com/Assets/GameTank.swf)。4399 的移动模块未独立核对。
 
@@ -29,5 +29,5 @@
 ## 对局与回放
 
 - 2–8 席；地图默认 12×9，连通且可调宽高和复杂度。自由对战或 A–D 队；默认关闭队友伤害但不免疫自伤。缩圈默认 40 秒启动、15 秒缩完、区外 2 秒淘汰。最后剩下的选手或队伍在 3 秒结算期间无敌。每局间歇 1 秒；可先得目标分或打满固定局数。
-- 整场 `tick` 不重置，小局 `roundTick` 每局归零；弹丸和道具 ID 需配合小局号。旧回放按清单里的规则版本和 tickRate 校验，不重新运行 bot。
-- 配置与动作见 [配置 schema](schema/config-v8.json)、[动作 schema](schema/action-v8.json)。旧规则：[v1](RULES-v1.md)、[v2](RULES-v2.md)、[v3](RULES-v3.md)、[v4](RULES-v4.md)、[v5](RULES-v5.md)、[v6](RULES-v6.md)、[v7](RULES-v7.md)。
+- 整场 `tick` 不重置，小局 `roundTick` 每局归零；弹丸和道具 ID 需配合小局号。当前规则的回放按清单里的规则标识和 tickRate 校验，不重新运行 bot。历史规则只在 Git 中保留。
+- 配置与动作见 [配置 schema](schema/config.json)、[动作 schema](schema/action.json)。

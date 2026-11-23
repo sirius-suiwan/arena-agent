@@ -53,7 +53,7 @@ node apps/cli/arena.js run --seed 12 --rounds 3 --score-to-win 1 \
 {"type":"action","tick":42,"action":{"throttle":0,"turn":-1,"fire":true}}
 ```
 
-v8 提供 `observation.profile`，其中包含 `tickRate` 和以当前 tick 为单位的运动、武器量。按秒换算自己的计时；普通炮弹要先松开再按，不是长按连发。
+坦克对局提供 `observation.profile`，其中包含 `tickRate` 和以当前 tick 为单位的运动、武器量。按秒换算自己的计时；普通炮弹要先松开再按，不是长按连发。
 
 只把 JSON Lines 写到 stdout，及时刷新；诊断写 stderr。只用收到的观测决策，不读裁判内部状态或对手文件。保证动作在期限内返回；超时、非法或错 tick 的回复不会补到下一帧。用私有随机数时，为复现实验显式固定它的种子。当前运行器不是安全沙箱，只运行自己审核过的脚本。
 
