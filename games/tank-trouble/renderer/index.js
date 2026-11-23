@@ -2,6 +2,11 @@ const teams = [
   { hull: '#dc655f', turret: '#f18c80', track: '#913c3b', outline: '#653535' },
   { hull: '#48a783', turret: '#7bc8a7', track: '#2f705c', outline: '#2d5549' },
   { hull: '#448ec0', turret: '#77aed0', track: '#315f85', outline: '#314c68' },
+  { hull: '#d99138', turret: '#efbb69', track: '#946126', outline: '#725025' },
+  { hull: '#956ac2', turret: '#bd98e1', track: '#60488a', outline: '#513b6e' },
+  { hull: '#2faeb3', turret: '#7bd1d0', track: '#236e72', outline: '#285c62' },
+  { hull: '#c767a0', turret: '#e49ac2', track: '#834269', outline: '#713754' },
+  { hull: '#91a83e', turret: '#c0cd73', track: '#607629', outline: '#4b5e26' },
 ];
 const graphite = { hull: '#6b7385', turret: '#959dae', track: '#484e5b', outline: '#383e4b' };
 const weapons = {
@@ -9,12 +14,13 @@ const weapons = {
   shell: '炮弹', shrapnel: '破片', shield: '护盾', rapid: '快速装填',
 };
 
-function team(index, mode) {
-  return index < 0 || (mode === 'human' && index === 1) ? graphite : teams[index % teams.length];
+function team(index, mode, id) {
+  const slot = typeof id === 'string' && /^[A-H]$/.test(id) ? id.charCodeAt(0) - 65 : index;
+  return slot < 0 || (mode === 'human' && slot === 1) ? graphite : teams[slot % teams.length];
 }
 
 function teamForOwner(state, mode, id) {
-  return team(state.tanks.findIndex((tank) => tank.id === id), mode);
+  return team(state.tanks.findIndex((tank) => tank.id === id), mode, id);
 }
 
 function pointIsValid(item) {
@@ -58,8 +64,8 @@ function fitCanvas(canvas) {
   return { ctx: canvas.getContext('2d'), width, height, ratio };
 }
 
-export function tankSeatColor(index, mode) {
-  return team(index, mode).hull;
+export function tankSeatColor(index, mode, id) {
+  return team(index, mode, id).hull;
 }
 
 function roundedGlyph(ctx, x, y, w, h, radius, paint, outline, line = 1.15) {
@@ -293,7 +299,7 @@ export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], l
   }
   for (const [index, tank] of state.tanks.entries()) {
     if (!pointIsValid(tank) || tank.alive === false) continue;
-    const color = team(index, mode);
+    const color = team(index, mode, tank.id);
     if (drawPath(ctx, tank.aimGuide)) {
       ctx.save();
       ctx.setLineDash([3.4, 4.2]);
@@ -345,7 +351,7 @@ export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], l
   ctx.restore();
 }
 
-export function drawScoreIcon(canvas, index, mode) {
+export function drawScoreIcon(canvas, index, mode, id) {
   const { ctx, width, height } = fitCanvas(canvas);
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -353,7 +359,7 @@ export function drawScoreIcon(canvas, index, mode) {
   const scale = Math.min(width, height) / 29;
   ctx.setTransform(scale, 0, 0, scale, width / 2, height / 2);
   ctx.rotate(-Math.PI / 2);
-  stageTankGlyph(ctx, team(index, mode));
+  stageTankGlyph(ctx, team(index, mode, id));
 }
 
 export function drawWeaponIcon(canvas, weapon) {

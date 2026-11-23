@@ -45,6 +45,13 @@
         <p id="bot-catalog-status" role="status">正在读取已注册机器人…</p>
         <p id="bot-seat-help">单人对战只使用 B；Bot 对战使用 A、B，可选 C。本地多人不使用此设置。</p>
       </fieldset>
+      <details class="custom-seats">
+        <summary>自定义对局（2–8 席）</summary>
+        <p class="hint">每席可关闭、选择机器人或交给本地玩家。每套人类控制只能分配一次。</p>
+        <div id="custom-seat-list" class="custom-seat-list"></div>
+        <p id="custom-seat-status" class="hint" aria-live="polite"></p>
+        <button type="submit" id="custom-start" name="mode" value="custom" form="match-form">开始自定义对局</button>
+      </details>
       <button type="button" id="continue-match" hidden>返回对局</button>
     </section>
 
@@ -92,11 +99,16 @@
         </div>
         <section class="seat-name-settings" aria-labelledby="seat-names-title">
           <h2 id="seat-names-title">下局坦克名称</h2>
-          <p class="hint" id="seat-name-help">留空使用 bot 提供的名字或座位 ID；C 仅用于三人对战。</p>
+          <p class="hint" id="seat-name-help">留空使用 bot 提供的名字或座位 ID；未启用的座位会忽略。</p>
           <div class="seat-name-inputs" aria-describedby="seat-name-help">
             <label for="seat-name-A">A <input id="seat-name-A" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
             <label for="seat-name-B">B <input id="seat-name-B" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
             <label for="seat-name-C">C <input id="seat-name-C" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
+            <label for="seat-name-D">D <input id="seat-name-D" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
+            <label for="seat-name-E">E <input id="seat-name-E" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
+            <label for="seat-name-F">F <input id="seat-name-F" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
+            <label for="seat-name-G">G <input id="seat-name-G" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
+            <label for="seat-name-H">H <input id="seat-name-H" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
           </div>
         </section>
         <div id="timeline-panel" class="timeline" hidden>

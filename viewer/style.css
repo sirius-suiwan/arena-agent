@@ -126,7 +126,7 @@ canvas#battle.pointer-control { cursor: crosshair; touch-action: none; }
   font-size: 13px; font-weight: 700; pointer-events: none;
 }
 .score-panel { grid-area: scores; display: block; padding: 3px 2px 5px; min-width: 0; }
-.scoreboard { display: grid; grid-template-columns: repeat(var(--seat-count, 2), minmax(0, 1fr)); gap: clamp(3px, 1.1vw, 11px); }
+.scoreboard { display: grid; grid-template-columns: repeat(var(--score-columns, 2), minmax(0, 1fr)); gap: clamp(3px, 1.1vw, 11px); }
 .score.player-result {
   --seat-tint: #727682;
   display: grid; grid-template-rows: auto auto auto; align-content: start;
@@ -214,3 +214,27 @@ input[type=number] { width: 84px; margin-left: 3px; background: #fafafa; }
 #kill-markers button { min-height: 25px; padding: 2px 5px; }
 #kill-markers button[aria-pressed=true] { background: #dfdfdf; border-color: #484848; font-weight: 700; }
 #event-list button.kill-event { border-left: 3px solid #686868; }
+
+.custom-seats {
+  width: min(100%, 580px); margin: 0 0 9px; padding: 5px 9px 7px;
+  border: 1px solid #b7b7b7; background: #f1f1f1;
+}
+.custom-seats summary { cursor: pointer; color: var(--ink); font-size: 12px; font-weight: 700; }
+.custom-seats .hint { margin: 6px 0; }
+.custom-seat-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(122px, 1fr)); gap: 5px 9px; }
+.custom-seat-list label { display:flex; align-items:center; min-width: 0; gap: 5px; font: 700 11px ui-monospace, monospace; }
+.custom-seat-list select { flex: 1; min-width: 0; min-height: 26px; font: 12px system-ui,sans-serif; color: var(--ink); background: #fafafa; border: 1px solid #aaa; }
+.board.many-seats { width: min(100%, calc(max(165px, 100svh - 255px) * var(--field-ratio) + 2 * var(--rail-width))); }
+.board.many-seats #kill-board { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 3px; }
+.board.many-seats .kill-seat { grid-template-columns: 19px minmax(0, 1fr); gap: 3px; }
+.board.many-seats .kill-icon { width: 19px; height: 20px; }
+.board.many-seats .kill-number { font-size: clamp(12px, 1.4vw, 18px); }
+.board.many-seats .score.player-result { min-height: 72px; }
+.board.many-seats .score-face { gap: 5px; }
+.board.many-seats .score-icon { width: clamp(28px, 4vw, 41px); height: clamp(30px, 4vw, 42px); }
+.board.many-seats .score-number { font-size: clamp(17px, 2.7vw, 31px); }
+.board.many-seats .ammo-slot { width: 8px; height: 2px; }
+@media (max-width: 650px) {
+  .board.many-seats { width:100%; }
+  .board.many-seats #kill-board { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-flow: row; }
+}

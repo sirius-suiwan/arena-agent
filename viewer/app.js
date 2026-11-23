@@ -1,7 +1,7 @@
 import { renderers } from './renderers.js';
 import { emptyKillTotals, countKills } from './score-data.js';
 import { indexLethalProjectiles, lethalProjectileRings } from './replay-highlight.js';
-import { matchMode, keyboardAction, keySeat, pointerAction } from './input.js';
+import { matchMode, keyboardAction, keySeat, pointerAction, humanControls, humanHelp, pointerSeat, controlLabels } from './input.js';
 
 const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
@@ -11,7 +11,8 @@ const el = Object.fromEntries([
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
   'scoreboard', 'kill-board', 'arena-round-mode', 'arena-round', 'arena-round-target', 'round-label', 'round-notice', 'canvas-wrap',
   'kill-panel', 'kill-markers', 'kill-status',
-  'seat-name-A', 'seat-name-B', 'seat-name-C', 'seat-bot-A', 'seat-bot-B', 'seat-bot-C', 'bot-catalog-status',
+  'custom-seat-list', 'custom-seat-status', 'custom-start',
+  'seat-name-A', 'seat-name-B', 'seat-name-C', 'seat-name-D', 'seat-name-E', 'seat-name-F', 'seat-name-G', 'seat-name-H', 'seat-bot-A', 'seat-bot-B', 'seat-bot-C', 'bot-catalog-status',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
 ].map((id) => [id, byId(id)]));
 
@@ -26,6 +27,9 @@ let playback = null;
 let requestedMode = null;
 let starting = false;
 let botCatalog = new Map();
+const seatIds = [...'ABCDEFGH'];
+const customSeats = new Map();
+let customError = '';
 let stopRequest = null;
 let menuVisible = true;
 let streamOpen = false;
@@ -222,7 +226,7 @@ function renderScoreboard(match, state, renderer, kills = {}) {
     hudRows = ids.map((id, index) => {
       const card = makeNode('div', 'score player-result');
       const player = playerLabel(match.manifest, id);
-      const color = renderer?.seatColor?.(index, match.manifest?.mode);
+      const color = renderer?.seatColor?.(index, match.manifest?.mode, id);
       const identity = makeNode('div', 'score-identity');
       const name = makeNode('strong', 'score-name', names[index]);
       name.dir = 'auto';
@@ -262,10 +266,11 @@ function renderScoreboard(match, state, renderer, kills = {}) {
     });
     el.scoreboard.replaceChildren(items);
     el['kill-board'].replaceChildren(railItems);
-    el.scoreboard.style.setProperty('--seat-count', ids.length || 2);
-    hudRows.forEach(({ icon, railIcon }, index) => {
-      renderer?.scoreIcon?.(icon, index, match.manifest?.mode);
-      renderer?.scoreIcon?.(railIcon, index, match.manifest?.mode);
+    el.scoreboard.style.setProperty('--score-columns', Math.min(4, ids.length || 2));
+    el.stage.classList.toggle('many-seats', ids.length > 4);
+    hudRows.forEach(({ id, icon, railIcon }, index) => {
+      renderer?.scoreIcon?.(icon, index, match.manifest?.mode, id);
+      renderer?.scoreIcon?.(railIcon, index, match.manifest?.mode, id);
     });
   }
   for (const row of hudRows) {
@@ -374,7 +379,7 @@ function render() {
   const hasFrames = Boolean(record?.state);
   const matchActive = Boolean(live.manifest) && !live.done;
   const mode = matchMode(live.manifest?.mode);
-  const help = !replay && matchActive && mode?.help;
+  const help = !replay && matchActive && humanHelp(live.manifest);
   el['mode-label'].textContent = replay ? '离线回放' : mode?.label ?? '实时观战';
   const frame = hasFrames ? tickOf(record) : 0;
   el['frame-label'].textContent = `TICK ${frame}`;
@@ -399,12 +404,13 @@ function render() {
   el['stop-replay'].hidden = !canStopReplay;
   el['human-help'].hidden = !help;
   el['human-help'].textContent = help || '';
-  el.battle.classList.toggle('pointer-control', activeMode() === 'local3');
+  el.battle.classList.toggle('pointer-control', Boolean(pointerSeat(activeManifest())));
   el['back-live'].hidden = !replay;
   el['timeline-panel'].hidden = !replay;
   for (const button of el['match-form'].querySelectorAll('button')) {
     button.disabled = starting || matchActive || (!botCatalog.size && ['bots', 'human'].includes(button.value));
   }
+  el['custom-start'].disabled = starting || matchActive || Boolean(customError);
   el.seed.disabled = starting || matchActive;
   if (replay) {
     el.timeline.max = String(Math.max(0, match.frames.length - 1));
@@ -589,7 +595,7 @@ el['stop-match'].addEventListener('click', async () => {
     }
   } catch (error) {
     if (!replay && !live.done && live.manifest?.matchId === request.matchId) {
-      for (const id of humanSeats(live.manifest.mode)) sendInput(id, neutral);
+      for (const id of Object.keys(humanControls(live.manifest))) sendInput(id, neutral);
       setError(`无法停止对局：${error.message}`);
     }
   } finally {
@@ -599,8 +605,63 @@ el['stop-match'].addEventListener('click', async () => {
   }
 });
 
-function humanSeats(mode) {
-  return mode === 'local3' ? ['A', 'B', 'C'] : mode === 'local2' ? ['A', 'B'] : mode === 'human' ? ['A'] : [];
+function readCustomSeats() {
+  const seats = {};
+  const controls = new Set();
+  for (const [id, { select }] of customSeats) {
+    const value = select.value;
+    if (!value) continue;
+    const [kind, choice] = value.split(':');
+    if (kind === 'bot' && botCatalog.has(choice)) seats[id] = { bot: choice };
+    else if (kind === 'control' && Object.hasOwn(controlLabels, choice) && !controls.has(choice)) {
+      controls.add(choice);
+      seats[id] = { control: choice };
+    } else return { seats, error: '每套本地控制只能使用一次，请检查席位配置。' };
+  }
+  return { seats, error: Object.keys(seats).length < 2 ? '至少启用两席。' : '' };
+}
+
+function updateCustomSeatOptions() {
+  const selected = new Map([...customSeats].map(([id, { select }]) => [id, select.value]));
+  for (const [id, { options }] of customSeats) {
+    for (const option of options) {
+      option.disabled = option.value.startsWith('control:') &&
+        [...selected].some(([other, value]) => other !== id && value === option.value);
+    }
+  }
+  const { seats, error } = readCustomSeats();
+  customError = error;
+  el['custom-seat-status'].textContent = error || `已启用 ${Object.keys(seats).length}/8 席。`;
+  queueDraw();
+}
+
+function rebuildCustomSeats() {
+  const values = Object.fromEntries([...customSeats].map(([id, { select }]) => [id, select.value]));
+  const items = document.createDocumentFragment();
+  customSeats.clear();
+  for (const id of seatIds) {
+    const label = makeNode('label', '', id);
+    const select = makeNode('select');
+    select.id = `custom-seat-${id}`;
+    select.setAttribute('aria-label', `座位 ${id}`);
+    const choices = [['', '关闭'], ...Object.entries(controlLabels).map(([control, name]) =>
+      [`control:${control}`, `本地玩家 · ${name}`]),
+    ...Array.from(botCatalog, ([key, name]) => [`bot:${key}`, `Bot · ${name}`])];
+    const options = choices.map(([key, name]) => {
+      const option = makeNode('option', '', name);
+      option.value = key;
+      return option;
+    });
+    select.append(...options);
+    const previous = values[id] ?? (id === 'A' ? 'control:arrows' : id === 'B' ? 'control:esdf' : '');
+    select.value = choices.some(([value]) => value === previous) ? previous : '';
+    select.addEventListener('change', updateCustomSeatOptions);
+    customSeats.set(id, { select, options });
+    label.append(select);
+    items.append(label);
+  }
+  el['custom-seat-list'].replaceChildren(items);
+  updateCustomSeatOptions();
 }
 
 async function loadBotCatalog() {
@@ -644,7 +705,7 @@ async function loadBotCatalog() {
   } catch (error) {
     status.textContent = `无法读取机器人目录（${error.message}）。修正后可刷新重试，本地多人仍可开局。`;
   } finally {
-    queueDraw();
+    rebuildCustomSeats();
   }
 }
 
@@ -656,11 +717,13 @@ el['match-form'].addEventListener('submit', async (event) => {
   const mode = matchMode(requested) ? requested : 'human';
   const seed = Number(el.seed.value);
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return setError('种子必须是有效的非负整数。');
+  const custom = mode === 'custom' ? readCustomSeats() : null;
+  if (custom?.error) return setError(custom.error);
   const thirdBot = mode === 'bots' && Boolean(el['seat-bot-C'].value);
   const botSeats = mode === 'bots' ? (thirdBot ? ['A', 'B', 'C'] : ['A', 'B']) : mode === 'human' ? ['B'] : [];
   const bots = Object.fromEntries(botSeats.map(id => [id, el[`seat-bot-${id}`].value]));
   if (botSeats.some(id => !botCatalog.has(bots[id]))) return setError('请先选择有效的已注册机器人。');
-  const seats = mode === 'local3' || thirdBot ? ['A', 'B', 'C'] : ['A', 'B'];
+  const seats = custom ? Object.keys(custom.seats) : mode === 'local3' || thirdBot ? ['A', 'B', 'C'] : ['A', 'B'];
   const playerNames = {};
   for (const id of seats) {
     const name = tidyName(el[`seat-name-${id}`].value);
@@ -685,6 +748,7 @@ el['match-form'].addEventListener('submit', async (event) => {
     await post('/api/match', {
       mode, seed,
       ...(botSeats.length ? { bots } : {}),
+      ...(custom ? { seats: custom.seats } : {}),
       ...(Object.keys(playerNames).length ? { playerNames } : {}),
     });
   } catch (error) {
@@ -811,9 +875,9 @@ el.prev.addEventListener('click', () => { stopPlayback(); seek(frameIndex - 1); 
 el.next.addEventListener('click', () => { stopPlayback(); seek(frameIndex + 1); });
 el.details.addEventListener('toggle', () => queueDraw(true));
 
-function activeMode() {
+function activeManifest() {
   const stopping = stopRequest && stopRequest.matchId === live.manifest?.matchId;
-  return !menuVisible && !replay && !live.done && !stopping ? live.manifest?.mode : null;
+  return !menuVisible && !replay && !live.done && !stopping ? live.manifest : null;
 }
 
 function resetInput() {
@@ -831,19 +895,21 @@ function sendInput(playerId, action) {
   lastInput.set(playerId, action);
   const pending = (inputChains.get(playerId) ?? Promise.resolve()).then(async () => {
     if (epoch !== inputEpoch || live.done) return;
-    await post('/api/input', { playerId, ...action }, 1000);
+    const matchId = live.manifest?.matchId;
+    await post('/api/input', { playerId, ...(matchId ? { matchId } : {}), ...action }, 1000);
   }).catch(() => {
     if (lastInput.get(playerId) === action) lastInput.delete(playerId);
-    if (activeMode()) setError('输入未送达裁判。');
+    if (activeManifest()) setError('输入未送达裁判。');
   });
   inputChains.set(playerId, pending);
 }
 
 function updatePointer() {
-  if (activeMode() !== 'local3' || (!pointerTarget && !pointerPressed && !lastInput.has('C'))) return;
+  const seat = pointerSeat(activeManifest());
+  if (!seat || (!pointerTarget && !pointerPressed && !lastInput.has(seat))) return;
   const state = live.frames.at(-1)?.state;
-  const tank = state?.tanks?.find(({ id }) => id === 'C');
-  sendInput('C', pointerAction(tank, pointerTarget, pointerPressed));
+  const tank = state?.tanks?.find(({ id }) => id === seat);
+  sendInput(seat, pointerAction(tank, pointerTarget, pointerPressed));
 }
 
 function setPointerTarget(event) {
@@ -860,12 +926,12 @@ function releaseInput() {
 }
 
 el.battle.addEventListener('pointermove', (event) => {
-  if (activeMode() !== 'local3') return;
+  if (!pointerSeat(activeManifest())) return;
   setPointerTarget(event);
   updatePointer();
 });
 el.battle.addEventListener('pointerdown', (event) => {
-  if (activeMode() !== 'local3' || event.button !== 0) return;
+  if (!pointerSeat(activeManifest()) || event.button !== 0) return;
   event.preventDefault();
   el.battle.setPointerCapture?.(event.pointerId);
   setPointerTarget(event);
@@ -873,20 +939,20 @@ el.battle.addEventListener('pointerdown', (event) => {
   updatePointer();
 });
 el.battle.addEventListener('pointerup', (event) => {
-  if (activeMode() !== 'local3' || event.button !== 0) return;
+  if (!pointerSeat(activeManifest()) || event.button !== 0) return;
   pointerPressed = false;
   updatePointer();
 });
 for (const name of ['pointerleave', 'pointercancel']) {
   el.battle.addEventListener(name, () => {
-    if (activeMode() !== 'local3') return;
+    if (!pointerSeat(activeManifest())) return;
     pointerTarget = null;
     pointerPressed = false;
     updatePointer();
   });
 }
 addEventListener('keydown', (event) => {
-  const mode = activeMode();
+  const mode = activeManifest();
   const seat = keySeat(mode, event.code);
   if (!seat || event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.target?.closest?.('input, select, textarea, [contenteditable]')) return;
@@ -899,12 +965,13 @@ addEventListener('keydown', (event) => {
 addEventListener('keyup', (event) => {
   if (!heldKeys.delete(event.code)) return;
   event.preventDefault();
-  const mode = activeMode();
+  const mode = activeManifest();
   const seat = keySeat(mode, event.code);
   if (seat) sendInput(seat, keyboardAction(mode, seat, heldKeys));
 });
 addEventListener('blur', releaseInput);
 document.addEventListener('visibilitychange', () => { if (document.hidden) releaseInput(); });
 new ResizeObserver(() => queueDraw()).observe(el.battle);
+rebuildCustomSeats();
 void loadBotCatalog();
 queueDraw();
