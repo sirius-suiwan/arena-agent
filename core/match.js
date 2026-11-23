@@ -12,7 +12,7 @@ export function canonical(value) {
 export const stateHash = state => createHash('sha256').update(canonical(state)).digest('hex');
 export const playerIds = seats => Object.keys(seats).sort();
 
-export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3600,timeoutMs=50,realtime=false,record,botVersions={},matchId,pause,playerNames={}}) {
+export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3600,timeoutMs=50,realtime=false,record,botVersions={},matchId,signal,playerNames={}}) {
   const players = playerIds(seats);
   if (!Number.isSafeInteger(seed) || !Number.isSafeInteger(maxTicks) || maxTicks < 1 ||
       maxTicks > 100_000 || !Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error('invalid match limits');
@@ -33,7 +33,11 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
     const period = 1000 / game.tickRate;
     let deadline = performance.now() + period;
     for (let tick = 0; tick < maxTicks; tick++) {
-      if (pause && await pause.checkpoint(tick)) deadline = performance.now() + period;
+      if (signal?.aborted) {
+        const result={winner:null,reason:'stopped'};
+        await record({type:'end',result});
+        return result;
+      }
       const began = performance.now();
       if (realtime && began - deadline > 4 * period) deadline = began + period;
       const observed = players.map(playerId => game.observe(state, playerId));
@@ -68,7 +72,6 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
     await record({type:'end',result});
     return result;
   } finally {
-    pause?.close();
     for (const id of players) seats[id].close?.();
   }
 }

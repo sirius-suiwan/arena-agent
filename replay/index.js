@@ -46,7 +46,8 @@ export async function verifyReplay(path,registry) {
         tick++;
       } else {
         check(record.type === 'end','unexpected record type');
-        expected ??= tick === manifest.maxTicks ? {winner:null,reason:'tick_limit'} : undefined;
+        expected ??= tick === manifest.maxTicks ? {winner:null,reason:'tick_limit'}
+          : record.result?.reason === 'stopped' ? {winner:null,reason:'stopped'} : undefined;
         check(expected && same(expected,record.result),'result differs');
         ended = true;
       }

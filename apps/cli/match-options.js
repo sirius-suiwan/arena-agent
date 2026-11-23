@@ -22,14 +22,14 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks=game.def
   const matchId = randomUUID();
   const directory = join(base,game.id,matchId);
   const recording = await recorder(directory,onRecord);
-  return {directory,matchId,async run({pause}={}) {
+  return {directory,matchId,async run({signal}={}) {
     const seats = {};
     try {
       for (const plan of plans) {
         seats[plan.id] = plan.human ? human[plan.id] : new LocalBot(plan.command,[plan.path]);
       }
       return await runMatch({
-        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,pause,playerNames,record:message => recording.write(message),
+        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,signal,playerNames,record:message => recording.write(message),
         botVersions:Object.fromEntries(plans.map(p=>[p.id,p.version]))
       });
     } finally {
