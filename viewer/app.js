@@ -5,7 +5,7 @@ import { matchMode, keyboardAction, keySeat, pointerAction, humanControls, human
 
 const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
-  'battle', 'mode-label', 'match-form', 'seed', 'shrink-after', 'shrink-duration', 'arena-zone', 'back-live', 'replay-file',
+  'battle', 'mode-label', 'match-form', 'seed', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'match-id', 'match-id-value', 'match-id-copy',
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
@@ -26,9 +26,16 @@ let frameIndex = 0;
 let playback = null;
 let requestedMode = null;
 let starting = false;
-const shrinkOptions = [
-  { id: 'shrink-after', key: 'shrinkAfterSeconds', min: 0, defaultSeconds: 40 },
-  { id: 'shrink-duration', key: 'shrinkDurationSeconds', min: 1, defaultSeconds: 15 },
+const teamIds = ['1', '2', '3', '4'];
+const teamLetter = (id) => 'ABCD'[teamIds.indexOf(id)] ?? id;
+const matchOptions = [
+  { id: 'round-limit', key: 'roundLimit', min: 0, max: 20, initial: 0, label: '总局数' },
+  { id: 'maze-cols', key: 'cols', min: 4, max: 16, initial: 12, label: '地图列数' },
+  { id: 'maze-rows', key: 'rows', min: 4, max: 12, initial: 9, label: '地图行数' },
+  { id: 'maze-complexity', key: 'mazeComplexity', values: ['open', 'classic', 'dense'], initial: 'classic' },
+  { id: 'friendly-fire', key: 'friendlyFire', initial: false },
+  { id: 'shrink-after', key: 'shrinkAfterSeconds', min: 0, max: 120, initial: 40, label: '缩圈开始时间' },
+  { id: 'shrink-duration', key: 'shrinkDurationSeconds', min: 1, max: 120, initial: 15, label: '缩圈持续时间' },
 ];
 let botCatalog = new Map();
 const seatIds = [...'ABCDEFGH'];
@@ -65,7 +72,7 @@ function appendTick(match, record) {
   const previousKills = match.frames.at(-1)?.kills
     ?? emptyKillTotals(match.manifest?.players ?? record.state?.tanks?.map(({ id }) => id) ?? []);
   const kills = match === live && record.stats?.kills && typeof record.stats.kills === 'object'
-    ? { ...record.stats.kills } : countKills(previousKills, frameEvents);
+    ? { ...record.stats.kills } : countKills(previousKills, frameEvents, teamsFor(match.manifest, record.state));
   match.frames.push({ tick: tickOf(record), state: record.state, actions, events: frameEvents, kills });
   for (const event of frameEvents) {
     match.events.push({ index, tick: tickOf(record), event });
@@ -103,8 +110,9 @@ function outcome(result, manifest) {
   if (!result || typeof result !== 'object') return '结果未记录';
   const reason = result.reason;
   if (reason === 'stopped') return '已停止';
-  const reasonText = ({ 'last-tank': '场上最后一辆坦克', timeout: '达到时间上限', tick_limit: '达到时间上限', 'double-knockout': '同时被击毁', 'score-target': '达到目标分数', 'score-limit': '达到目标分数', 'round-limit': '达到局数上限' })[reason] ?? reason;
-  const winner = result.winner == null ? '平局' : `选手 ${playerLabel(manifest, result.winner)} 获胜`;
+  const reasonText = ({ 'last-tank': '场上最后一辆坦克', 'last-team': '场上最后一支队伍', timeout: '达到时间上限', tick_limit: '达到时间上限', 'double-knockout': '同时被击毁', 'score-target': '达到目标分数', 'score-limit': '达到目标分数', 'round-limit': '达到局数上限' })[reason] ?? reason;
+  const winner = teamIds.includes(result.winnerTeam) ? `队伍 ${teamLetter(result.winnerTeam)} 获胜`
+    : result.winner == null ? '平局' : `选手 ${playerLabel(manifest, result.winner)} 获胜`;
   return reasonText ? `${winner}（${reasonText}）` : winner;
 }
 
@@ -219,10 +227,20 @@ function setText(node, text) {
   if (node.textContent !== String(text)) node.textContent = String(text);
 }
 
+function teamsFor(manifest, state) {
+  return state?.teams ?? manifest?.config?.teams ?? manifest?.teams ?? {};
+}
+
 function renderScoreboard(match, state, renderer, kills = {}) {
-  const ids = state?.tanks?.map((tank) => tank.id) ?? match.manifest?.players ?? [];
+  const teams = teamsFor(match.manifest, state);
+  const ids = [...(state?.tanks?.map((tank) => tank.id) ?? match.manifest?.players ?? [])];
+  ids.sort((a, b) => String(teams[a] ?? '').localeCompare(String(teams[b] ?? '')));
+  const activeTeams = teamIds.filter((team) => ids.some((id) => teams[id] === team));
+  const teamScore = el['team-scoreboard'];
+  teamScore.hidden = activeTeams.length === 0;
+  setText(teamScore, activeTeams.map((team) => `队伍 ${teamLetter(team)}：${state?.teamScores?.[team] ?? 0} 分`).join('　·　'));
   const names = ids.map((id) => playerName(match.manifest, id));
-  const key = JSON.stringify([match.manifest?.mode, ids, names, renderer?.title]);
+  const key = JSON.stringify([match.manifest?.mode, ids, names, ids.map((id) => teams[id]), renderer?.title]);
   if (scoreKey !== key) {
     scoreKey = key;
     const items = document.createDocumentFragment();
@@ -234,8 +252,13 @@ function renderScoreboard(match, state, renderer, kills = {}) {
       const identity = makeNode('div', 'score-identity');
       const name = makeNode('strong', 'score-name', names[index]);
       name.dir = 'auto';
-      const seat = makeNode('span', 'score-id', names[index] === id ? '' : id);
-      identity.append(name, seat);
+      identity.append(name);
+      const team = teams[id];
+      if (teamIds.includes(team)) {
+        const tag = makeNode('span', 'team-badge', `队 ${teamLetter(team)}`);
+        tag.setAttribute('data-team', team);
+        identity.append(tag);
+      }
       const face = makeNode('div', 'score-face');
       const icon = makeNode('canvas', 'score-icon');
       const number = makeNode('span', 'score-number', '0');
@@ -287,6 +310,7 @@ function renderScoreboard(match, state, renderer, kills = {}) {
     const killCount = Number.isSafeInteger(kills[row.id]) ? Math.max(0, kills[row.id]) : 0;
     row.card.classList.toggle('is-destroyed', dead);
     row.rail.classList.toggle('is-destroyed', dead);
+    row.number.hidden = teamIds.includes(teams[row.id]);
     setText(row.number, score);
     setText(row.count, killCount);
     row.rail.setAttribute('aria-label', `${row.player}：${killCount} 次击杀`);
@@ -310,22 +334,24 @@ function renderScoreboard(match, state, renderer, kills = {}) {
       if (row.equipment !== equipped) renderer?.weaponIcon?.(row.weaponIcon, equipped);
       row.equipment = equipped;
     } else if (!weapon) row.equipment = undefined;
-    row.card.setAttribute('aria-label', `选手 ${row.player}：${score} 分${dead ? '，本局已击毁' : ''}${ammo ? `，空闲普通弹槽 ${ammo.available}/${ammo.limit}` : ''}${weapon ? `，已装备${weapon}` : ''}`);
+    row.card.setAttribute('aria-label', `选手 ${row.player}：${teamIds.includes(teams[row.id]) ? '队伍 ' + teamLetter(teams[row.id]) : score + ' 分'}${dead ? '，本局已击毁' : ''}${ammo ? `，空闲普通弹槽 ${ammo.available}/${ammo.limit}` : ''}${weapon ? `，已装备${weapon}` : ''}`);
   }
   const round = state?.round ?? 1;
-  const target = Number.isSafeInteger(state?.targetScore) ? `先到 ${state.targetScore} 分` : '单局对战';
+  const fixed = state?.roundLimit ?? match.manifest?.config?.roundLimit;
+  const target = Number.isSafeInteger(fixed) && fixed > 0 ? `共 ${fixed} 局`
+    : Number.isSafeInteger(state?.targetScore) ? `先到 ${state.targetScore} 分` : '单局对战';
   setText(el['arena-round-mode'], matchMode(match.manifest?.mode)?.label ?? '坦克对战');
   setText(el['arena-round'], `第 ${round} 局`);
   setText(el['arena-round-target'], target);
-  el['round-label'].textContent = Number.isSafeInteger(state?.targetScore)
-    ? `第 ${round} 局 · 先到 ${state.targetScore} 分` : `第 ${round} 局`;
+  el['round-label'].textContent = `第 ${round} 局 · ${target}`;
   const notice = el['round-notice'];
   if (match.done && match.result?.reason === 'stopped' && (!replay || frameIndex === match.frames.length - 1)) {
     notice.hidden = false;
     notice.textContent = '已停止';
   } else if (state?.phase === 'intermission') {
     notice.hidden = false;
-    notice.textContent = state.roundWinner == null ? '本局平局' : `选手 ${playerLabel(match.manifest, state.roundWinner)} 拿下本局`;
+    notice.textContent = teamIds.includes(state.roundWinnerTeam) ? `队伍 ${teamLetter(state.roundWinnerTeam)} 拿下本局`
+      : state.roundWinner == null ? '本局平局' : `选手 ${playerLabel(match.manifest, state.roundWinner)} 拿下本局`;
   } else if (state?.phase === 'finished' && state.result) {
     notice.hidden = false;
     notice.textContent = outcome(state.result, match.manifest);
@@ -427,7 +453,7 @@ function render() {
   }
   el['custom-start'].disabled = starting || matchActive || Boolean(customError);
   el.seed.disabled = starting || matchActive;
-  for (const option of shrinkOptions) el[option.id].disabled = starting || matchActive;
+  for (const option of matchOptions) el[option.id].disabled = starting || matchActive;
   const zoneText = zoneLabel(record?.state, match.manifest?.tickRate);
   el['arena-zone'].hidden = !zoneText;
   el['arena-zone'].textContent = zoneText;
@@ -452,7 +478,7 @@ function render() {
     el.battle.setAttribute('aria-label', renderer.title);
     renderer.draw(el.battle, record.state, {
       mode: match.manifest?.mode,
-      names: Object.fromEntries((record.state.tanks ?? []).map(({ id }) => [id, playerName(match.manifest, id)])),
+      teams: teamsFor(match.manifest, record.state),
       effects: effectsAt(match.frames, current),
       lethalRings: replay ? lethalProjectileRings(replay.lethalIndex, record, current) : [],
     });
@@ -637,12 +663,21 @@ function readCustomSeats() {
       seats[id] = { control: choice };
     } else return { seats, error: '每套本地控制只能使用一次，请检查席位配置。' };
   }
-  return { seats, error: Object.keys(seats).length < 2 ? '至少启用两席。' : '' };
+  const teams = el['team-mode'].checked
+    ? Object.fromEntries(Object.keys(seats).map((id) => [id, customSeats.get(id).team.value]))
+    : null;
+  if (teams && (!Object.values(teams).every((team) => teamIds.includes(team))
+      || new Set(Object.values(teams)).size < 2)) {
+    return { seats, error: '队伍对战需要为每个启用的席位分队，且至少有两支队伍。' };
+  }
+  return { seats, teams, error: Object.keys(seats).length < 2 ? '至少启用两席。' : '' };
 }
 
 function updateCustomSeatOptions() {
   const selected = new Map([...customSeats].map(([id, { select }]) => [id, select.value]));
-  for (const [id, { options }] of customSeats) {
+  for (const [id, { options, team }] of customSeats) {
+    team.hidden = !el['team-mode'].checked || !selected.get(id);
+    team.disabled = team.hidden;
     for (const option of options) {
       option.disabled = option.value.startsWith('control:') &&
         [...selected].some(([other, value]) => other !== id && value === option.value);
@@ -656,6 +691,7 @@ function updateCustomSeatOptions() {
 
 function rebuildCustomSeats() {
   const values = Object.fromEntries([...customSeats].map(([id, { select }]) => [id, select.value]));
+  const assignments = Object.fromEntries([...customSeats].map(([id, { team }]) => [id, team.value]));
   const items = document.createDocumentFragment();
   customSeats.clear();
   for (const id of seatIds) {
@@ -675,13 +711,27 @@ function rebuildCustomSeats() {
     const previous = values[id] ?? (id === 'A' ? 'control:arrows' : id === 'B' ? 'control:esdf' : '');
     select.value = choices.some(([value]) => value === previous) ? previous : '';
     select.addEventListener('change', updateCustomSeatOptions);
-    customSeats.set(id, { select, options });
+    const team = makeNode('select', 'seat-team');
+    team.id = `custom-team-${id}`;
+    team.setAttribute('aria-label', `座位 ${id} 的队伍`);
+    team.append(...teamIds.map((number) => {
+      const option = makeNode('option', '', `队 ${teamLetter(number)}`);
+      option.value = number;
+      return option;
+    }));
+    team.value = assignments[id] ?? (seatIds.indexOf(id) % 2 ? '2' : '1');
+    team.addEventListener('change', updateCustomSeatOptions);
+    customSeats.set(id, { select, options, team });
+    const row = makeNode('div', 'custom-seat-row');
     label.append(select);
-    items.append(label);
+    row.append(label, team);
+    items.append(row);
   }
   el['custom-seat-list'].replaceChildren(items);
   updateCustomSeatOptions();
 }
+
+el['team-mode'].addEventListener('change', updateCustomSeatOptions);
 
 async function loadBotCatalog() {
   const status = el['bot-catalog-status'];
@@ -728,12 +778,14 @@ async function loadBotCatalog() {
   }
 }
 
-for (const option of shrinkOptions) {
+for (const option of matchOptions) {
   el[option.id].addEventListener('input', () => { option.edited = true; });
 }
 
-function validShrinkSeconds(seconds, min) {
-  return Number.isInteger(seconds) && seconds >= min && seconds <= 120;
+function validOption(value, option) {
+  if (option.values) return option.values.includes(value);
+  if (typeof option.initial === 'boolean') return typeof value === 'boolean';
+  return Number.isInteger(value) && value >= option.min && value <= option.max;
 }
 
 async function loadMatchOptions() {
@@ -741,16 +793,16 @@ async function loadMatchOptions() {
     const response = await fetch('/api/options', { signal: AbortSignal.timeout(5000) });
     if (!response.ok) return;
     const defaults = await response.json();
-    for (const option of shrinkOptions) {
-      const seconds = defaults?.[option.key];
-      if (validShrinkSeconds(seconds, option.min)) {
-        option.defaultSeconds = seconds;
-        option.defaultKnown = true;
-        if (!option.edited) el[option.id].value = String(seconds);
-      }
+    for (const option of matchOptions) {
+      const value = defaults?.[option.key];
+      if (!validOption(value, option)) continue;
+      option.serverDefault = value;
+      if (option.edited) continue;
+      if (typeof value === 'boolean') el[option.id].checked = value;
+      else el[option.id].value = String(value);
     }
   } catch {
-    // The placeholder remains usable with older or temporarily unreachable servers.
+    // Keep usable placeholders with older or temporarily unreachable servers.
   }
 }
 void loadMatchOptions();
@@ -763,15 +815,17 @@ el['match-form'].addEventListener('submit', async (event) => {
   const mode = matchMode(requested) ? requested : 'human';
   const seed = Number(el.seed.value);
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return setError('种子必须是有效的非负整数。');
-  const zoneOverrides = {};
-  for (const option of shrinkOptions) {
-    const value = el[option.id].value;
-    const seconds = Number(value);
-    if (!value || !validShrinkSeconds(seconds, option.min)) {
-      return setError(`缩圈${option.min === 0 ? '开始' : '持续'}时间必须是 ${option.min}–120 秒的整数。`);
+  const overrides = {};
+  for (const option of matchOptions) {
+    const element = el[option.id];
+    const value = typeof option.initial === 'boolean' ? Boolean(element.checked) : option.values ? element.value
+      : element.value ? Number(element.value) : NaN;
+    if (!validOption(value, option)) {
+      return setError(option.values ? '请选择有效的迷宫复杂度。'
+        : `${option.label}必须是 ${option.min}–${option.max} 的整数。`);
     }
-    if (seconds !== option.defaultSeconds || (option.edited && !option.defaultKnown)) {
-      zoneOverrides[option.key] = seconds;
+    if (value !== (option.serverDefault ?? option.initial) || (option.edited && option.serverDefault === undefined)) {
+      overrides[option.key] = value;
     }
   }
   const custom = mode === 'custom' ? readCustomSeats() : null;
@@ -804,9 +858,10 @@ el['match-form'].addEventListener('submit', async (event) => {
   try {
     await post('/api/match', {
       mode, seed,
-      ...zoneOverrides,
+      ...overrides,
       ...(botSeats.length ? { bots } : {}),
       ...(custom ? { seats: custom.seats } : {}),
+      ...(custom?.teams ? { teams: custom.teams } : {}),
       ...(Object.keys(playerNames).length ? { playerNames } : {}),
     });
   } catch (error) {

@@ -1,20 +1,20 @@
-:root { color-scheme: light; color: #222; background: #e9e9e9; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; }
+:root { color-scheme: light; color: #222; background: radial-gradient(ellipse at 50% -10%, #fff 20%, transparent 72%), #e9edf0; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; }
 * { box-sizing: border-box; }
-body { margin: 0; }
-main { max-width: 734px; margin: min(13vh, 90px) auto; padding: 0 22px 32px; }
-.brand { margin: 0 0 6px; color: #5c5c5c; font: 700 12px ui-monospace, monospace; letter-spacing: .18em; }
+body { margin: 0; min-height: 100svh; display: flow-root; }
+main { max-width: 734px; margin: clamp(40px, 12vh, 104px) auto; padding: 0 22px 32px; }
+.brand { margin: 0 0 6px; color: #41647d; font: 700 12px ui-monospace, monospace; letter-spacing: .18em; }
 h1 { margin: 0 0 28px; font-size: clamp(26px, 7vw, 42px); line-height: 1.15; }
 .games { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.game { min-width: 0; color: inherit; background: #f8f8f8; border: 2px solid #a6a6a6; text-decoration: none; }
-.playable:hover, .playable:focus-visible { border-color: #333; outline-offset: 3px; }
-.art { display: grid; place-items: center; min-height: 135px; background: #dadada; border-bottom: 1px solid #aaa; }
+.game { min-width: 0; color: inherit; background: #fcfdfe; border: 1px solid #c4cfd7; border-radius: 12px; overflow: hidden; box-shadow: 0 3px 12px #34495e12; text-decoration: none; }
+.playable:hover, .playable:focus-visible { border-color: #41647d; background: #f8fbff; outline-offset: 3px; }
+.art { display: grid; place-items: center; min-height: 148px; background: #e3ebee; border-bottom: 1px solid #d3dde3; }
 .art svg { max-width: 84%; height: auto; }
-.future-art { background: #efefef; }
+.future-art { background: #edf0f2; }
 .caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; }
 strong, small { display: block; }
 strong { font-size: 18px; }
 small { color: #525252; margin-top: 3px; }
-.enter { font-size: 23px; line-height: 1; }
+.enter { color: #325672; font-size: 23px; line-height: 1; }
 .upcoming { color: #4f4f4f; }
 @media (max-width: 520px) {
   main { margin-top: 32px; }

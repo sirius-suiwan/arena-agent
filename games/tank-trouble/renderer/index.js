@@ -8,6 +8,8 @@ const teams = [
   { hull: '#c767a0', turret: '#e49ac2', track: '#834269', outline: '#713754' },
   { hull: '#91a83e', turret: '#c0cd73', track: '#607629', outline: '#4b5e26' },
 ];
+const squadLetter = (id) => 'ABCD'[Number(id) - 1] ?? id;
+const squadColors = Object.freeze({ '1': '#84365c', '2': '#166558', '3': '#315b99', '4': '#825417' });
 const graphite = { hull: '#6b7385', turret: '#959dae', track: '#484e5b', outline: '#383e4b' };
 const weapons = {
   'death-ray': '死光', laser: '激光', 'laser-sight': '激光', gatling: '加特林', frag: '破片弹', mine: '地雷',
@@ -274,7 +276,7 @@ function drawZone(ctx, state, scale, ratio) {
   ctx.restore();
 }
 
-export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], lethalRings = [] } = {}) {
+export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, effects = [], lethalRings = [] } = {}) {
   const { ctx, width, height, ratio } = fitCanvas(canvas);
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -324,6 +326,7 @@ export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], l
   for (const [index, tank] of state.tanks.entries()) {
     if (!pointIsValid(tank) || tank.alive === false) continue;
     const color = team(index, mode, tank.id);
+    const squad = teams[tank.id];
     if (drawPath(ctx, tank.aimGuide)) {
       ctx.save();
       ctx.setLineDash([3.4, 4.2]);
@@ -342,25 +345,19 @@ export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], l
     ctx.rotate(Number.isFinite(tank.angle) ? tank.angle : 0);
     stageTankGlyph(ctx, color);
     ctx.restore();
-    const name = Object.hasOwn(names, tank.id) ? names[tank.id] : null;
-    if (typeof name === 'string' && name !== tank.id && name && scale / ratio >= 0.76) {
+    if (Object.hasOwn(squadColors, squad)) {
+      const badgeY = tank.y > state.height - 30 ? tank.y - 24 : tank.y + 18;
+      const badgeX = Math.max(7, Math.min(state.width - 7, tank.x));
       ctx.save();
-      const letters = [...name];
-      const label = letters.length > 13 ? letters.slice(0, 12).join('') + '…' : name;
-      ctx.font = '650 11px system-ui, sans-serif';
+      ctx.font = '700 9px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      const available = ctx.measureText(label)?.width ?? label.length * 8;
-      const halfWidth = Math.min(65, available / 2);
-      const px = Math.max(halfWidth + 3, Math.min(state.width - halfWidth - 3, tank.x));
-      const py = tank.y < 28 ? tank.y + 22 : tank.y - 15;
-      ctx.strokeStyle = '#efefed';
-      ctx.lineWidth = 2.6;
-      ctx.lineJoin = 'round';
-      ctx.strokeText(label, px, py, 130);
-      ctx.fillStyle = '#282734';
-      ctx.fillText(label, px, py, 130);
+      ctx.fillStyle = squadColors[squad];
+      ctx.fillRect(badgeX - 6, badgeY - 8, 12, 11);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(squadLetter(squad), badgeX, badgeY);
       ctx.restore();
     }
+
   }
 
   for (const bullet of state.bullets) {
@@ -368,9 +365,11 @@ export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], l
     const size = bullet.kind === 'frag' ? 4.1 : bullet.kind === 'gatling' || bullet.kind === 'shrapnel' ? 2.1 : 3.1;
     ctx.beginPath();
     ctx.arc(bullet.x, bullet.y, Math.max(size, ratio / scale), 0, Math.PI * 2);
-    const color = teamForOwner(state, mode, bullet.ownerId ?? bullet.owner);
+    const owner = bullet.ownerId ?? bullet.owner;
+    const color = teamForOwner(state, mode, owner);
+    const squad = teams[owner];
     ctx.fillStyle = color.hull; ctx.fill();
-    ctx.strokeStyle = color.outline; ctx.lineWidth = Math.max(0.82, ratio * 0.6 / scale); ctx.stroke();
+    ctx.strokeStyle = Object.hasOwn(squadColors, squad) ? squadColors[squad] : color.outline; ctx.lineWidth = Math.max(0.82, ratio * 0.6 / scale); ctx.stroke();
   }
   ctx.save();
   ctx.beginPath();
@@ -426,7 +425,7 @@ export function formatTankEvent(event, displayPlayer = (id) => id) {
   const labels = [kind, event.round == null ? null : `第 ${event.round} 局`,
     actor == null ? null : `选手 ${displayPlayer(actor)}`, target == null ? null : `目标 ${displayPlayer(target)}`,
     shell == null ? null : `弹丸 ${shell}`, weapon == null ? null : weapons[weapon] ?? weapon,
-    event.winner == null ? null : `选手 ${displayPlayer(event.winner)} 获胜`,
+    event.winnerTeam != null ? `队伍 ${squadLetter(event.winnerTeam)} 获胜` : event.winner == null ? null : `选手 ${displayPlayer(event.winner)} 获胜`,
     event.absorbed ? '护盾吸收' : null, position];
   return labels.filter(Boolean).join(' · ');
 }

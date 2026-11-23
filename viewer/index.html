@@ -48,18 +48,42 @@
       <details class="custom-seats">
         <summary>自定义对局（2–8 席）</summary>
         <p class="hint">每席可关闭、选择机器人或交给本地玩家。每套人类控制只能分配一次。</p>
+        <label class="team-mode" for="team-mode"><input id="team-mode" type="checkbox"> 自定义队伍对战</label>
         <div id="custom-seat-list" class="custom-seat-list"></div>
         <p id="custom-seat-status" class="hint" aria-live="polite"></p>
         <button type="submit" id="custom-start" name="mode" value="custom" form="match-form">开始自定义对局</button>
       </details>
-      <div class="zone-settings">
-        <label class="shrink-setting" for="shrink-after">缩圈开始（每小局）
-          <input id="shrink-after" form="match-form" type="number" min="0" max="120" step="1" value="40" required> 秒
-        </label>
-        <label class="shrink-setting" for="shrink-duration">持续时间
-          <input id="shrink-duration" form="match-form" type="number" min="1" max="120" step="1" value="15" required> 秒
-        </label>
-      </div>
+      <details class="game-settings">
+        <summary>对局设置</summary>
+        <div class="zone-settings">
+          <label class="shrink-setting">总局数
+            <input id="round-limit" form="match-form" type="number" min="0" max="20" step="1" value="0" required>
+          </label>
+          <label class="shrink-setting">地图列数
+            <input id="maze-cols" form="match-form" type="number" min="4" max="16" step="1" value="12" required>
+          </label>
+          <label class="shrink-setting">地图行数
+            <input id="maze-rows" form="match-form" type="number" min="4" max="12" step="1" value="9" required>
+          </label>
+          <label class="shrink-setting">迷宫复杂度
+            <select id="maze-complexity">
+              <option value="open">开阔</option>
+              <option value="classic" selected>经典</option>
+              <option value="dense">密集</option>
+            </select>
+          </label>
+          <label class="shrink-setting">队伍友伤
+            <input id="friendly-fire" type="checkbox">
+          </label>
+          <label class="shrink-setting" for="shrink-after">缩圈开始（每小局）
+            <input id="shrink-after" form="match-form" type="number" min="0" max="120" step="1" value="40" required> 秒
+          </label>
+          <label class="shrink-setting" for="shrink-duration">持续时间
+            <input id="shrink-duration" form="match-form" type="number" min="1" max="120" step="1" value="15" required> 秒
+          </label>
+        </div>
+        <p class="hint">总局数填 0 按现行积分规则；队伍模式在自定义对局中开启。</p>
+      </details>
       <button type="button" id="continue-match" hidden>返回对局</button>
     </section>
 
@@ -77,6 +101,7 @@
         <p id="round-notice" class="round-notice" hidden></p>
       </div>
       <div class="score-panel">
+        <p id="team-scoreboard" class="team-scoreboard" hidden></p>
         <div id="scoreboard" class="scoreboard" aria-label="选手比分"></div>
       </div>
       <aside class="kill-rail" aria-label="对局击杀">

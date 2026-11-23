@@ -32,8 +32,6 @@ a.game-link:hover { text-decoration: underline; }
   border: 3px solid #282828; border-radius: 0; padding: 6px clamp(5px, 2.8vw, 24px);
   min-height: 44px; box-shadow: 2px 4px 0 #bfbfbf;
 }
-.classic-menu button:first-child { transform: rotate(-3deg); }
-.classic-menu button:nth-child(3) { transform: rotate(2deg); }
 .classic-menu button:not(:disabled):hover { box-shadow: 2px 5px 0 #8a8a8a; }
 .classic-menu button small { display: block; font-size: .62em; line-height: 1.15; font-weight: 600; }
 #game-title {
@@ -243,3 +241,54 @@ input[type=number] { width: 84px; margin-left: 3px; background: #fafafa; }
 .shrink-setting { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .shrink-setting input { width: 5rem; }
 .arena-zone { color: #f5d49a; }
+
+.game-settings { width: min(100%, 600px); padding: 6px 8px; margin-top: 5px; }
+.game-settings summary { cursor: pointer; font-size: 12px; font-weight: 700; text-align: center; }
+.game-settings .zone-settings { margin-top: 9px; }
+.game-settings .hint { text-align: center; }
+.team-mode { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; margin-bottom: 6px; }
+.custom-seat-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.custom-seat-row label { flex: 1; }
+.custom-seat-row .seat-team { flex: 0 0 auto; }
+.team-scoreboard { width: 100%; margin: 1px 0; text-align: center; font-size: 12px; font-weight: 700; }
+.team-badge { padding: 1px 3px; white-space: nowrap; border-radius: 3px; color: #fff; background: #444; font-size: 10px; }
+.team-badge[data-team="1"] { background: #84365c; }
+.team-badge[data-team="2"] { background: #166558; }
+.team-badge[data-team="3"] { background: #315b99; }
+.team-badge[data-team="4"] { background: #825417; }
+
+/* Menu-only colors and spacing; the running arena keeps its own gray floor. */
+body:has(#menu:not([hidden])) {
+  background: radial-gradient(ellipse at 50% -15%, #fff 25%, transparent 70%), #e9edf0;
+}
+.game-menu {
+  gap: 12px;
+  min-height: min(69svh, 580px);
+  padding-block: clamp(22px, 5vh, 50px);
+}
+#game-title { margin-bottom: 10px; color: #202935; }
+#game-title span { color: #41647d; }
+.classic-menu { gap: 8px; }
+.classic-menu button {
+  padding-inline: clamp(8px, 2vw, 22px);
+  border: 1px solid #afbbc5;
+  border-radius: 7px;
+  box-shadow: 0 2px 3px #2632441a;
+  min-height: 48px;
+  color: #20384b;
+  font-size: clamp(13px, 2.3vw, 18px);
+}
+.classic-menu button:not(:disabled):hover { background: #f3f8ff; border-color: #496780; box-shadow: 0 2px 3px #26324433; }
+.classic-menu #bot-start:not(:disabled) { color: #fff; background: #325672; border-color: #325672; }
+.classic-menu #bot-start:not(:disabled):hover { background: #24465f; }
+.bot-seat-picker, .game-settings, .custom-seats {
+  width: min(100%, 600px);
+  margin: 0;
+  border: 1px solid #cbd3d9;
+  border-radius: 8px;
+  background: #fdfdfee0;
+}
+.bot-seat-picker { padding-inline: 12px; }
+.game-settings select { min-height: 28px; border: 1px solid #a9b7c3; border-radius: 4px; background: #fdfdfd; font: inherit; }
+.shrink-setting input[type="checkbox"], .team-mode input { width: 1rem; min-height: 1rem; padding: 0; accent-color: #325672; }
+#continue-match { margin: 0; }

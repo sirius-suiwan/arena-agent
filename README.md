@@ -43,7 +43,17 @@ node apps/cli/arena.js run --seed 42 --rounds 10
 - [游戏适配器契约](protocol/game/README.md)：游戏决定 tick 频率及动作语义，宿主不解释物理。现有 [坦克规则](games/tank-trouble/RULES.md)；测试包含不同动作结构、不同 tick 频率的小型第二游戏。
 - [本机界面协议](protocol/viewer/README.md)：画面与输入只是裁判的客户端。未来的《疯狂小人战斗》尚未接入。
 
-写 bot 的 Agent 请从 [bots/README.md](bots/README.md) 开始，再看每款游戏目录的规则文件。坦克使用 v6 规则，支持 2–8 席。新局默认 12×9 格，每个坦克可同时发出 10 枚普通弹，默认速度 5.2 像素/tick；历史 v1–v5 回放仍能校验。也可以启动时加 `--cols 16 --rows 12` 自定义地图尺寸，或用 `--shell-speed 6` 调整新局普通弹速度，不改变旧回放。
+写 bot 的 Agent 请从 [bots/README.md](bots/README.md) 开始，再看每款游戏目录的规则文件。坦克使用 v7 规则，支持 2–8 席。新局默认 12×9 格，每个坦克可同时发出 10 枚普通弹，默认速度 5.2 像素/tick；历史 v1–v6 回放仍能校验。用 `--shell-speed 6` 调整新局普通弹速度，不改变旧回放。
+
+「对局设置」可选择先到 3 分或打满 1–20 局、地图宽高和开放／经典／密集三档迷宫。组队在「自定义对局」里分配 A–D 队，至少两队；友伤默认关闭，自伤仍有效。自由对战不在坦克旁标席位，组队时只标队伍字母。CLI 例：
+
+```sh
+node apps/cli/arena.js run --bot-a laika --bot-b gpt-dots --bot-c scout --bot-d turret \
+  --round-limit 5 --cols 12 --rows 9 --maze-complexity dense \
+  --teams '{"A":"1","B":"2","C":"1","D":"2"}' --friendly-fire off
+```
+
+`--round-limit` 是每场打几局；`--rounds` 仍是批量跑多少场。长赛制尤其是八席全量录像可能占较多磁盘。
 
 每小局默认第 40 秒开始缩圈，用 15 秒缩完。安全范围保持地图的长宽比；坦克连续在外 2 秒才淘汰。只剩一辆坦克时，幸存者在结算阶段无敌。赛前界面可分别改开始时间和耗时，批量跑局也可用 `--shrink-after 40 --shrink-duration 15`（开始时间 0–120 秒，0 表示立即；耗时 1–120 秒）。都按游戏 tick 计时，不受浏览器帧率影响。
 

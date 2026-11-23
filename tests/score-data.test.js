@@ -14,6 +14,15 @@ test('presentation kills count opposing eliminations once, not self-hits',()=>{
   assert.deepEqual(kills,{A:0,B:0,C:0});
 });
 
+test('friendly-fire eliminations never count in the opposing kill tally',()=>{
+  const kills=emptyKillTotals(['A','B','C']);
+  assert.deepEqual(countKills(kills,[
+    {type:'destroyed',ownerId:'A',tankId:'B'},
+    {type:'destroyed',ownerId:'A',tankId:'C'},
+    {type:'zone-eliminated',tankId:'A'}
+  ],{A:'1',B:'1',C:'2'}),{A:1,B:0,C:0});
+});
+
 test('ammunition meter counts only live normal shells and handles older games',()=>{
   const bullets=[{owner:'A',kind:'shell'},{owner:'A',kind:'frag'},{owner:'B',kind:'shell'}];
   assert.deepEqual(availableShellSlots({shellLimit:10,bullets},'A'),{limit:10,available:9});

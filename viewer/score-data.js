@@ -1,14 +1,14 @@
 // Shared presentation calculations. Never included in the simulation state hash.
 export const emptyKillTotals = players => Object.fromEntries(players.map(id=>[id,0]));
 
-export function countKills(current,events) {
+export function countKills(current,events,teams) {
   let next=current;
   const seen=new Set();
   for (const event of events ?? []) {
     if (event?.type!=='destroyed') continue;
     const owner=event.ownerId ?? event.owner;
     const victim=event.tankId ?? event.targetId;
-    if (owner==null || victim==null || owner===victim || seen.has(victim) ||
+    if (owner==null || victim==null || owner===victim || (teams?.[owner] != null && teams[owner] === teams[victim]) || seen.has(victim) ||
         !Object.hasOwn(current,owner) || !Object.hasOwn(current,victim)) continue;
     if (next===current) next={...current};
     next[owner]++;
