@@ -252,6 +252,28 @@ function drawLethalRings(ctx, state, mode, rings) {
 }
 
 /** Draw a read-only projection of an authoritative tank state; no art files from the original are used. */
+function drawZone(ctx, state, scale, ratio) {
+  const zone = state.zone;
+  if (!pointIsValid(zone) || ![zone.halfWidth, zone.halfHeight].every((half) => Number.isFinite(half) && half > 0)) return;
+  const { x, y, halfWidth, halfHeight } = zone;
+  const left = x - halfWidth, top = y - halfHeight;
+  const width = 2 * halfWidth, height = 2 * halfHeight;
+  if (left <= 0 && top <= 0 && x + halfWidth >= state.width && y + halfHeight >= state.height) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, state.width, state.height);
+  ctx.clip();
+  ctx.beginPath();
+  ctx.rect(0, 0, state.width, state.height);
+  ctx.rect(left, top, width, height);
+  ctx.fillStyle = 'rgba(134,71,42,0.13)';
+  ctx.fill('evenodd');
+  ctx.strokeStyle = 'rgba(154,77,39,0.78)';
+  ctx.lineWidth = Math.max(1.35, 1.2 * ratio / scale);
+  ctx.strokeRect(left, top, width, height);
+  ctx.restore();
+}
+
 export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], lethalRings = [] } = {}) {
   const { ctx, width, height, ratio } = fitCanvas(canvas);
   if (!ctx) return;
@@ -263,6 +285,8 @@ export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], l
   ctx.setTransform(scale, 0, 0, scale, x, y);
   ctx.fillStyle = '#e6e6e6';
   ctx.fillRect(0, 0, state.width, state.height);
+
+  drawZone(ctx, state, scale, ratio);
 
   // Static exterior walls match the interior gray; the thin black rim sits at the outer edge.
   const wallWidth = Math.max(5.3, 1.7 * ratio / scale);
@@ -308,6 +332,13 @@ export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], l
     }
     ctx.save();
     ctx.translate(tank.x, tank.y);
+    if (tank.invulnerable === true && (state.phase == null || state.phase === 'playing')) {
+      ctx.beginPath();
+      ctx.arc(0, 0, 17, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ac7b23';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+    }
     ctx.rotate(Number.isFinite(tank.angle) ? tank.angle : 0);
     stageTankGlyph(ctx, color);
     ctx.restore();
@@ -378,7 +409,7 @@ const eventLabels = {
   'wall-stop': '撞墙', 'tank-stop': '坦克碰撞', destroyed: '击毁', ended: '对局结束',
   timeout: '动作超时', 'weapon-fired': '使用武器', 'frag-burst': '破片炸开',
   'weapon-charge': '武器蓄力', 'last-tank-pending': '等待炮火结算', 'mine-placed': '埋设地雷', 'mine-burst': '地雷爆炸', 'round-start': '开局',
-  'round-end': '本局结束',
+  'round-end': '本局结束', 'zone-eliminated': '安全区外淘汰',
 };
 
 export function formatTankEvent(event, displayPlayer = (id) => id) {

@@ -52,6 +52,14 @@
         <p id="custom-seat-status" class="hint" aria-live="polite"></p>
         <button type="submit" id="custom-start" name="mode" value="custom" form="match-form">开始自定义对局</button>
       </details>
+      <div class="zone-settings">
+        <label class="shrink-setting" for="shrink-after">缩圈开始（每小局）
+          <input id="shrink-after" form="match-form" type="number" min="0" max="120" step="1" value="40" required> 秒
+        </label>
+        <label class="shrink-setting" for="shrink-duration">持续时间
+          <input id="shrink-duration" form="match-form" type="number" min="1" max="120" step="1" value="15" required> 秒
+        </label>
+      </div>
       <button type="button" id="continue-match" hidden>返回对局</button>
     </section>
 
@@ -61,6 +69,7 @@
           <p id="arena-round-mode" class="rail-kicker">对局</p>
           <p id="arena-round" class="arena-round">第 1 局</p>
           <p id="arena-round-target" class="rail-caption"></p>
+          <p id="arena-zone" class="rail-caption arena-zone" hidden></p>
         </div>
       </aside>
       <div id="canvas-wrap" class="canvas-wrap">

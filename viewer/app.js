@@ -5,7 +5,7 @@ import { matchMode, keyboardAction, keySeat, pointerAction, humanControls, human
 
 const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
-  'battle', 'mode-label', 'match-form', 'seed', 'back-live', 'replay-file',
+  'battle', 'mode-label', 'match-form', 'seed', 'shrink-after', 'shrink-duration', 'arena-zone', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'match-id', 'match-id-value', 'match-id-copy',
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
@@ -26,6 +26,10 @@ let frameIndex = 0;
 let playback = null;
 let requestedMode = null;
 let starting = false;
+const shrinkOptions = [
+  { id: 'shrink-after', key: 'shrinkAfterSeconds', min: 0, defaultSeconds: 40 },
+  { id: 'shrink-duration', key: 'shrinkDurationSeconds', min: 1, defaultSeconds: 15 },
+];
 let botCatalog = new Map();
 const seatIds = [...'ABCDEFGH'];
 const customSeats = new Map();
@@ -371,6 +375,17 @@ el['match-id'].addEventListener('click', async () => {
   }
 });
 
+function zoneLabel(state, tickRate) {
+  const zone = state?.zone;
+  const tick = state?.roundTick;
+  if (!zone || ![tick, zone.startTick, zone.endTick].every(Number.isFinite)) return '';
+  const rate = Number.isFinite(tickRate) && tickRate > 0 ? tickRate : 60;
+  const seconds = (ticks) => Math.ceil(ticks / rate);
+  if (tick < zone.startTick) return `缩圈倒计时 ${seconds(zone.startTick - tick)} 秒`;
+  if (tick < zone.endTick) return `正在缩圈 · ${seconds(zone.endTick - tick)} 秒`;
+  return '缩圈完成';
+}
+
 function render() {
   drawPending = false;
   const match = replay ?? live;
@@ -412,6 +427,10 @@ function render() {
   }
   el['custom-start'].disabled = starting || matchActive || Boolean(customError);
   el.seed.disabled = starting || matchActive;
+  for (const option of shrinkOptions) el[option.id].disabled = starting || matchActive;
+  const zoneText = zoneLabel(record?.state, match.manifest?.tickRate);
+  el['arena-zone'].hidden = !zoneText;
+  el['arena-zone'].textContent = zoneText;
   if (replay) {
     el.timeline.max = String(Math.max(0, match.frames.length - 1));
     el.timeline.value = String(frameIndex);
@@ -709,6 +728,33 @@ async function loadBotCatalog() {
   }
 }
 
+for (const option of shrinkOptions) {
+  el[option.id].addEventListener('input', () => { option.edited = true; });
+}
+
+function validShrinkSeconds(seconds, min) {
+  return Number.isInteger(seconds) && seconds >= min && seconds <= 120;
+}
+
+async function loadMatchOptions() {
+  try {
+    const response = await fetch('/api/options', { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return;
+    const defaults = await response.json();
+    for (const option of shrinkOptions) {
+      const seconds = defaults?.[option.key];
+      if (validShrinkSeconds(seconds, option.min)) {
+        option.defaultSeconds = seconds;
+        option.defaultKnown = true;
+        if (!option.edited) el[option.id].value = String(seconds);
+      }
+    }
+  } catch {
+    // The placeholder remains usable with older or temporarily unreachable servers.
+  }
+}
+void loadMatchOptions();
+
 el['match-form'].addEventListener('submit', async (event) => {
   event.preventDefault();
   if (starting || (live.manifest && !live.done)) return;
@@ -717,6 +763,17 @@ el['match-form'].addEventListener('submit', async (event) => {
   const mode = matchMode(requested) ? requested : 'human';
   const seed = Number(el.seed.value);
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return setError('种子必须是有效的非负整数。');
+  const zoneOverrides = {};
+  for (const option of shrinkOptions) {
+    const value = el[option.id].value;
+    const seconds = Number(value);
+    if (!value || !validShrinkSeconds(seconds, option.min)) {
+      return setError(`缩圈${option.min === 0 ? '开始' : '持续'}时间必须是 ${option.min}–120 秒的整数。`);
+    }
+    if (seconds !== option.defaultSeconds || (option.edited && !option.defaultKnown)) {
+      zoneOverrides[option.key] = seconds;
+    }
+  }
   const custom = mode === 'custom' ? readCustomSeats() : null;
   if (custom?.error) return setError(custom.error);
   const thirdBot = mode === 'bots' && Boolean(el['seat-bot-C'].value);
@@ -747,6 +804,7 @@ el['match-form'].addEventListener('submit', async (event) => {
   try {
     await post('/api/match', {
       mode, seed,
+      ...zoneOverrides,
       ...(botSeats.length ? { bots } : {}),
       ...(custom ? { seats: custom.seats } : {}),
       ...(Object.keys(playerNames).length ? { playerNames } : {}),

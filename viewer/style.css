@@ -238,3 +238,8 @@ input[type=number] { width: 84px; margin-left: 3px; background: #fafafa; }
   .board.many-seats { width:100%; }
   .board.many-seats #kill-board { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-flow: row; }
 }
+
+.zone-settings { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 15px; }
+.shrink-setting { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.shrink-setting input { width: 5rem; }
+.arena-zone { color: #f5d49a; }
