@@ -146,3 +146,31 @@ test('a newly clear close shot can fire without waiting out the aim timer',()=>{
   const clear={...state,tick:13,roundTick:13,tanks:[{...me,angle:bearing},target]};
   assert.equal(choose(clear).fire,true);
 });
+
+test('GPT-dots turns to open an escape alongside a wall before a passing shell pins it',()=>{
+  const profile=classicProfile(60);
+  // Reduced from the live geometry of a replayed loss: turning alongside
+  // the wall prepares a move that no constant current-heading dodge finds.
+  const obs=observation({
+    width:832,height:640,profile,roundTick:132,
+    tanks:[{...A,x:307.94,y:210.44,angle:2.18166},{...B,x:289,y:550}],
+    walls:[{x1:320,y1:192,x2:320,y2:256}],
+    bullets:[{id:'passing',owner:'B',x:292.714,y:240.519,vx:0,vy:-2.4,
+      ttl:510,kind:'shell',ownerArmed:true}]
+  });
+  assert.deepEqual(makePolicy()(obs),{throttle:0,turn:-1,fire:false});
+});
+
+test('GPT-dots projects the new laser arc through an interior wall',()=>{
+  const profile=classicProfile(60);
+  const obs=observation({
+    profile,tanks:[{...A,x:32,y:32,angle:0,weapon:'laser'},{...B,x:128,y:35}],
+    walls:[{x1:64,y1:0,x2:64,y2:64}]
+  });
+  assert.equal(makePolicy()(obs).fire,true);
+});
+
+test('an alone invulnerable survivor without crates or hazards stays neutral',()=>{
+  const obs=observation({tanks:[{...A,invulnerable:true},{...B,alive:false}]});
+  assert.deepEqual(makePolicy()(obs),{throttle:0,turn:0,fire:false});
+});
