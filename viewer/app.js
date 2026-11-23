@@ -1,9 +1,11 @@
 import { renderers } from './renderers.js';
+import { matchMode, keyboardAction, keySeat, pointerAction } from './input.js';
 
 const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
   'battle', 'mode-label', 'match-form', 'seed', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'empty', 'human-help', 'timeline-panel',
+  'scoreboard', 'round-label', 'round-notice',
   'timeline', 'prev', 'play', 'next', 'event-count', 'event-hint', 'event-list', 'action-details', 'frame-actions',
 ].map((id) => [id, byId(id)]));
 
@@ -19,9 +21,13 @@ let drawPending = false;
 let eventRowsDirty = true;
 let importSequence = 0;
 let inputEpoch = 0;
-let inputChain = Promise.resolve();
+let scoreKey = '';
 const heldKeys = new Set();
-const keys = new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
+const inputChains = new Map();
+const lastInput = new Map();
+let pointerTarget = null;
+let pointerPressed = false;
+const neutral = { throttle: 0, turn: 0, fire: false };
 function tickOf(record) {
   return record.state?.tick ?? record.tick ?? 0;
 }
@@ -31,14 +37,11 @@ function appendTick(match, record) {
   const actions = record.input && Object.fromEntries(Object.entries(record.input).map(([id, entry]) => [
     id, entry?.fallback == null ? entry?.accepted : { action: entry.accepted, fallback: entry.fallback },
   ]));
-  match.frames.push({ tick: tickOf(record), state: record.state, actions });
-  if (Array.isArray(record.events)) {
-    for (const event of record.events) {
-      if (event && typeof event === 'object') {
-        match.events.push({ index, tick: tickOf(record), event });
-        match.totalEvents++;
-      }
-    }
+  const frameEvents = Array.isArray(record.events) ? record.events.filter((e) => e && typeof e === 'object') : [];
+  match.frames.push({ tick: tickOf(record), state: record.state, actions, events: frameEvents });
+  for (const event of frameEvents) {
+    match.events.push({ index, tick: tickOf(record), event });
+    match.totalEvents++;
   }
 }
 
@@ -54,7 +57,7 @@ function setError(message) {
 function outcome(result) {
   if (!result || typeof result !== 'object') return '结果未记录';
   const reason = result.reason;
-  const reasonText = ({ 'last-tank': '场上最后一辆坦克', timeout: '达到时间上限', tick_limit: '达到时间上限', 'double-knockout': '双方同时被击毁' })[reason] ?? reason;
+  const reasonText = ({ 'last-tank': '场上最后一辆坦克', timeout: '达到时间上限', tick_limit: '达到时间上限', 'double-knockout': '同时被击毁', 'score-target': '达到目标分数', 'score-limit': '达到目标分数', 'round-limit': '达到局数上限' })[reason] ?? reason;
   const winner = result.winner == null ? '平局' : `选手 ${result.winner} 获胜`;
   return reasonText ? `${winner}（${reasonText}）` : winner;
 }
@@ -104,17 +107,74 @@ function nearestEventIndex(events, index, limit) {
   return Math.max(0, Math.min(lo - Math.floor(limit / 2), events.length - limit));
 }
 
+function effectsAt(frames, index) {
+  const effects = [];
+  const now = tickOf(frames[index]);
+  const round = frames[index].state?.round;
+  for (let i = index; i >= 0 && now - tickOf(frames[i]) < 10; i--) {
+    if (frames[i].state?.round !== round) break;
+    const age = now - tickOf(frames[i]);
+    for (const event of frames[i].events) effects.push({ event, age });
+  }
+  return effects;
+}
+
+function renderScoreboard(match, state, renderer) {
+  const ids = state?.tanks?.map((tank) => tank.id) ?? match.manifest?.players ?? [];
+  const scores = ids.map((id) => state?.scores?.[id] ?? (state?.result?.winner === id ? 1 : 0));
+  const key = JSON.stringify([match.manifest?.mode, ids, scores, renderer?.title]);
+  if (scoreKey !== key) {
+    scoreKey = key;
+    const icons = [];
+    const items = document.createDocumentFragment();
+    ids.forEach((id, index) => {
+      const row = document.createElement('span');
+      row.className = 'score';
+      row.setAttribute('aria-label', `选手 ${id}：${scores[index]} 分`);
+      const icon = document.createElement('canvas');
+      icon.className = 'score-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icons.push(icon);
+      const number = document.createElement('span');
+      number.className = 'score-number';
+      number.textContent = scores[index];
+      const label = document.createElement('span');
+      label.className = 'score-id';
+      label.textContent = id;
+      row.append(icon, number, label);
+      items.append(row);
+    });
+    el.scoreboard.replaceChildren(items);
+    icons.forEach((icon, index) => renderer?.scoreIcon?.(icon, index, match.manifest?.mode));
+  }
+  const round = state?.round ?? 1;
+  el['round-label'].textContent = Number.isSafeInteger(state?.targetScore)
+    ? `第 ${round} 局 · 先到 ${state.targetScore} 分` : `第 ${round} 局`;
+  const notice = el['round-notice'];
+  if (state?.phase === 'intermission') {
+    notice.hidden = false;
+    notice.textContent = state.roundWinner == null ? '本局平局' : `选手 ${state.roundWinner} 拿下本局`;
+  } else if (state?.phase === 'finished' && state.result) {
+    notice.hidden = false;
+    notice.textContent = outcome(state.result);
+  } else notice.hidden = true;
+}
+
 function render() {
   drawPending = false;
   const match = replay ?? live;
-  const record = replay ? match.frames[frameIndex] : match.frames.at(-1);
+  const current = replay ? frameIndex : match.frames.length - 1;
+  const record = match.frames[current];
   const hasFrames = Boolean(record?.state);
   const matchActive = Boolean(live.manifest) && !live.done;
-  const human = !replay && matchActive && live.manifest.mode === 'human';
-  el['mode-label'].textContent = replay ? '离线回放' : human ? '人机对战' : '实时观战';
+  const mode = matchMode(live.manifest?.mode);
+  const help = !replay && matchActive && mode?.help;
+  el['mode-label'].textContent = replay ? '离线回放' : mode?.label ?? '实时观战';
   el['frame-label'].textContent = `TICK ${record ? tickOf(record) : 0}`;
   el.empty.hidden = hasFrames;
-  el['human-help'].hidden = !human;
+  el['human-help'].hidden = !help;
+  el['human-help'].textContent = help || '';
+  el.battle.classList.toggle('pointer-control', activeMode() === 'local3');
   el['back-live'].hidden = !replay;
   el['timeline-panel'].hidden = !replay;
   for (const button of el['match-form'].querySelectorAll('button')) button.disabled = starting || matchActive;
@@ -133,10 +193,14 @@ function render() {
   const renderer = rendererFor(match.manifest);
   if (renderer && record) {
     el.battle.setAttribute('aria-label', renderer.title);
-    renderer.draw(el.battle, record.state);
+    renderer.draw(el.battle, record.state, {
+      mode: match.manifest?.mode,
+      effects: effectsAt(match.frames, current),
+    });
   } else {
     el.battle.getContext('2d')?.clearRect(0, 0, el.battle.width, el.battle.height);
   }
+  renderScoreboard(match, record?.state, renderer);
   renderEvents(match, Boolean(replay));
 }
 
@@ -153,7 +217,7 @@ function liveStatus() {
     setStatus(live.result ? `对局结束：${outcome(live.result)}。` : '对局已结束。');
   } else if (live.manifest) {
     const seed = live.manifest.seed;
-    setStatus(`${live.manifest.mode === 'human' ? '人机对战' : 'Bot 对战'}进行中${seed == null ? '' : `，种子 ${seed}`}。`);
+    setStatus(`${matchMode(live.manifest.mode)?.label ?? '对战'}进行中${seed == null ? '' : `，种子 ${seed}`}。`);
   } else {
     setStatus(starting ? '正在启动对局…' : '等待开局，或打开已有的回放。');
   }
@@ -195,19 +259,20 @@ function play() {
 function reduceLive(record) {
   if (record.type === 'start' && record.state) {
     inputEpoch++;
-    heldKeys.clear();
+    resetInput();
     live = blank();
     live.manifest = { ...record.manifest, mode: record.manifest?.mode ?? requestedMode };
     appendTick(live, record);
     if (!replay) setError('');
   } else if (record.type === 'tick' && record.state && live.manifest && !live.done) {
     if (tickOf(record) <= tickOf(live.frames.at(-1))) return;
-    // Preserve event jump targets in imported replays only; live needs its most recent state.
-    live.frames.length = 0;
+    // Keep a small recent history so transient effects render the same way as replay.
     appendTick(live, record);
+    if (live.frames.length > 10) live.frames.shift();
+    updatePointer();
     if (live.events.length > 100) live.events = live.events.slice(-100);
   } else if (record.type === 'end' || record.type === 'error') {
-    heldKeys.clear();
+    resetInput();
     inputEpoch++;
     live.done = true;
     live.result = record.result ?? null;
@@ -254,7 +319,8 @@ el['match-form'].addEventListener('submit', async (event) => {
   event.preventDefault();
   if (starting || (live.manifest && !live.done)) return;
   if (!streamOpen) return setError('尚未连到裁判，请稍后重试。');
-  const mode = event.submitter?.value === 'human' ? 'human' : 'bots';
+  const requested = event.submitter?.value;
+  const mode = matchMode(requested) ? requested : 'human';
   const seed = Number(el.seed.value);
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return setError('种子必须是有效的非负整数。');
   importSequence++;
@@ -374,45 +440,96 @@ el.next.addEventListener('click', () => { stopPlayback(); seek(frameIndex + 1); 
 el.play.addEventListener('click', play);
 el['action-details'].addEventListener('toggle', () => queueDraw());
 
-function humanActive() {
-  return !replay && !live.done && live.manifest?.mode === 'human';
+function activeMode() {
+  return !replay && !live.done ? live.manifest?.mode : null;
 }
 
-function sendInput() {
+function resetInput() {
+  heldKeys.clear();
+  pointerTarget = null;
+  pointerPressed = false;
+  lastInput.clear();
+  inputChains.clear();
+}
+
+function sendInput(playerId, action) {
   const epoch = inputEpoch;
-  const pressed = (...choices) => choices.some((key) => heldKeys.has(key));
-  const action = {
-    throttle: Number(pressed('KeyW', 'ArrowUp')) - Number(pressed('KeyS', 'ArrowDown')),
-    turn: Number(pressed('KeyD', 'ArrowRight')) - Number(pressed('KeyA', 'ArrowLeft')),
-    fire: heldKeys.has('Space'),
-  };
-  inputChain = inputChain.then(async () => {
-    if (epoch !== inputEpoch || live.done || live.manifest?.mode !== 'human') return;
-    await post('/api/input', action, 1000);
+  const previous = lastInput.get(playerId);
+  if (previous?.throttle === action.throttle && previous.turn === action.turn && previous.fire === action.fire) return;
+  lastInput.set(playerId, action);
+  const pending = (inputChains.get(playerId) ?? Promise.resolve()).then(async () => {
+    if (epoch !== inputEpoch || live.done) return;
+    await post('/api/input', { playerId, ...action }, 1000);
   }).catch(() => {
-    if (humanActive()) setError('输入未送达裁判。');
+    if (lastInput.get(playerId) === action) lastInput.delete(playerId);
+    if (activeMode()) setError('输入未送达裁判。');
   });
+  inputChains.set(playerId, pending);
+}
+
+function updatePointer() {
+  if (activeMode() !== 'local3' || (!pointerTarget && !pointerPressed && !lastInput.has('C'))) return;
+  const state = live.frames.at(-1)?.state;
+  const tank = state?.tanks?.find(({ id }) => id === 'C');
+  sendInput('C', pointerAction(tank, pointerTarget, pointerPressed));
+}
+
+function setPointerTarget(event) {
+  const state = live.frames.at(-1)?.state;
+  const renderer = rendererFor(live.manifest);
+  pointerTarget = renderer?.projectPointer?.(el.battle, state, event.clientX, event.clientY) ?? null;
 }
 
 function releaseInput() {
-  if (heldKeys.size === 0) return;
   heldKeys.clear();
-  sendInput();
+  pointerTarget = null;
+  pointerPressed = false;
+  for (const id of lastInput.keys()) sendInput(id, neutral);
 }
 
+el.battle.addEventListener('pointermove', (event) => {
+  if (activeMode() !== 'local3') return;
+  setPointerTarget(event);
+  updatePointer();
+});
+el.battle.addEventListener('pointerdown', (event) => {
+  if (activeMode() !== 'local3' || event.button !== 0) return;
+  event.preventDefault();
+  el.battle.setPointerCapture?.(event.pointerId);
+  setPointerTarget(event);
+  pointerPressed = true;
+  updatePointer();
+});
+el.battle.addEventListener('pointerup', (event) => {
+  if (activeMode() !== 'local3' || event.button !== 0) return;
+  pointerPressed = false;
+  updatePointer();
+});
+for (const name of ['pointerleave', 'pointercancel']) {
+  el.battle.addEventListener(name, () => {
+    if (activeMode() !== 'local3') return;
+    pointerTarget = null;
+    pointerPressed = false;
+    updatePointer();
+  });
+}
 addEventListener('keydown', (event) => {
-  if (!humanActive() || !keys.has(event.code) || event.ctrlKey || event.metaKey || event.altKey) return;
+  const mode = activeMode();
+  const seat = keySeat(mode, event.code);
+  if (!seat || event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.target?.closest?.('input, select, textarea, [contenteditable]')) return;
   if (event.code === 'Space' && event.target?.closest?.('button, a')) return;
   event.preventDefault();
   if (heldKeys.has(event.code)) return;
   heldKeys.add(event.code);
-  sendInput();
+  sendInput(seat, keyboardAction(mode, seat, heldKeys));
 });
 addEventListener('keyup', (event) => {
   if (!heldKeys.delete(event.code)) return;
   event.preventDefault();
-  sendInput();
+  const mode = activeMode();
+  const seat = keySeat(mode, event.code);
+  if (seat) sendInput(seat, keyboardAction(mode, seat, heldKeys));
 });
 addEventListener('blur', releaseInput);
 document.addEventListener('visibilitychange', () => { if (document.hidden) releaseInput(); });

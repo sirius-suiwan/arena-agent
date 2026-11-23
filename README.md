@@ -1,6 +1,6 @@
 # Arena Agent
 
-本地多游戏竞技场：编程 bot 和人类共用动作接口。先接坦克迷宫对战，再验证第二款游戏能独立接入。无需远程联机或向模型服务发请求。
+本地多游戏竞技场：编程 bot 和人类共用动作接口。首款游戏是按 4399 旧版重建的坦克迷宫对战。无需远程联机或向模型服务发请求。
 
 ## 工程结构
 
@@ -24,7 +24,7 @@ node apps/cli/arena.js run --seed 42 --bot-b bots/examples/scout.py
 node apps/cli/arena.js serve
 ```
 
-CLI 输出本局目录。打开 [本地观战](http://127.0.0.1:8765/)，可启动 bot 对战或人机对战。人机模式使用 WASD 或方向键移动和转向，空格开火。网页只监听本机，不提供网络联机。选择「打开回放」并载入 `match.jsonl`，即可播放、逐 tick 前后步进或点事件跳转。
+CLI 输出本局目录。打开 [本地观战](http://127.0.0.1:8765/)，可启动 bot 对战或人机对战。A 使用方向键移动和转向，M 或空格开火；本地多人时 B 使用 ESDF / Q，三人模式的 C 使用鼠标。实时和回放共享同一套绘图。网页只监听本机，不提供网络联机。选择「打开回放」并载入 `match.jsonl`，即可播放、逐 tick 前后步进或点事件跳转。
 
 ```sh
 node apps/cli/arena.js verify runs/tank-trouble/<match-id>/match.jsonl
@@ -38,3 +38,5 @@ node apps/cli/arena.js run --seed 42 --rounds 10
 - [Bot JSONL 协议](protocol/bot/README.md)：每局一个常驻进程。支持受信任的本地 `.py`、`.js` 或 `.mjs` 脚本。示例在 `bots/examples/`，可通过 `--bot-a` 和 `--bot-b` 替换。**本地进程不是安全沙箱。**
 - [游戏适配器契约](protocol/game/README.md)：游戏决定 tick 频率及动作语义，宿主不解释物理。现有 [坦克规则](games/tank-trouble/RULES.md)；测试包含不同动作结构、不同 tick 频率的小型第二游戏。
 - [本机界面协议](protocol/viewer/README.md)：画面与输入只是裁判的客户端。未来的《疯狂小人战斗》尚未接入。
+
+写 bot 的 Agent 请从 [bots/README.md](bots/README.md) 开始，再看每款游戏目录的规则文件。坦克规则目前为 v2；历史 v1 记录仍能校验。
