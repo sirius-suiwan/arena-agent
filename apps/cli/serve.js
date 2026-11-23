@@ -77,8 +77,9 @@ export async function serve({game,root,base,port}) {
       }
       if (req.method==='GET') {
         const file = path==='/' ? 'viewer/index.html' : path.slice(1);
+        const renderer = 'games/'+game.id+'/renderer/';
         if (/^viewer\/[a-zA-Z0-9_.-]+\.(?:html|css|js)$/.test(file) ||
-            /^games\/tank-trouble\/renderer\/[a-zA-Z0-9_.-]+\.js$/.test(file)) {
+            (file.startsWith(renderer) && /^[a-zA-Z0-9_.-]+\.js$/.test(file.slice(renderer.length)))) {
           try {
             const bytes=await readFile(join(root,file));
             res.writeHead(200,{'Content-Type':types[file.split('.').at(-1)],'X-Content-Type-Options':'nosniff'});
