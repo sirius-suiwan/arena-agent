@@ -4,6 +4,7 @@ import {basename,extname,join,resolve} from 'node:path';
 import {runMatch} from '../../core/match.js';
 import {LocalBot} from '../../runners/local-process/index.js';
 import {LAIKA_INSIGHT_POLICY,withLaikaInsight} from '../../games/tank-trouble/bots/laika-insight.js';
+import {resolveTankMapSize} from './tank-options.js';
 
 export const seatIds = Object.freeze([...'ABCDEFGH']);
 export const controls = Object.freeze(['arrows','esdf','mouse']);
@@ -35,11 +36,15 @@ export function parseCustomSeats(roster,registry) {
   return {ids:seatIds.filter(id=>Object.hasOwn(roster,id)),paths,humanControls};
 }
 
-export async function makeMatch({game,root,base,seed,config={},maxTicks=game.matchTickLimit?.(config)??game.defaultMatchTicks??3600,timeoutMs=50,mode='bots',realtime=false,paths={},registry=new Map(),human={},playerNames={},recorder,onRecord,roster}) {
-  if (mode==='human' && game.id==='tank-trouble') config={...config,classicSolo:true};
+export async function makeMatch({game,root,base,seed,config={},maxTicks,timeoutMs=50,mode='bots',realtime=false,paths={},registry=new Map(),human={},playerNames={},recorder,onRecord,roster}) {
   const custom=mode==='custom'?parseCustomSeats(roster,registry):null;
   if (custom) paths=custom.paths;
   const ids=custom?.ids ?? playersForMode(mode,paths);
+  if (game.id==='tank-trouble') {
+    config=resolveTankMapSize(config,ids.length);
+    if (mode==='human') config={...config,classicSolo:true};
+  }
+  if (maxTicks===undefined) maxTicks=game.matchTickLimit?.(config)??game.defaultMatchTicks??3600;
   const humanControls=custom?.humanControls;
   const humanIds=humanControls?Object.keys(humanControls):humansForMode(mode);
   const names={...playerNames};
