@@ -124,3 +124,25 @@ test('bot returns a safe neutral action without its declared simulation profile'
     assert.deepEqual(makePolicy()(observation({profile})),{throttle:0,turn:0,fire:false});
   }
 });
+
+test('GPT-dots fires in motion without abandoning a crate or sending a held-fire repeat',()=>{
+  const state=observation({
+    tanks:[{...A,x:32,y:32},{...B,x:108,y:32}],
+    pickups:[{id:'crate',x:96,y:32,type:'gatling'}]
+  });
+  assert.deepEqual(makePolicy()(state),{throttle:1,turn:0,fire:true});
+  const after={...state,tanks:[{...state.tanks[0],fireHeld:true},state.tanks[1]]};
+  assert.deepEqual(makePolicy()(after),{throttle:1,turn:0,fire:false});
+});
+
+test('a newly clear close shot can fire without waiting out the aim timer',()=>{
+  const profile=classicProfile(60);
+  const bearing=0.45;
+  const me={...A,x:60,y:60,angle:0};
+  const target={...B,x:60+95*Math.cos(bearing),y:60+95*Math.sin(bearing)};
+  const choose=makePolicy();
+  const state=observation({profile,tanks:[me,target]});
+  for(let tick=0;tick<13;tick++) assert.equal(choose({...state,tick,roundTick:tick}).fire,false);
+  const clear={...state,tick:13,roundTick:13,tanks:[{...me,angle:bearing},target]};
+  assert.equal(choose(clear).fire,true);
+});

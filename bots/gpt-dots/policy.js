@@ -254,6 +254,32 @@ function aimPlan(me,enemies,walls,weapon,speed,tick,physics,laserRange) {
   return best;
 }
 
+// A ready cannon doesn't need a dedicated stop-and-aim phase when the next
+// legal pose already has a clean close shot. Steering and displacement happen
+// before firing in Classic; trace from that pose, not from the observed barrel.
+function closeAttack(me,preferred,enemies,walls,obstacles,physics,speed,pursuingCrate) {
+  const close=enemies.filter(enemy=>d2(me,enemy)<150**2);
+  if(!close.length) return null;
+  const options=[preferred];
+  for(const turn of TURN_OPTIONS) if(turn!==preferred.turn) options.push({...preferred,turn});
+  // A nearby firing window can justify a single stationary tick when moving
+  // would put the muzzle behind an edge. Don't start a separate aim hold.
+  if(preferred.throttle) for(const turn of TURN_OPTIONS) options.push({throttle:0,turn,fire:false});
+  const maxTravel=physics.ticks(58);
+  for(const a of options) {
+    const angle=me.angle+a.turn*physics.turn,step=stepDistance(a.throttle,physics);
+    const pos={x:me.x+step*Math.cos(angle),y:me.y+step*Math.sin(angle)};
+    const moves=canOccupy(pos.x,pos.y,obstacles)&&!enemies.some(e=>d2(e,pos)<(2*R)**2);
+    const muzzle={...me,...(moves?pos:{}),angle};
+    const hit=shot(muzzle,angle,enemies,walls,null,speed,maxTravel);
+    if(!hit||hit.hit===me.id||!close.some(t=>t.id===hit.hit)) continue;
+    // Avoid committing to long speculative banks or stopping for crate-side pokes.
+    if(hit.bounced&&hit.travel>physics.ticks(36) || pursuingCrate&&!a.throttle&&preferred.throttle&&hit.travel>physics.ticks(30)) continue;
+    return {...a,fire:true};
+  }
+  return null;
+}
+
 function zoneAt(zone,tick) {
   const f=clamp((tick-zone.startTick)/Math.max(1,zone.endTick-zone.startTick),0,1);
   return {
@@ -413,6 +439,10 @@ export function makePolicy() {
       Math.abs(wrap(heading(me,enemies[0])-me.angle))>2.0) preferred.fire=true;
     if(escape&&tick>=escape.until) escape=null;
     if(escape) {preferred=escape.action;navigating=false;}
+    if(!preferred.fire&&!weapon&&armed&&!me.fireHeld&&!escape&&!zonePressure&&nearbyEnemies.length) {
+      const window=closeAttack(me,preferred,nearbyEnemies,map.walls,obstacles,physics,profile.shellSpeed,Boolean(supply));
+      if(window) {preferred=window;navigating=Boolean(window.throttle)&&hasRoute;}
+    }
     const mineThreat=(obs.mines??[]).filter(m=>d2(me,m)<65**2);
     const projectiles=hazardTrack(me,obs.bullets,map.walls,physics);
     if(projectiles.length||mineThreat.length) {
