@@ -29,12 +29,7 @@ function pointIsValid(item) {
   return Number.isFinite(item?.x) && Number.isFinite(item?.y);
 }
 
-export function supportsTankReplay(manifest) {
-  return manifest.format === 1 && [25, 30, 60].includes(manifest.tickRate)
-    && manifest.rulesVersion === `8-${manifest.tickRate}`;
-}
-
-export function validateTankFrame(state) {
+function validateTankFrame(state) {
   return Number.isFinite(state?.width) && state.width > 0
     && Number.isFinite(state?.height) && state.height > 0
     && ['tanks', 'walls', 'bullets', 'pickups'].every((key) => Array.isArray(state[key]))

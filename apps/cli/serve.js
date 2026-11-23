@@ -7,7 +7,7 @@ import {humansForMode,makeMatch,parseCustomSeats,playersForMode,seatIds} from '.
 import {botCatalog,loadBotRegistry} from './bot-registry.js';
 import {applyTankOptions,tankOptions} from './tank-options.js';
 
-const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8'};
+const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8',json:'application/json; charset=utf-8'};
 const json = (res,status,data) => { res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data)); };
 async function requestBody(req) {
   if (req.headers['content-type']?.split(';')[0] !== 'application/json') throw new Error('expected JSON');
@@ -23,6 +23,11 @@ async function requestBody(req) {
 
 export async function serve({game,selectGame=rate=>rate===game.tickRate?game:null,root,base,port,config={}}) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid port');
+  const replayModules = new Set([
+    'replay/reconstruct.js', 'protocol/game/match-format.js',
+    ...['adapter/index.js','engine/classic.js','engine/profile.js','series/index.js','classic-profile.json']
+      .map(file=>'games/'+game.id+'/'+file)
+  ]);
   const clients = new Set();
   let active=false, first, latest, terminal, epoch=0, currentMatch;
   let inputs=new Map(), kills={};
@@ -140,7 +145,7 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
         const file = path==='/' ? 'viewer/lobby.html' : path==='/tank' || path==='/tank/' ? 'viewer/index.html' : path.slice(1);
         const renderer = 'games/'+game.id+'/renderer/';
         if (/^viewer\/[a-zA-Z0-9_.-]+\.(?:html|css|js)$/.test(file) ||
-            (file.startsWith(renderer) && /^[a-zA-Z0-9_.-]+\.js$/.test(file.slice(renderer.length)))) {
+            (file.startsWith(renderer) && /^[a-zA-Z0-9_.-]+\.js$/.test(file.slice(renderer.length))) || replayModules.has(file)) {
           try {
             const bytes=await readFile(join(root,file));
             res.writeHead(200,{'Content-Type':types[file.split('.').at(-1)],'X-Content-Type-Options':'nosniff','Cache-Control':'no-store'});

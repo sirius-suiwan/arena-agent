@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {runMatch} from '../core/match.js';
-import {recorder,verifyReplay} from '../replay/index.js';
+import {readRows,writeRows} from './fixtures/replay-file.js';
+import {recorder,REPLAY_FILENAME,verifyReplay} from '../replay/index.js';
 import {jumpGame} from './fixtures/jump-game.js';
 
 test('stop completes the in-flight tick, closes seats and saves a verifiable replay without a winner',async t=>{
@@ -24,12 +25,12 @@ test('stop completes the in-flight tick, closes seats and saves a verifiable rep
   assert.deepEqual(observed,[0]);
   assert.equal(closed,true);
   assert.deepEqual(result,{winner:null,reason:'stopped'});
-  const path=join(directory,'match.jsonl');
+  const path=join(directory,REPLAY_FILENAME);
   assert.deepEqual(await verifyReplay(path,{[jumpGame.id]:jumpGame}),{ticks:1,result});
-  const records=(await readFile(path,'utf8')).trim().split('\n').map(JSON.parse);
+  const records=await readRows(path);
   assert.deepEqual(records.map(r=>r.type),['start','tick','end']);
   records.at(-1).result.winner='A';
-  await writeFile(path,records.map(JSON.stringify).join('\n')+'\n');
+  await writeRows(path,records);
   await assert.rejects(verifyReplay(path,{[jumpGame.id]:jumpGame}),/result differs/);
 });
 

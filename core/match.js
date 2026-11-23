@@ -3,11 +3,7 @@ import {performance} from 'node:perf_hooks';
 import {setTimeout as delay} from 'node:timers/promises';
 import {normalizePlayerName} from '../protocol/bot/player-name.js';
 
-export function canonical(value) {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
-  return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + canonical(value[k])).join(',') + '}';
-}
+import {canonical,MATCH_FORMAT,MAX_MATCH_TICKS} from '../protocol/game/match-format.js';
 
 export const stateHash = state => createHash('sha256').update(canonical(state)).digest('hex');
 export const playerIds = seats => Object.keys(seats).sort();
@@ -15,9 +11,9 @@ export const playerIds = seats => Object.keys(seats).sort();
 export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3600,timeoutMs=50,realtime=false,record,botVersions={},matchId,signal,playerNames={},humanControls}) {
   const players = playerIds(seats);
   if (!Number.isSafeInteger(seed) || !Number.isSafeInteger(maxTicks) || maxTicks < 1 ||
-      maxTicks > 300_000 || !Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error('invalid match limits');
+      maxTicks > MAX_MATCH_TICKS || !Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error('invalid match limits');
   const manifest = {
-    format:1, protocol:1, game:game.id, rulesVersion:game.version, tickRate:game.tickRate,
+    format:MATCH_FORMAT, protocol:1, game:game.id, rulesVersion:game.version, tickRate:game.tickRate,
     mode, realtime, timeoutMs, seed, config, players, maxTicks, botVersions,
     ...(matchId?{matchId}:{}), ...(humanControls?{humanControls}:{})
   };
@@ -57,7 +53,7 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
         if (!fallback) {
           try { accepted = game.validateAction(value); } catch { fallback = 'invalid_action'; }
         }
-        return [id,{observation:observed[i],submitted:value ?? null,accepted,fallback}];
+        return [id,{submitted:value ?? null,accepted,fallback}];
       }));
       const actions = Object.fromEntries(players.map(id => [id,input[id].accepted]));
       const next = game.step(state,actions);

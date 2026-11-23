@@ -889,39 +889,34 @@ function rendererFor(manifest) {
   return Object.hasOwn(renderers, game) ? renderers[game] : null;
 }
 
-function validateFrame(record, manifest) {
-  return Number.isSafeInteger(record.state?.tick) && record.state.tick >= 0
-    && rendererFor(manifest)?.validate(record.state);
-}
-
 async function readReplay(file, stillCurrent) {
+  if (typeof DecompressionStream !== 'function') throw new Error('当前浏览器不支持 gzip 回放，请使用新版浏览器。');
+  const [{ createReplayReconstructor, parseReplayLine, MAX_REPLAY_LINE }, { gameForRate }] = await Promise.all([
+    import('/replay/reconstruct.js'),
+    import('/games/tank-trouble/adapter/index.js'),
+  ]);
+  if (!stillCurrent()) return null;
+  const reconstruct = createReplayReconstructor((manifest) => {
+    if (manifest?.game !== 'tank-trouble') return null;
+    return gameForRate(manifest.tickRate);
+  });
   const candidate = blank();
-  const decoder = new TextDecoderStream();
-  const reader = file.stream().pipeThrough(decoder).getReader();
-  let content = '';
+  const reader = file.stream()
+    .pipeThrough(new DecompressionStream('gzip'))
+    .pipeThrough(new TextDecoderStream('utf-8', { fatal: true })).getReader();
+  let pending = '';
   let number = 0;
   const parseLine = (line) => {
     number++;
+    if (line.length > MAX_REPLAY_LINE) throw new Error(`第 ${number} 行过长。`);
     if (!line.trim()) return;
-    let record;
-    try { record = JSON.parse(line); } catch { throw new Error(`第 ${number} 行不是有效 JSON。`); }
-    if (!record || typeof record !== 'object') throw new Error(`第 ${number} 行不是对局记录。`);
-    if (candidate.done) throw new Error(`第 ${number} 行在结束记录之后。`);
-    if (record.type === 'start' && !candidate.manifest) {
-      candidate.manifest = record.manifest;
-      const renderer = rendererFor(candidate.manifest);
-      if (!renderer) throw new Error('这个游戏还没有可用的画面渲染器。');
-      if (!renderer.supportsReplay(candidate.manifest)) throw new Error('此回放的规则版本或模拟频率不受支持。');
-      if (!validateFrame(record, candidate.manifest)) throw new Error('开局帧结构不完整。');
-      appendTick(candidate, record);
-    } else if (record.type === 'tick' && candidate.manifest && validateFrame(record, candidate.manifest)
-        && tickOf(record) > tickOf(candidate.frames.at(-1))) {
-      appendTick(candidate, record);
-    } else if (record.type === 'end' && candidate.manifest) {
-      candidate.done = true;
-      candidate.result = record.result ?? null;
-    } else {
-      throw new Error(`第 ${number} 行的记录类型、帧结构或 tick 顺序不匹配。`);
+    try {
+      const row = parseReplayLine(line);
+      const view = reconstruct.push(row);
+      if (row.type === 'start') candidate.manifest = row.manifest;
+      if (row.type === 'start' || row.type === 'tick') appendTick(candidate, view);
+    } catch (error) {
+      throw new Error(`第 ${number} 行：${error.message}`);
     }
   };
   try {
@@ -929,13 +924,21 @@ async function readReplay(file, stillCurrent) {
       const { done, value } = await reader.read();
       if (!stillCurrent()) return null;
       if (done) break;
-      const lines = (content + value).split('\n');
-      content = lines.pop();
-      if (content.length > 4_000_000) throw new Error('回放中存在过长的单行记录。');
-      for (const line of lines) parseLine(line);
+      const lines = (pending + value).split('\n');
+      pending = lines.pop();
+      if (pending.length > MAX_REPLAY_LINE) throw new Error(`第 ${number + 1} 行过长。`);
+      for (const line of lines) {
+        parseLine(line);
+        if (number % 200 === 0) {
+          // Keep navigation and a replacement import responsive while reconstructing long matches.
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (!stillCurrent()) return null;
+        }
+      }
     }
-    if (content) parseLine(content);
-    if (!candidate.frames.length) throw new Error('未找到有效的对局帧。');
+    if (pending) parseLine(pending);
+    candidate.result = reconstruct.finish().result;
+    candidate.done = true;
     return candidate;
   } finally {
     await reader.cancel().catch(() => {});
@@ -958,9 +961,9 @@ el['replay-file'].addEventListener('change', async () => {
     candidate.lethalIndex = indexLethalProjectiles(candidate.frames);
     replay = candidate;
     selectedKill = null;
-      menuVisible = false;
+    menuVisible = false;
     frameIndex = 0;
-    setStatus(candidate.done ? `回放：${outcome(candidate.result, candidate.manifest)}。` : '已打开记录，未找到结束行。');
+    setStatus(`回放：${outcome(candidate.result, candidate.manifest)}。`);
     queueDraw(true);
   } catch (error) {
     if (importId !== importSequence) return;

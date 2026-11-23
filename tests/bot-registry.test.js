@@ -1,13 +1,14 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {cp,mkdir,mkdtemp,readFile,rm,symlink,writeFile} from 'node:fs/promises';
+import {cp,mkdir,mkdtemp,rm,symlink,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {botCatalog,loadBotRegistry} from '../apps/cli/bot-registry.js';
 import {makeMatch} from '../apps/cli/match-options.js';
 import {game} from '../games/tank-trouble/adapter/index.js';
-import {recorder,verifyReplay} from '../replay/index.js';
+import {readRows} from './fixtures/replay-file.js';
+import {recorder,REPLAY_FILENAME,verifyReplay} from '../replay/index.js';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const declaration={schema:1,protocol:1,id:'agent-fox',name:'新选手',game:game.id,entry:'bot.py',files:['strategy.py']};
@@ -43,8 +44,8 @@ test('discovers an agent Python package and runs it against registered Laika and
   const match=await makeMatch({game,root:tmp,base:join(tmp,'runs'),seed:42,maxTicks:90,timeoutMs:1000,
     paths:{A:'laika',B:'agent-fox',C:'gpt-dots'},registry:updated,recorder});
   const result=await match.run();
-  const path=join(match.directory,'match.jsonl');
-  const data=(await readFile(path,'utf8')).trim().split('\n').map(JSON.parse);
+  const path=join(match.directory,REPLAY_FILENAME);
+  const data=await readRows(path);
   const start=data[0], ticks=data.filter(row=>row.type==='tick');
   assert.deepEqual(start.readiness,{A:'ready',B:'ready',C:'ready'});
   assert.deepEqual(start.manifest.playerNames,{A:'Laika（复刻）',B:'新选手',C:'GPT-dots'});

@@ -1,16 +1,17 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {makeMatch,parseCustomSeats,playersForMode,seatIds} from '../apps/cli/match-options.js';
 import {loadBotRegistry} from '../apps/cli/bot-registry.js';
 import {game,gameForRate} from '../games/tank-trouble/adapter/index.js';
-import {recorder,verifyReplay} from '../replay/index.js';
+import {readRows} from './fixtures/replay-file.js';
+import {recorder,REPLAY_FILENAME,verifyReplay} from '../replay/index.js';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
-const readLog=async directory=>(await readFile(join(directory,'match.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+const readLog=async directory=>readRows(join(directory,REPLAY_FILENAME));
 
 test('custom roster validates closed seat IDs, registered bots and exclusive human controls',()=>{
   const registry=new Map([['gpt-dots',{}]]);
@@ -46,7 +47,7 @@ test('eight independent bot seats record and verify the same authoritative ticks
   assert.ok(seatIds.every(id=>start.readiness[id]==='ready'));
   assert.equal(ticks.length,72);
   assert.ok(ticks.every(row=>seatIds.every(id=>!row.input[id].fallback)));
-  assert.deepEqual(await verifyReplay(join(match.directory,'match.jsonl'),{
+  assert.deepEqual(await verifyReplay(join(match.directory,REPLAY_FILENAME),{
     [selected.id+'@'+selected.version]:selected
   }),{ticks:ticks.length,result});
 });
@@ -67,6 +68,6 @@ test('sparse mixed roster keeps bot and human seat identity at 30 Hz',async t=>{
   assert.equal(start.manifest.playerNames.H,'鼠标玩家');
   assert.equal(start.manifest.botVersions.H.kind,'human');
   assert.equal(tick.input.H.accepted.turn,1);
-  assert.equal((await verifyReplay(join(match.directory,'match.jsonl'),{[selected.id+'@'+selected.version]:selected})).ticks,15);
+  assert.equal((await verifyReplay(join(match.directory,REPLAY_FILENAME),{[selected.id+'@'+selected.version]:selected})).ticks,15);
 
 });

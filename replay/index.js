@@ -1,60 +1,73 @@
 import {createReadStream} from 'node:fs';
 import {mkdir,open,writeFile} from 'node:fs/promises';
-import {createInterface} from 'node:readline';
 import {join} from 'node:path';
-import {canonical,stateHash} from '../core/match.js';
+import {compose} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
+import {createGunzip,createGzip} from 'node:zlib';
+import {stateHash} from '../core/match.js';
+import {createReplayReconstructor,MAX_REPLAY_LINE,parseReplayLine} from './reconstruct.js';
+
+export const REPLAY_FILENAME = 'match.jsonl.gz';
 
 export async function recorder(directory,onRecord = () => {}) {
   await mkdir(directory,{recursive:true});
-  const file = await open(join(directory,'match.jsonl'),'wx');
+  const file = await open(join(directory,REPLAY_FILENAME),'wx');
+  const gzip = createGzip({level:6});
+  // Attach rejection handling immediately; surface disk and compression failures to the caller.
+  const done = pipeline(gzip,file.createWriteStream());
+  done.catch(()=>{});
+  async function close() {
+    if (!gzip.writableEnded) gzip.end();
+    await done;
+  }
   return {
     async write(record) {
-      const {type,manifest,result} = record;
-      await file.writeFile(JSON.stringify(record) + '\n');
+      const {type,manifest,result,state,...row} = record;
+      const line = JSON.stringify({type,manifest,result,...row}) + '\n';
+      await new Promise((resolve,reject)=>gzip.write(line,error=>error?reject(error):resolve()));
       if (type === 'start') await writeFile(join(directory,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
-      if (type === 'end') await writeFile(join(directory,'result.json'),JSON.stringify(result,null,2)+'\n');
+      if (type === 'end') {
+        await close();
+        await writeFile(join(directory,'result.json'),JSON.stringify(result,null,2)+'\n');
+      }
       onRecord(record);
     },
-    close: () => file.close()
+    close
   };
 }
 
-export async function verifyReplay(path,registry) {
-  const lines = createInterface({input:createReadStream(path),crlfDelay:Infinity});
-  let state, game, manifest, expected, tick = 0, ended = false;
-  const check = (condition,message) => { if (!condition) throw new Error(`tick ${tick}: ${message}`); };
-  const same = (a,b) => canonical(a) === canonical(b);
-  try {
-    for await (const line of lines) {
-      check(!ended,'unexpected data after end');
-      const record = JSON.parse(line);
-      if (!manifest) {
-        check(record.type === 'start' && record.manifest?.format === 1,'missing or unsupported start');
-        manifest = record.manifest;
-        game = registry[manifest.game + '@' + manifest.rulesVersion] ?? registry[manifest.game];
-        check(game?.version === manifest.rulesVersion && game.tickRate === manifest.tickRate,'unknown rules version');
-        state = game.init(manifest);
-        check(stateHash(state) === record.hash && stateHash(record.state) === record.hash,'start state differs');
-      } else if (record.type === 'tick') {
-        check(!expected && tick < manifest.maxTicks && record.tick === tick,'out-of-order tick');
-        const actions = Object.fromEntries(manifest.players.map(id => [id,game.validateAction(record.input[id].accepted)]));
-        const next = game.step(state,actions);
-        state = next.state;
-        check(stateHash(state) === record.hash && stateHash(record.state) === record.hash,'state differs');
-        check(same(next.events,record.events),'events differ');
-        expected = next.result;
-        tick++;
-      } else {
-        check(record.type === 'end','unexpected record type');
-        expected ??= tick === manifest.maxTicks ? {winner:null,reason:'tick_limit'}
-          : record.result?.reason === 'stopped' ? {winner:null,reason:'stopped'} : undefined;
-        check(expected && same(expected,record.result),'result differs');
-        ended = true;
-      }
+// Stream and validate without keeping all replay frames or re-running bots.
+export async function* readReplay(path,registry) {
+  const replay = createReplayReconstructor(manifest=>
+    registry[manifest.game + '@' + manifest.rulesVersion] ?? registry[manifest.game]);
+  const text = compose(createReadStream(path),createGunzip()).setEncoding('utf8');
+  let pending = '';
+  function hydrate(line) {
+    const frame = replay.push(parseReplayLine(line));
+    if (frame.type !== 'end' && stateHash(frame.state) !== frame.hash) {
+      throw new Error(`tick ${frame.tick ?? 0}: ${frame.type === 'start' ? 'start state differs' : 'state differs'}`);
     }
-    check(ended,'missing end');
-    return {ticks:tick,result:expected};
-  } finally {
-    lines.close();
+    return frame;
   }
+  try {
+    for await (const chunk of text) {
+      const lines = (pending+chunk).split('\n');
+      pending = lines.pop();
+      for (const line of lines) yield hydrate(line);
+      if (pending.length > MAX_REPLAY_LINE) throw new Error('replay line too large');
+    }
+    if (pending) yield hydrate(pending);
+    replay.finish();
+  } finally {
+    text.destroy();
+  }
+}
+
+export async function verifyReplay(path,registry) {
+  let ticks = 0, result;
+  for await (const frame of readReplay(path,registry)) {
+    if (frame.type === 'tick') ticks++;
+    if (frame.type === 'end') result = frame.result;
+  }
+  return {ticks,result};
 }
