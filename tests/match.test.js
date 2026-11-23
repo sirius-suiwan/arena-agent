@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
-import {join} from 'node:path';
+import {basename,join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {runMatch,stateHash} from '../core/match.js';
@@ -51,6 +51,9 @@ test('runs independent JS and Python bots and replays a tank match',async t=>{
   const dump=(await readFile(join(match.directory,'match.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(dump[0].readiness,{A:'ready',B:'ready'});
   assert.equal(dump[0].manifest.rulesVersion,'3');
+  assert.equal(dump[0].manifest.matchId,match.matchId);
+  assert.equal(basename(match.directory),match.matchId);
+  assert.equal(JSON.parse(await readFile(join(match.directory,'manifest.json'),'utf8')).matchId,match.matchId);
   assert.deepEqual([dump[0].state.width,dump[0].state.height],[768,576]);
   const ticks=dump.filter(r=>r.type==='tick');
   assert.ok(ticks.length>0 && ticks.every(r=>!r.input.A.fallback && !r.input.B.fallback));

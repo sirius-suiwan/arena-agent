@@ -5,6 +5,7 @@ const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
   'battle', 'mode-label', 'match-form', 'seed', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
+  'match-id', 'match-id-value', 'match-id-copy',
   'pause', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
   'scoreboard', 'round-label', 'round-notice', 'canvas-wrap',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
@@ -197,6 +198,38 @@ function elapsedLabel(tick, nominalRate) {
   return `对局时间 ${mm}:${ss}`;
 }
 
+function renderMatchId(manifest) {
+  const id = manifest?.matchId;
+  const valid = typeof id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id);
+  el['match-id'].hidden = menuVisible || !valid;
+  const text = valid ? id : '';
+  if (el['match-id-value'].textContent !== text) {
+    el['match-id-value'].textContent = text;
+    el['match-id-copy'].textContent = '复制';
+    el['match-id'].title = valid ? `复制完整对局 ID（runs/<game-id>/${id}/）` : '';
+  }
+}
+
+el['match-id'].addEventListener('click', async () => {
+  const value = el['match-id-value'];
+  const id = value.textContent;
+  if (!id) return;
+  try {
+    await navigator.clipboard.writeText(id);
+    if (value.textContent === id) el['match-id-copy'].textContent = '已复制';
+  } catch {
+    if (value.textContent !== id || el['match-id'].hidden) return;
+    const selection = document.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(value);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    el['match-id-copy'].textContent = selection ? '已选中，可手动复制' : '无法自动复制';
+  }
+});
+
 function render() {
   drawPending = false;
   const match = replay ?? live;
@@ -212,6 +245,7 @@ function render() {
   el['time-label'].textContent = elapsedLabel(frame, match.manifest?.tickRate);
   el.menu.hidden = !menuVisible;
   el.stage.hidden = menuVisible;
+  renderMatchId(match.manifest);
   el['return-menu'].hidden = menuVisible;
   el['continue-match'].hidden = !live.manifest && !replay;
   el['continue-match'].textContent = replay ? '返回回放' : '返回对局';
