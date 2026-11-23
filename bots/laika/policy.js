@@ -14,6 +14,15 @@ const sqDist = (a,b) => (a.x-b.x)**2 + (a.y-b.y)**2;
 const clamp = (x,lo,hi) => Math.min(hi,Math.max(lo,x));
 const dirs = [[-1,0],[0,-1],[1,0],[0,1]];
 const pressWeapon = (w) => w==='laser'||w==='frag'||w==='mine';
+const legacy={f:MOVE,b:MOVE,turn:TURN,ticks:n=>n,classic:false};
+const positive=(n,fallback)=>Number.isFinite(n)&&n>0?n:fallback;
+function kinetics(profile) {
+  if(!profile) return legacy;
+  const rate=positive(profile.tickRate,60);
+  return {f:positive(profile.forwardSpeed,MOVE),b:positive(profile.reverseSpeed,MOVE),
+    turn:positive(profile.turnSpeed,TURN),ticks:n=>Math.max(1,Math.round(n*rate/60)),classic:true};
+}
+const stepDistance=(throttle,physics)=>throttle*(throttle<0?physics.b:physics.f);
 
 function newBoard(obs) {
   const cols=Math.round(obs.width/CELL),rows=Math.round(obs.height/CELL);
@@ -107,18 +116,21 @@ function shotTrace(me,angle,enemies,walls,range,{radius=3,through=false}={}) {
   return {};
 }
 
-function dangerSamples(me,bullets,walls) {
+function dangerSamples(me,bullets,walls,physics) {
   const threats=bullets.filter(b=>sqDist(me,b)<162**2&&Number.isFinite(b.vx)&&Number.isFinite(b.vy))
     .sort((a,b)=>sqDist(me,a)-sqDist(me,b)).slice(0,12);
-  const samples=Array.from({length:LOOKAHEAD},()=>[]);
+  const horizon=physics.ticks(LOOKAHEAD);
+  const samples=Array.from({length:horizon},()=>[]);
   for (const b of threats) {
     let p=b, vx=b.vx,vy=b.vy,armed=b.owner!==me.id||b.ownerArmed===true;
     const speed=Math.hypot(vx,vy);
     if (speed<EPS) continue;
-    for (let i=0;i<LOOKAHEAD&&i<(b.ttl??LOOKAHEAD);i++) {
+    for (let i=0;i<horizon&&i<(b.ttl??horizon);i++) {
       let dx=vx/speed,dy=vy/speed;
-      const w=wallCross(p,dx,dy,speed,walls,3);
+      const radius=physics.classic&&b.kind==='laser'?0:3;
+      const w=wallCross(p,dx,dy,speed,walls,radius);
       if(w.flipX||w.flipY) {
+        if(physics.classic&&b.kind==='shrapnel') break;
         p={x:p.x+dx*w.distance,y:p.y+dy*w.distance};
         if(w.flipX) vx=-vx;
         if(w.flipY) vy=-vy;
@@ -133,15 +145,16 @@ function dangerSamples(me,bullets,walls) {
   return samples;
 }
 
-function safestMotion(me,walls,samples,goal) {
+function safestMotion(me,walls,samples,goal,physics) {
   let best=null;
   for (const [throttle,turn] of [[1,0],[-1,0],[1,-1],[1,1],[-1,-1],[-1,1],[0,-1],[0,1],[0,0]]) {
     let p=me,heading=me.angle,risk=0;
     for(let i=0;i<samples.length;i++) {
-      const reaction=i<8;
+      const reaction=i<physics.ticks(8);
       if (reaction) {
-        heading+=TURN*turn;
-        const q={x:p.x+MOVE*(reaction?throttle:0)*Math.cos(heading),y:p.y+MOVE*(reaction?throttle:0)*Math.sin(heading)};
+        heading+=physics.turn*turn;
+        const step=stepDistance(throttle,physics);
+        const q={x:p.x+step*Math.cos(heading),y:p.y+step*Math.sin(heading)};
         if(validPose(q,walls)) p=q;
       }
       for (const b of samples[i]) {
@@ -155,27 +168,27 @@ function safestMotion(me,walls,samples,goal) {
   return best;
 }
 
-function drive(me,goal,walls) {
+function drive(me,goal,walls,physics) {
   if (!goal||sqDist(me,goal)<9**2) return {...NEUTRAL};
   const desired=Math.atan2(goal.y-me.y,goal.x-me.x);
   let diff=deltaAngle(desired,me.angle),throttle=1;
   if(Math.abs(diff)>Math.PI*0.58) {
     diff=deltaAngle(desired+Math.PI,me.angle);throttle=-1;
   }
-  const turn=Math.abs(diff)<0.035?0:Math.sign(diff);
-  const heading=me.angle+TURN*turn;
-  const next={x:me.x+MOVE*throttle*Math.cos(heading),y:me.y+MOVE*throttle*Math.sin(heading)};
+  const turn=Math.abs(diff)<Math.max(0.035,physics.turn/2)?0:Math.sign(diff);
+  const heading=me.angle+physics.turn*turn, step=stepDistance(throttle,physics);
+  const next={x:me.x+step*Math.cos(heading),y:me.y+step*Math.sin(heading)};
   if(Math.abs(diff)>0.34||!validPose(next,walls)) throttle=0;
   return {throttle,turn,fire:false};
 }
 
-function chooseAim(me,enemies,walls,range,tick) {
+function chooseAim(me,enemies,walls,range,tick,physics) {
   const options=[me.angle];
   for(const t of enemies) options.push(Math.atan2(t.y-me.y,t.x-me.x));
   // Relative candidates turn with the hull. The staggered distant fan is
   // deterministic and limited to a few rays each tick.
-  for(let k=1;k<=3;k++) options.push(me.angle+k*TURN,me.angle-k*TURN);
-  if(tick%3===0) for(let k=0;k<16;k++) options.push((k/16+(tick%13)/208)*TAU);
+  for(let k=1;k<=3;k++) options.push(me.angle+k*physics.turn,me.angle-k*physics.turn);
+  if(tick%physics.ticks(3)===0) for(let k=0;k<16;k++) options.push((k/16+(tick%13)/208)*TAU);
   const laser=me.weapon==='laser',through=me.weapon==='death-ray';
   let best=null;
   for (const angle of options) {
@@ -198,16 +211,22 @@ export function createLaikaPolicy() {
     const tick=obs.roundTick??obs.tick??0;
     const me=obs.tanks.find(t=>t.id===obs.playerId&&t.alive);
     if (!me||obs.phase==='intermission') return {...NEUTRAL};
+    const physics=kinetics(obs.profile);
     const enemies=obs.tanks.filter(t=>t.alive&&t.id!==me.id);
     if(prior?.throttle) blocked=sqDist(prior,me)<0.2?blocked+1:0;
     else blocked=0;
-    if(blocked>=4){unwedge=10;blocked=0;}
+    if(blocked>=physics.ticks(4)){unwedge=physics.ticks(10);blocked=0;}
     const home=board.cell(me),paths=routes(board,home);
     const liveShells=obs.bullets.filter(b=>b.owner===me.id&&(b.kind===undefined||b.kind==='shell')).length;
-    const ammo=liveShells<(obs.shellLimit??5);
+    const ammo=liveShells<(obs.profile?.shellLimit??obs.shellLimit??5);
     const ordered=enemies.toSorted((a,b)=>paths.d[board.cell(a)]-paths.d[board.cell(b)]||sqDist(a,me)-sqDist(b,me));
     const target=ordered[0];
-    const bank=target&&(ammo||me.weapon)?chooseAim(me,ordered,board.walls,me.weapon==='laser'?576:me.weapon==='death-ray'?Math.hypot(obs.width,obs.height):550,tick):null;
+    const profile=obs.profile, shellSpeed=positive(profile?.shellSpeed,obs.shellSpeed??6);
+    const classicShotSpeed=me.weapon==='gatling'?positive(profile?.gatlingSpeed,shellSpeed)
+      :['frag','missile','remote'].includes(me.weapon)?positive(profile?.missileSpeed,shellSpeed):shellSpeed;
+    const classicRange=me.weapon==='laser'?positive(profile?.laserSpeed*profile?.laserTtl,11.2*CELL):classicShotSpeed*physics.ticks(106);
+    const range=me.weapon==='death-ray'?Math.hypot(obs.width,obs.height):physics.classic?classicRange:me.weapon==='laser'?576:550;
+    const bank=target&&(ammo||me.weapon)?chooseAim(me,ordered,board.walls,range,tick,physics):null;
 
     // Policy port: candidate scores compete each tick, with incumbent decay.
     // Source: Killfield laika.rs, make_decisions_and_update_goal.
@@ -240,20 +259,21 @@ export function createLaikaPolicy() {
     }
     goals.sort((a,b)=>b.priority-a.priority);
     const goal=goals[0];incumbent=goal;
-    let action=drive(me,goal?.point,board.walls);
+    let action=drive(me,goal?.point,board.walls,physics);
     if (goal?.kind==='shoot') {
-      const diff=deltaAngle(goal.aim,me.angle), turn=Math.abs(diff)<0.03?0:Math.sign(diff);
+      const diff=deltaAngle(goal.aim,me.angle), turn=Math.abs(diff)<Math.max(0.03,physics.turn/2)?0:Math.sign(diff);
       action={throttle:0,turn,fire:false};
       if(Math.abs(diff)<0.10) {
-        const direction=me.angle+turn*TURN;
-        const range=me.weapon==='laser'?576:me.weapon==='death-ray'?Math.hypot(obs.width,obs.height):550;
+        const direction=me.angle+turn*physics.turn;
         const shot=shotTrace(me,direction,ordered,board.walls,range,{
           radius:me.weapon==='laser'||me.weapon==='death-ray'?0:3,through:me.weapon==='death-ray'});
         action.fire=Boolean(shot.target&&!shot.self)&&(!pressWeapon(me.weapon)||!me.fireHeld);
         if(action.fire&&!prior?.fire) aggression=Math.max(0,aggression-0.2);
       }
     } else aggression=Math.min(0.5,aggression+0.01);
-    if(me.weapon==='death-ray'&&me.weaponCharge>0&&target) action={...NEUTRAL,fire:true};
+    if(!physics.classic&&me.weapon==='death-ray'&&me.weaponCharge>0&&target) action={...NEUTRAL,fire:true};
+    const sustainingGatling=physics.classic&&me.weapon==='gatling'&&me.weaponCharge>0&&(me.weaponAmmo??1)>0;
+    if(sustainingGatling) action.fire=true;
     if(me.weapon==='frag'&&me.fragId) {
       const b=obs.bullets.find(b=>b.id===me.fragId);
       action.fire=Boolean(!me.fireHeld&&b&&sqDist(b,me)>53**2&&ordered.some(t=>sqDist(b,t)<70**2));
@@ -264,13 +284,23 @@ export function createLaikaPolicy() {
     }
     if(unwedge>0) {
       unwedge--;
-      action={...NEUTRAL,throttle:-1,turn:tick%20<10?1:-1};
+      action={...NEUTRAL,throttle:-1,turn:tick%physics.ticks(20)<physics.ticks(10)?1:-1};
     }
-    const samples=dangerSamples(me,obs.bullets,board.walls);
+    const samples=dangerSamples(me,obs.bullets,board.walls,physics);
     if (samples.some(row=>row.some(b=>sqDist(me,b)<27**2))) {
-      const dodge=safestMotion(me,board.walls,samples,goal?.point);
+      const dodge=safestMotion(me,board.walls,samples,goal?.point,physics);
       action={throttle:dodge.throttle,turn:dodge.turn,fire:false};
     }
+    if(physics.classic&&action.fire&&me.fireHeld&&!sustainingGatling) action.fire=false;
+    if(physics.classic&&me.weapon==='gatling'&&me.weaponAmmo===0) action.fire=false;
+    if(physics.classic&&me.weapon==='remote'&&me.fragId) {
+      const missile=obs.bullets.find(b=>b.id===me.fragId);
+      if(missile&&target) {
+        const diff=deltaAngle(Math.atan2(target.y-missile.y,target.x-missile.x),Math.atan2(missile.vy,missile.vx));
+        action={...NEUTRAL,turn:Math.abs(diff)>positive(profile.remoteTurn,physics.turn)/2?Math.sign(diff):0};
+      }
+    }
+    if(physics.classic&&me.weapon==='death-ray'&&me.weaponCharge>0) action={...NEUTRAL};
     prior={x:me.x,y:me.y,...action};
     return action;
   };

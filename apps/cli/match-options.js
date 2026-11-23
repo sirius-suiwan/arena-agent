@@ -35,6 +35,7 @@ export function parseCustomSeats(roster,registry) {
 }
 
 export async function makeMatch({game,root,base,seed,config={},maxTicks=game.matchTickLimit?.(config)??game.defaultMatchTicks??3600,timeoutMs=50,mode='bots',realtime=false,paths={},registry=new Map(),human={},playerNames={},recorder,onRecord,roster}) {
+  if (mode==='human' && game.version.startsWith('8-')) config={...config,classicSolo:true};
   const custom=mode==='custom'?parseCustomSeats(roster,registry):null;
   if (custom) paths=custom.paths;
   const ids=custom?.ids ?? playersForMode(mode,paths);
@@ -46,9 +47,10 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks=game.mat
       if (!human[id]) throw new Error('no local controller for seat '+id);
       return {id,human:true,version:{kind:'human'}};
     }
-    const registered=registry.get(paths[id] ?? 'turret');
+    const fallback=id==='B'?'laika':'gpt-dots';
+    const registered=registry.get(paths[id] ?? fallback);
     if (registered && names[id]===undefined) names[id]=registered.name;
-    const path = registered?.path ?? resolve(paths[id] ?? join(root,'bots','examples','turret.js'));
+    const path = registered?.path ?? resolve(paths[id] ?? join(root,'bots',fallback,'bot.js'));
     const ext = extname(path);
     if (!['.py','.js','.mjs'].includes(ext)) throw new Error('bot extension must be .py, .js or .mjs');
     const sha256 = registered?.sha256 ?? createHash('sha256').update(await readFile(path)).digest('hex');

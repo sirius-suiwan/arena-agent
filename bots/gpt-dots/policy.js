@@ -8,6 +8,15 @@ const d2=(a,b)=>(a.x-b.x)**2+(a.y-b.y)**2;
 const wrap=(a)=>Math.atan2(Math.sin(a),Math.cos(a));
 const heading=(a,b)=>Math.atan2(b.y-a.y,b.x-a.x);
 const clamp=(n,min,max)=>Math.max(min,Math.min(max,n));
+const legacy={f:MOVE,b:MOVE,turn:TURN,ticks:n=>n,routeTicks:n=>n};
+const positive=(n,fallback)=>Number.isFinite(n)&&n>0?n:fallback;
+function kinetics(profile) {
+  if(!profile) return legacy;
+  const rate=positive(profile.tickRate,60), f=positive(profile.forwardSpeed,MOVE);
+  return {f,b:positive(profile.reverseSpeed,MOVE),turn:positive(profile.turnSpeed,TURN),classic:true,
+    ticks:n=>Math.max(1,Math.round(n*rate/60)),routeTicks:n=>Math.max(1,Math.ceil(n*MOVE/f))};
+}
+const stepDistance=(throttle,physics)=>throttle*(throttle<0?physics.b:physics.f);
 
 function flattenWalls(walls) {
   return walls.map(w=>({a:w.x1===w.x2?w.x1:w.y1,lo:w.x1===w.x2?w.y1:w.x1,
@@ -120,14 +129,15 @@ function canOccupy(x,y,walls) {
   return true;
 }
 
-function hazardTrack(me,projectiles,walls) {
+function hazardTrack(me,projectiles,walls,physics) {
   const selected=projectiles.filter(b=>d2(me,b)<180**2)
     .sort((a,b)=>d2(me,a)-d2(me,b)).slice(0,16);
   const tracks=[];
   for (const b of selected) {
-    const life=Math.min(HORIZON,b.ttl??HORIZON);
+    const horizon=physics.ticks(HORIZON), life=Math.min(horizon,b.ttl??horizon);
     if(!Number.isFinite(b.vx+b.vy)||life<=0) continue;
-    const path=segments(b.x,b.y,b.vx,b.vy,life,walls,3,3);
+    const radius=physics.classic&&b.kind==='laser'?0:3;
+    const path=segments(b.x,b.y,b.vx,b.vy,life,walls,radius,physics.classic&&b.kind==='shrapnel'?0:3);
     let t=0;
     for (const s of path) {
       if(b.owner!==me.id||b.ownerArmed||s.bounced) tracks.push({...s,start:t});
@@ -145,25 +155,26 @@ function hazardTrack(me,projectiles,walls) {
   return tracks;
 }
 
-function routeAction(me,goal,walls) {
+function routeAction(me,goal,walls,physics) {
   if(!goal||d2(me,goal)<8**2) return neutral();
   let da=wrap(heading(me,goal)-me.angle),throttle=1;
   if(Math.abs(da)>1.95) {throttle=-1;da=wrap(da+Math.PI);}
-  const turn=Math.abs(da)>0.031?Math.sign(da):0;
-  const a=me.angle+turn*TURN;
-  if(Math.abs(da)>0.42||!canOccupy(me.x+MOVE*throttle*Math.cos(a),me.y+MOVE*throttle*Math.sin(a),walls)) throttle=0;
+  const turn=Math.abs(da)>Math.max(0.031,physics.turn/2)?Math.sign(da):0;
+  const a=me.angle+turn*physics.turn, step=stepDistance(throttle,physics);
+  if(Math.abs(da)>0.42||!canOccupy(me.x+step*Math.cos(a),me.y+step*Math.sin(a),walls)) throttle=0;
   return {throttle,turn,fire:false};
 }
 
 // Prefer an actual escape trajectory over alternating blind reverse turns.
-function recover(me,goal,walls,enemies,preferTurn) {
+function recover(me,goal,walls,enemies,preferTurn,physics) {
   let best=null;
   for(const model of MOVES) {
     if(!model.throttle) continue;
     let x=me.x,y=me.y,a=me.angle,steps=0;
-    for(let i=0;i<11;i++) {
-      a+=model.turn*TURN;
-      const p={x:x+model.throttle*MOVE*Math.cos(a),y:y+model.throttle*MOVE*Math.sin(a)};
+    for(let i=0;i<physics.ticks(11);i++) {
+      a+=model.turn*physics.turn;
+      const step=stepDistance(model.throttle,physics);
+      const p={x:x+step*Math.cos(a),y:y+step*Math.sin(a)};
       if(!canOccupy(p.x,p.y,walls)||enemies.some(e=>d2(e,p)<(2*R)**2)) continue;
       x=p.x;y=p.y;steps++;
     }
@@ -186,12 +197,13 @@ function trackGap(x,y,dx,dy,begin,bullet) {
   return (rx+t*vx)**2+(ry+t*vy)**2;
 }
 
-function safety(me,action,walls,bullets,mines,enemies,roundTick) {
+function safety(me,action,walls,bullets,mines,enemies,roundTick,physics) {
   let risk=0,x=me.x,y=me.y,a=me.angle;
-  for(let i=0;i<HORIZON;i++) {
+  for(let i=0;i<physics.ticks(HORIZON);i++) {
     // Evaluate a short committed action, then allow its turn to stop.
-    if(i<6) a+=action.turn*TURN;
-    let dx=action.throttle*MOVE*Math.cos(a),dy=action.throttle*MOVE*Math.sin(a);
+    if(i<physics.ticks(6)) a+=action.turn*physics.turn;
+    const step=stepDistance(action.throttle,physics);
+    let dx=step*Math.cos(a),dy=step*Math.sin(a);
     const p={x:x+dx,y:y+dy};
     if(!canOccupy(p.x,p.y,walls)||enemies.some(e=>d2(e,p)<(2*R)**2)) {dx=0;dy=0;}
     for(const b of bullets) {
@@ -208,15 +220,15 @@ function safety(me,action,walls,bullets,mines,enemies,roundTick) {
   return {risk,x,y};
 }
 
-function aimPlan(me,enemies,walls,weapon,speed,tick) {
+function aimPlan(me,enemies,walls,weapon,speed,tick,physics,laserRange) {
   const beam=weapon==='laser'||weapon==='death-ray';
   const shotSpeed=beam?1:speed;
-  const maxTime=beam ? (weapon==='laser'?576:1000) : 58;
+  const maxTime=beam ? (weapon==='laser'?laserRange:1000) : physics.ticks(58);
   const direct=enemies.slice(0,3).map(e=>heading(me,e));
-  const candidates=[me.angle,me.angle-TURN,me.angle+TURN,...direct];
+  const candidates=[me.angle,me.angle-physics.turn,me.angle+physics.turn,...direct];
   // Mirror targets across nearby wall axes for one-bank candidates; actual
   // tracing rejects imaginary shots behind walls or hits on ourselves.
-  if(weapon!=='death-ray'&&tick%2===0) {
+  if(weapon!=='death-ray'&&tick%physics.ticks(2)===0) {
     const axes=new Set();
     for(const w of nearWalls(me,walls,130)) {
       const key=(w.vert?'x':'y')+w.a;
@@ -253,22 +265,22 @@ function insideRect(p,z,margin=0) {
   return Math.abs(p.x-z.x)+margin<=z.halfWidth&&Math.abs(p.y-z.y)+margin<=z.halfHeight;
 }
 
-function zoneNavigation(zone,me,map,costs,tick) {
+function zoneNavigation(zone,me,map,costs,tick,physics) {
   if(!zone||me.invulnerable||![zone.x,zone.y,zone.halfWidth,zone.halfHeight,zone.initialHalfWidth,zone.initialHalfHeight,
     zone.finalHalfWidth,zone.finalHalfHeight,zone.startTick,zone.endTick].every(Number.isFinite)) return null;
   let shelter=null,score=Infinity;
   for(let i=0;i<costs.length;i++) if(costs[i]>=0) {
-    const p=map.center(i), eta=costs[i]*45+35;
-    const projected=zoneAt(zone,tick+eta+70);
+    const p=map.center(i), eta=costs[i]*physics.routeTicks(45)+physics.ticks(35);
+    const projected=zoneAt(zone,tick+eta+physics.ticks(70));
     const dx=Math.abs(p.x-zone.x),dy=Math.abs(p.y-zone.y);
     const over=Math.max(0,dx+15-projected.halfWidth)+Math.max(0,dy+15-projected.halfHeight);
     const rank=over*30+eta*0.35+Math.hypot(dx,dy)*0.6;
     if(rank<score) {score=rank;shelter={...p,eta};}
   }
   if(!shelter) return null;
-  const future=zoneAt(zone,tick+shelter.eta+55);
+  const future=zoneAt(zone,tick+shelter.eta+physics.ticks(55));
   const pressure=!insideRect(me,zone)||!insideRect(me,future,24);
-  return {pressure,shelter,crateSafe:(p,eta)=>insideRect(p,zoneAt(zone,tick+eta+45),18)};
+  return {pressure,shelter,crateSafe:(p,eta)=>insideRect(p,zoneAt(zone,tick+eta+physics.ticks(45)),18)};
 }
 
 export function makePolicy() {
@@ -285,21 +297,22 @@ export function makePolicy() {
       routeCache=null;routeCell=-1;
     }
     const tick=obs.roundTick??obs.tick??0;
+    const profile=obs.profile, physics=kinetics(profile);
     const enemies=obs.tanks.filter(t=>t.alive&&t.id!==me.id).sort((a,b)=>d2(me,a)-d2(me,b));
     const nearbyEnemies=enemies.filter(t=>d2(me,t)<500**2).slice(0,4);
     const obstacles=nearWalls(me,map.walls,60);
     const ammo=obs.bullets.reduce((n,b)=>n+Number(b.owner===me.id&&(b.kind==='shell'||b.kind===undefined)),0);
-    const armed=ammo<(obs.shellLimit??5);
+    const armed=ammo<(profile?.shellLimit??obs.shellLimit??5);
     const cell=map.index(me);
     if(routeCell!==cell) {routeCache=bfs(map,cell);routeCell=cell;}
     const {costs,next}=routeCache;
     const nearest=enemies.reduce((a,b)=>!a||costs[map.index(b)]<costs[map.index(a)]?b:a,null);
-    const safe=zoneNavigation(obs.zone,me,map,costs,tick),zonePressure=safe?.pressure===true;
+    const safe=zoneNavigation(obs.zone,me,map,costs,tick,physics),zonePressure=safe?.pressure===true;
     // Empty weapon slot: gather a reachable crate before chasing. A slightly
     // longer path to a strong weapon beats an equally close mine, not all mines.
     const supplies=me.weapon||zonePressure?[]:(obs.pickups??[]).filter(p=>{
       const cost=costs[map.index(p)];
-      return cost>=0&&cost<=8&&(!safe||safe.crateSafe(p,cost*45+35));
+      return cost>=0&&cost<=8&&(!safe||safe.crateSafe(p,cost*physics.routeTicks(45)+physics.ticks(35)));
     }).sort((a,b)=>{
       const value=p=>costs[map.index(p)]*1.2+Math.sqrt(d2(me,p))/160+Number(p.type==='mine')*0.45;
       return value(a)-value(b);
@@ -325,12 +338,12 @@ export function makePolicy() {
     if(cornerCell!==cell) cornerCell=-1;
     const center=map.center(cell);
     if(cornerCell===cell&&d2(me,center)<=8**2) cornerCell=-1;
-    let route=routeAction(me,cornerCell===cell?center:goal,obstacles);
+    let route=routeAction(me,cornerCell===cell?center:goal,obstacles,physics);
     // If the hull cannot take the guessed diagonal through an opening, round
     // the wall end from the center of the current cell before retrying.
     if(goal&&d2(me,goal)>8**2&&!route.throttle&&!route.turn&&d2(me,center)>8**2){
       cornerCell=cell;
-      route=routeAction(me,center,obstacles);
+      route=routeAction(me,center,obstacles,physics);
     }
     const hasRoute=Boolean(goal&&d2(me,goal)>8**2);
     if(oldPose?.navigating&&hasRoute) {
@@ -340,22 +353,25 @@ export function makePolicy() {
       if(idle&&(oldPose.throttle||!rotating||reversal)) stuck++;
       else stuck=Math.max(0,stuck-1);
     } else stuck=0;
-    if(stuck>=7&&!escape) {
-      steer=-steer;escape={action:recover(me,goal,obstacles,nearbyEnemies,steer),until:tick+10};
-      waypoint=null;cornerCell=-1;stuck=0;navUntil=tick+17;aimStarted=null;lockAim=null;
+    if(stuck>=physics.ticks(7)&&!escape) {
+      steer=-steer;escape={action:recover(me,goal,obstacles,nearbyEnemies,steer,physics),until:tick+physics.ticks(10)};
+      waypoint=null;cornerCell=-1;stuck=0;navUntil=tick+physics.ticks(17);aimStarted=null;lockAim=null;
     }
     let preferred=route,navigating=hasRoute;
     const weapon=me.weapon;
-    const shotSpeed=weapon==='frag'?4.5:weapon==='gatling'?7.5:obs.shellSpeed??6;
-    const ready=weapon?!(weapon==='gatling'&&me.weaponGap>0):armed&&(me.cooldown??0)<=1;
+    const shellSpeed=profile?.shellSpeed??obs.shellSpeed??6;
+    const shotSpeed=!profile&&weapon==='frag'?4.5:weapon==='gatling'?(profile?.gatlingSpeed??7.5)
+      :['frag','missile','remote'].includes(weapon)?(profile?.missileSpeed??shellSpeed):shellSpeed;
+    const laserRange=profile?positive(profile.laserSpeed*profile.laserTtl,11.2*CELL):576;
+    const ready=weapon?!(weapon==='gatling'&&(me.weaponGap>0||(profile&&me.weaponAmmo===0))):armed&&(me.cooldown??0)<=1;
     const canUse=ready&&weapon!=='mine'&&!(weapon==='frag'&&me.fragId);
     if(!zonePressure&&canUse&&nearbyEnemies.length&&tick>=navUntil) {
       const beam=weapon==='laser'||weapon==='death-ray';
-      const press=weapon==='laser'||weapon==='frag';
+      const press=profile||weapon==='laser'||weapon==='frag';
       const canPress=!press||!me.fireHeld;
-      const directRange=beam?576:58;
+      const directRange=beam?(weapon==='laser'?laserRange:576):physics.ticks(58);
       const currentShot=shot(me,me.angle,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange);
-      const immediatelyUseful=currentShot&&currentShot.hit!==me.id&&currentShot.travel<=12;
+      const immediatelyUseful=currentShot&&currentShot.hit!==me.id&&currentShot.travel<=(beam?12:physics.ticks(12));
       if(supply) {
         // One quick shot is worth taking; waiting or turning repeatedly over a
         // promising long-range shot is not worth abandoning a crate.
@@ -366,21 +382,21 @@ export function makePolicy() {
         }
       } else {
         // Keep an aim for a few ticks to avoid oscillating between banks/targets.
-        if(!lockAim||tick-lockAim.tick>=4) {
-          const plan=aimPlan(me,nearbyEnemies,map.walls,weapon,shotSpeed,tick);
+        if(!lockAim||tick-lockAim.tick>=physics.ticks(4)) {
+          const plan=aimPlan(me,nearbyEnemies,map.walls,weapon,shotSpeed,tick,physics,laserRange);
           lockAim=plan?{...plan,tick}:null;
         }
         if(lockAim) {
           const err=wrap(lockAim.angle-me.angle);
           if(Math.abs(err)<0.8||(weapon&&weapon!=='gatling')) {
             aimStarted??=tick;
-            if(tick-aimStarted>=13) {
-              navUntil=tick+11;lockAim=null;aimStarted=null;
+            if(tick-aimStarted>=physics.ticks(13)) {
+              navUntil=tick+physics.ticks(11);lockAim=null;aimStarted=null;
             } else {
-              preferred={throttle:0,turn:Math.abs(err)>0.03?Math.sign(err):0,fire:false};
+              preferred={throttle:0,turn:Math.abs(err)>Math.max(0.03,physics.turn/2)?Math.sign(err):0,fire:false};
               navigating=false;
               if(Math.abs(err)<0.12) {
-                const h=shot(me,me.angle+preferred.turn*TURN,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange);
+                const h=shot(me,me.angle+preferred.turn*physics.turn,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange);
                 preferred.fire=Boolean(h&&h.hit!==me.id&&canPress);
               }
             }
@@ -388,7 +404,8 @@ export function makePolicy() {
         } else aimStarted=null;
       }
     } else {lockAim=null;aimStarted=null;}
-    if(!zonePressure&&weapon==='death-ray'&&me.weaponCharge>0&&enemies.length) {preferred={...neutral(),fire:true};navigating=false;}
+    if(!profile&&!zonePressure&&weapon==='death-ray'&&me.weaponCharge>0&&enemies.length) {preferred={...neutral(),fire:true};navigating=false;}
+    if(profile&&weapon==='gatling'&&me.weaponCharge>0&&(me.weaponAmmo??1)>0&&!zonePressure) preferred={...preferred,fire:true};
     if(!zonePressure&&weapon==='frag'&&me.fragId&&!me.fireHeld) {
       const bomb=obs.bullets.find(b=>b.id===me.fragId);
       if(bomb&&d2(me,bomb)>75**2&&enemies.some(e=>d2(e,bomb)<70**2)) preferred.fire=true;
@@ -398,14 +415,14 @@ export function makePolicy() {
     if(escape&&tick>=escape.until) escape=null;
     if(escape) {preferred=escape.action;navigating=false;}
     const mineThreat=(obs.mines??[]).filter(m=>d2(me,m)<65**2);
-    const projectiles=hazardTrack(me,obs.bullets,map.walls);
+    const projectiles=hazardTrack(me,obs.bullets,map.walls,physics);
     if(projectiles.length||mineThreat.length) {
-      const before=safety(me,preferred,obstacles,projectiles,mineThreat,nearbyEnemies,tick);
+      const before=safety(me,preferred,obstacles,projectiles,mineThreat,nearbyEnemies,tick,physics);
       if(before.risk>2.5) {
         const base={x:before.x,y:before.y};
         let best=before.risk, candidate=preferred;
         for(const model of MOVES) {
-          const run=safety(me,model,obstacles,projectiles,mineThreat,nearbyEnemies,tick);
+          const run=safety(me,model,obstacles,projectiles,mineThreat,nearbyEnemies,tick,physics);
           const cost=run.risk+Math.sqrt(d2(run,base))*0.013+0.15;
           if(cost<best){best=cost;candidate=model;}
         }
@@ -413,6 +430,15 @@ export function makePolicy() {
         preferred={...candidate};
       }
     }
+    if(profile&&weapon==='remote'&&me.fragId) {
+      const missile=obs.bullets.find(b=>b.id===me.fragId);
+      if(missile&&nearest) {
+        const error=wrap(heading(missile,nearest)-Math.atan2(missile.vy,missile.vx));
+        preferred={throttle:0,turn:Math.abs(error)>positive(profile.remoteTurn,physics.turn)/2?Math.sign(error):0,fire:false};
+        navigating=false;
+      }
+    }
+    if(profile&&weapon==='death-ray'&&me.weaponCharge>0) {preferred=neutral();navigating=false;}
     oldPose={x:me.x,y:me.y,angle:me.angle,throttle:preferred.throttle,turn:preferred.turn,navigating};
     return preferred;
   };

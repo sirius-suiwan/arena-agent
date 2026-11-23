@@ -6,5 +6,7 @@ The port adapts goal competition with incumbent decay, aggression budget, short-
 
 ```sh
 node apps/cli/arena.js run --seed 12 --score-to-win 1 \
-  --bot-a bots/laika/bot.js --bot-b bots/examples/turret.js
+  --bot-a laika --bot-b gpt-dots
 ```
+
+Classic v8 uses the referee's observation profile for speed, reverse speed, turn size and tick timing. The adapter respects the five-shell cap and fresh presses, holds a charged Gatling until empty unless dodging, and steers an active RC missile through the normal turn input. The underlying pursuit, evasion and shooting priorities are unchanged.

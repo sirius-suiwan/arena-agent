@@ -8,7 +8,7 @@ import {runMatch,stateHash} from '../core/match.js';
 import {recorder,verifyReplay} from '../replay/index.js';
 import {makeMatch} from '../apps/cli/match-options.js';
 import {LocalBot} from '../runners/local-process/index.js';
-import {game,gameV1,gameV2,gameV3,gameV4} from '../games/tank-trouble/adapter/index.js';
+import {gameV7 as game,gameV1,gameV2,gameV3,gameV4} from '../games/tank-trouble/adapter/index.js';
 import {normalizePlayerName} from '../protocol/bot/player-name.js';
 import {jumpGame} from './fixtures/jump-game.js';
 
@@ -54,11 +54,11 @@ test('player display names strip controls and cap Unicode without changing seat 
 
 test('runs independent JS and Python bots and replays a tank match',async t=>{
   const base=await folder(t);
-  const match=await makeMatch({game,root,base,seed:42,maxTicks:180,timeoutMs:1000,paths:{B:join(root,'bots/examples/scout.py')},playerNames:{A:' 主机名 '},recorder});
+  const match=await makeMatch({game,root,base,seed:42,maxTicks:180,timeoutMs:1000,paths:{B:join(root,'tests/fixtures/jsonl-seat.py')},playerNames:{A:' 主机名 '},recorder});
   const result=await match.run();
   const dump=(await readFile(join(match.directory,'match.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(dump[0].readiness,{A:'ready',B:'ready'});
-  assert.deepEqual(dump[0].manifest.playerNames,{A:'主机名',B:'斥候'});
+  assert.deepEqual(dump[0].manifest.playerNames,{A:'主机名',B:'Python 测试席'});
   assert.equal(dump[0].manifest.rulesVersion,'7');
   assert.equal(dump[0].state.shellLimit,10);
   assert.equal(dump[0].state.config.shellSpeed,5.2);

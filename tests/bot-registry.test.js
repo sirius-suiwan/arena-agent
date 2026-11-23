@@ -20,9 +20,9 @@ async function fixture(t) {
   return {tmp,bot};
 }
 
-test('discovers an agent Python package and runs it against registered Laika and turret with verifiable replay',async t=>{
+test('discovers an agent Python package and runs it against registered Laika and GPT-dots with verifiable replay',async t=>{
   const {tmp,bot}=await fixture(t);
-  for (const folder of ['examples','laika']) await cp(join(root,'bots',folder),join(tmp,'bots',folder),{recursive:true});
+  for (const folder of ['gpt-dots','laika']) await cp(join(root,'bots',folder),join(tmp,'bots',folder),{recursive:true});
   await manifest(bot);
   await writeFile(join(bot,'strategy.py'),'turn = 1\n');
   await writeFile(join(bot,'bot.py'),[
@@ -32,7 +32,7 @@ test('discovers an agent Python package and runs it against registered Laika and
     '  print(json.dumps(response), flush=True)'
   ].join('\n')+'\n');
   const registry=await loadBotRegistry(tmp,game.id);
-  assert.deepEqual(botCatalog(registry).map(bot=>bot.id),['agent-fox','laika','scout','turret']);
+  assert.deepEqual(botCatalog(registry).map(bot=>bot.id),['agent-fox','gpt-dots','laika']);
   assert.deepEqual(botCatalog(registry)[0],{id:'agent-fox',name:'新选手'});
   assert.equal((await loadBotRegistry(tmp,'other-game')).size,0);
   const before=registry.get('agent-fox');
@@ -41,13 +41,13 @@ test('discovers an agent Python package and runs it against registered Laika and
   assert.equal(updated.get('agent-fox').sha256,before.sha256);
   assert.notEqual(updated.get('agent-fox').packageSha256,before.packageSha256);
   const match=await makeMatch({game,root:tmp,base:join(tmp,'runs'),seed:42,maxTicks:90,timeoutMs:1000,
-    paths:{A:'laika',B:'agent-fox',C:'turret'},registry:updated,recorder});
+    paths:{A:'laika',B:'agent-fox',C:'gpt-dots'},registry:updated,recorder});
   const result=await match.run();
   const path=join(match.directory,'match.jsonl');
   const data=(await readFile(path,'utf8')).trim().split('\n').map(JSON.parse);
   const start=data[0], ticks=data.filter(row=>row.type==='tick');
   assert.deepEqual(start.readiness,{A:'ready',B:'ready',C:'ready'});
-  assert.deepEqual(start.manifest.playerNames,{A:'Laika（复刻）',B:'新选手',C:'巡回炮台'});
+  assert.deepEqual(start.manifest.playerNames,{A:'Laika（复刻）',B:'新选手',C:'GPT-dots'});
   assert.equal(start.manifest.botVersions.A.id,'laika');
   assert.equal(start.manifest.botVersions.B.packageSha256,updated.get('agent-fox').packageSha256);
   assert.ok(ticks.length>0 && ticks.every(tick=>!tick.input.A.fallback && !tick.input.B.fallback && !tick.input.C.fallback));
