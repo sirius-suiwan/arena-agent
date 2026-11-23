@@ -107,7 +107,7 @@ test('recover with legal reverse after repeated real wall blocks, then resume af
   const seat=wrap(moving);
   for(let tick=0;tick<3;tick++) assert.deepEqual((await seat.act(wallCase(tick))).value,moving);
   assert.deepEqual((await seat.act(wallCase(3))).value,{...neutral,throttle:-1});
-  const b=tank('B',230,230,0), clear=tank('A',84.5,96,Math.PI);
+  const b=tank('B',230,230,0), clear=tank('A',88.75,96,Math.PI);
   assert.deepEqual((await seat.act(wallCase(4,{tanks:[clear,b]}))).value,moving);
 });
 
@@ -121,4 +121,13 @@ test('idle, solitary wall contact, round changes and live nearby hazards do not 
   const bullet={kind:'shell',owner:'B',x:93,y:96,vx:-3,vy:0};
   assert.deepEqual((await seat.act(wallCase(5,{bullets:[bullet]}))).value,moving);
   assert.deepEqual((await seat.act(wallCase(6,{round:2,roundTick:0}))).value,moving);
+});
+
+test('a passing shell does not keep the bot stuck in a wall',async()=>{
+  const seat=wrap(moving);
+  const passing={kind:'shell',owner:'A',ownerArmed:true,x:98,y:98,vx:5,vy:0};
+  for(let tick=0;tick<3;tick++) {
+    assert.deepEqual((await seat.act(wallCase(tick,{bullets:[passing]}))).value,moving);
+  }
+  assert.deepEqual((await seat.act(wallCase(3,{bullets:[passing]}))).value,{...neutral,throttle:-1});
 });

@@ -1,5 +1,5 @@
 // Independent Tank Trouble tactic for the privileged Laika seat. Does not change the base bot.
-export const LAIKA_INSIGHT_POLICY='laika-insight/2';
+export const LAIKA_INSIGHT_POLICY='laika-insight/3';
 
 const TANK_RADIUS=12, SHELL_RADIUS=3;
 const EPS=1e-7;
@@ -146,6 +146,24 @@ function insight(message,base) {
   return base;
 }
 
+// Recovery cares whether a projectile can intersect its current or proposed
+// pose, not whether an unrelated returning shell is merely nearby.
+function safeToRecover(obs,me,p) {
+  const outside=q=>obs.zone?Math.max(0,Math.abs(q.x-obs.zone.x)-obs.zone.halfWidth,Math.abs(q.y-obs.zone.y)-obs.zone.halfHeight):0;
+  if(outside(p)>outside(me)||(obs.mines??[]).some(m=>Math.min(d2(me,m),d2(p,m))<45**2)) return false;
+  return !obs.bullets.some(b=>{
+    const closest=Math.min(d2(me,b),d2(p,b)),speed=Math.hypot(b.vx,b.vy);
+    if(!Number.isFinite(speed)) return closest<30**2;
+    const horizon=Math.min(b.ttl??Infinity,Math.max(1,obs.profile.tickRate*0.085));
+    const radius=TANK_RADIUS+(b.kind==='laser'?0:SHELL_RADIUS)+2;
+    if(closest>(speed*horizon+radius)**2) return false;
+    const to={x:b.x+b.vx*horizon,y:b.y+b.vy*horizon};
+    if(blockedByWall(b,to,obs.walls,b.kind==='laser'?0:SHELL_RADIUS)) return true;
+    if(b.owner===me.id&&!b.ownerArmed) return false;
+    return Math.min(segmentDistance2(me,b,to),segmentDistance2(p,b,to))<radius**2;
+  });
+}
+
 // Detect repeated *attempted* wall-blocked movement without mistaking waiting,
 // tank collisions, or a single turn at a corner for a stuck bot.
 function makeWallRecovery() {
@@ -155,7 +173,7 @@ function makeWallRecovery() {
     const cell=64;
     const center={x:(Math.floor(me.x/cell)+0.5)*cell,y:(Math.floor(me.y/cell)+0.5)*cell};
     const others=obs.tanks.filter(t=>t.alive&&t!==me);
-    const clear=p=>others.every(t=>d2(p,t)>=(2*TANK_RADIUS+obs.profile.forwardSpeed)**2)&&safeToChangeAim(obs,me,p);
+    const clear=p=>others.every(t=>d2(p,t)>=(2*TANK_RADIUS+obs.profile.forwardSpeed)**2)&&safeToRecover(obs,me,p);
     let best=null,score=0;
     for(const throttle of [-1,1]) for(const turn of [0,-1,1]) {
       const action={throttle,turn,fire:false},p=pose(me,action,obs);
@@ -182,19 +200,21 @@ function makeWallRecovery() {
        !Array.isArray(obs.walls)||!Array.isArray(obs.bullets)||!['tickRate','forwardSpeed','reverseSpeed','turnSpeed']
         .every(k=>Number.isFinite(obs.profile?.[k])&&obs.profile[k]>0)) {reset();return normal;}
     if(prior&&(prior.round!==obs.round||prior.tick!==message.tick-1)) reset();
-    const didNotMove=prior&&d2(prior.me,me)<0.1**2;
+    const distance2=prior?d2(prior.me,me):Infinity;
     const sameTick=message.opponentActionsTick===message.tick;
     const nearbyFire=sameTick&&obs.tanks.some(t=>t.alive&&t!==me&&d2(t,me)<120**2&&
       (!teamMate(obs,t,me)||obs.friendlyFire)&&message.opponentActions?.[t.id]?.fire);
-    if(normal!==base||base.fire||nearbyFire||!safeToChangeAim(obs,me,me)) {reset();return normal;}
-    blocked=didNotMove&&prior.wallBlocked?blocked+1:0;
-    if(exit&&(message.tick>=exit.until||d2(exit.origin,me)>=8**2)) exit=null;
-    if(!exit&&base.throttle&&blocked>=Math.max(3,Math.ceil(obs.profile.tickRate*0.12))) {
-      exit={origin:me,until:message.tick+Math.ceil(obs.profile.tickRate*0.24)};
+    if(distance2<0.1**2&&prior.wallBlocked) blocked++;
+    else if(distance2<4**2) blocked=Math.max(0,blocked-2);
+    else blocked=0;
+    if(exit&&(message.tick>=exit.until||d2(exit.origin,me)>=12**2)) exit=null;
+    if(!exit&&base.throttle&&blocked>=Math.max(3,Math.ceil(obs.profile.tickRate*0.1))) {
+      exit={origin:me,until:message.tick+Math.ceil(obs.profile.tickRate*0.3)};
     }
     if(exit&&!base.throttle) exit=null;
-    const action=exit?(choose(me,obs)??normal):normal;
-    if(exit&&action===normal) exit=null;
+    const mayRecover=normal===base&&!base.fire&&!nearbyFire&&safeToRecover(obs,me,me);
+    const action=exit&&mayRecover?(choose(me,obs)??normal):normal;
+    if(exit&&mayRecover&&action===normal) exit=null;
     const wallBlocked=action.throttle!==0&&d2(pose(me,action,obs),me)<0.1**2;
     prior={me,wallBlocked,tick:message.tick,round:obs.round};
     return action;

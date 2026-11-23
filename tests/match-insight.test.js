@@ -125,7 +125,7 @@ async function fetchManifest(t, registryFolder, paths, options={}) {
 test('only registered builtin Laika or its actual default entry receives the privilege',async t=>{
   const genuine=await fetchManifest(t,'laika',{B:'laika'});
   assert.deepEqual(genuine.inputInsight.seats,['B']);
-  assert.equal(genuine.botVersions.B.policy,'laika-insight/2');
+  assert.equal(genuine.botVersions.B.policy,'laika-insight/3');
   assert.equal(Object.hasOwn(genuine.botVersions.A,'policy'),false);
 
   const fake=await fetchManifest(t,'fake',{B:'laika'});
