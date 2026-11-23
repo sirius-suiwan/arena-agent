@@ -19,22 +19,26 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
     format:1, protocol:1, game:game.id, rulesVersion:game.version, tickRate:game.tickRate,
     mode, realtime, timeoutMs, seed, config, players, maxTicks, botVersions
   };
-  let state = game.init({seed,config,players});
   try {
+    let state = game.init({seed,config,players});
     const starts = await Promise.all(players.map(playerId => seats[playerId].start?.({
       type:'start', protocol:1, game:game.id, rulesVersion:game.version, playerId, tickRate:game.tickRate, config
     })));
     await record({type:'start',manifest,state,hash:stateHash(state),readiness:Object.fromEntries(players.map((id,i)=>[id,starts[i]?.error ?? 'ready']))});
     const period = 1000 / game.tickRate;
+    let deadline = performance.now() + period;
     for (let tick = 0; tick < maxTicks; tick++) {
       const began = performance.now();
+      if (realtime && began - deadline > 4 * period) deadline = began + period;
       const observed = players.map(playerId => game.observe(state, playerId));
-      const budget = realtime ? Math.min(timeoutMs, period) : timeoutMs;
+      const budget = realtime ? Math.max(1, Math.min(timeoutMs, deadline - performance.now())) : timeoutMs;
       const submissions = await Promise.all(players.map((id,i) => seats[id].act({
         type:'observe',tick,observation:observed[i]
       },budget)));
-      if (realtime && performance.now() - began < period) {
-        await delay(Math.ceil(period - (performance.now() - began)));
+      if (realtime) {
+        const remaining = deadline - performance.now();
+        if (remaining > 0) await delay(Math.ceil(remaining));
+        deadline += period;
       }
       const input = Object.fromEntries(players.map((id,i) => {
         const {value,error} = submissions[i] ?? {};

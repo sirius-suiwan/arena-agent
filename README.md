@@ -15,3 +15,26 @@
 | `tests/` | 单元、协议、可重放和接入测试 |
 
 开发规范见 [AGENTS.md](AGENTS.md)。项目使用 Node.js 22+；Python bot 需要 Python 3。
+
+## 快速开始
+
+```sh
+npm test
+node apps/cli/arena.js run --seed 42 --bot-b bots/examples/scout.py
+node apps/cli/arena.js serve
+```
+
+CLI 输出本局目录。打开 [本地观战](http://127.0.0.1:8765/)，可启动 bot 对战或人机对战。人机模式使用 WASD 或方向键移动和转向，空格开火。网页只监听本机，不提供网络联机。选择「打开回放」并载入 `match.jsonl`，即可播放、逐 tick 前后步进或点事件跳转。
+
+```sh
+node apps/cli/arena.js verify runs/tank-trouble/<match-id>/match.jsonl
+node apps/cli/arena.js run --seed 42 --rounds 10
+```
+
+实际对局存于 `runs/<game-id>/<match-id>/`。其中 `manifest.json` 标记版本、种子、选手、运行参数；`match.jsonl` 包含初始状态、每 tick 的观测、提交动作、采纳动作、回退、事件、状态和 SHA-256；`result.json` 记录结果。浏览器直接显示保存的帧；CLI 校验使用原规则版本与采纳动作重算，不启动 bot。完整帧日志适合复盘，连续批量跑赛要留意磁盘用量。
+
+## 接入 bot 或游戏
+
+- [Bot JSONL 协议](protocol/bot/README.md)：每局一个常驻进程。支持受信任的本地 `.py`、`.js` 或 `.mjs` 脚本。示例在 `bots/examples/`，可通过 `--bot-a` 和 `--bot-b` 替换。**本地进程不是安全沙箱。**
+- [游戏适配器契约](protocol/game/README.md)：游戏决定 tick 频率及动作语义，宿主不解释物理。现有 [坦克规则](games/tank-trouble/RULES.md)；测试包含不同动作结构、不同 tick 频率的小型第二游戏。
+- [本机界面协议](protocol/viewer/README.md)：画面与输入只是裁判的客户端。未来的《疯狂小人战斗》尚未接入。
