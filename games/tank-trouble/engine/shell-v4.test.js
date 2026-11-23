@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { game,gameV3,classicRoundGameV4 as v4,classicRoundGameV3 as v3 } from '../adapter/index.js';
+import { gameV4 as game,gameV3,classicRoundGameV4 as v4,classicRoundGameV3 as v3 } from '../adapter/index.js';
 
 const input={seed:'shell-tuning',players:['amber','blue']};
 const fire={throttle:0,turn:0,fire:true};

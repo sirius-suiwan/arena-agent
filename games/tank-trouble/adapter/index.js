@@ -65,4 +65,12 @@ export const classicRoundGameV4 = Object.freeze({
   step: classic.stepV4
 });
 
-export const game = withClassicSeries(classicRoundGameV4);
+export const gameV4 = withClassicSeries(classicRoundGameV4);
+
+export const classicRoundGameV5 = Object.freeze({
+  ...classicRoundGameV4,
+  version: '5',
+  init: classic.initV5
+});
+
+export const game = withClassicSeries(classicRoundGameV5);

@@ -86,19 +86,53 @@ function generateMaze(cols, rows, rng) {
   return walls;
 }
 
-function initRound({ seed, config, players }, revised, defaults) {
-  if (!Array.isArray(players) || ![2,3].includes(players.length) || new Set(players).size !== players.length ||
-      players.some(x => typeof x !== 'string' || !x.trim() || x.length > 128)) {
-    throw new TypeError('two or three distinct nonempty string player IDs are required');
+// Select distinct cell centers by maximizing the nearest distance to the
+// already occupied centers. Shuffling first gives stable seed-resolved ties.
+function multiplayerSpawns(cols, rows, walls, count, rng) {
+  const candidates=Array.from({length:cols*rows},(_,i)=>({col:i%cols,row:Math.floor(i/cols)}));
+  for(let i=candidates.length-1;i>0;i--) {
+    const j=Math.floor(next(rng)*(i+1));
+    [candidates[i],candidates[j]]=[candidates[j],candidates[i]];
+  }
+  const selected=[];
+  while (selected.length<count) {
+    let bestIndex=0,bestDistance=-1;
+    for (let i=0;i<candidates.length;i++) {
+      const c=candidates[i];
+      const nearest=selected.reduce((d,p)=>Math.min(d,(p.col-c.col)**2+(p.row-c.row)**2),Infinity);
+      if (nearest>bestDistance) {bestDistance=nearest;bestIndex=i;}
+    }
+    selected.push(candidates.splice(bestIndex,1)[0]);
+  }
+  const wallIndex=new Set(walls.map(w=>[w.x1,w.y1,w.x2,w.y2].join(',')));
+  return selected.map(({col,row})=>{
+    const x=col*CELL,y=row*CELL;
+    const open=[
+      [0,[x+CELL,y,x+CELL,y+CELL]],
+      [Math.PI/2,[x,y+CELL,x+CELL,y+CELL]],
+      [Math.PI,[x,y,x,y+CELL]],
+      [3*Math.PI/2,[x,y,x+CELL,y]]
+    ].filter(([,edge])=>!wallIndex.has(edge.join(',')));
+    // The maze is connected, so every cell has at least one opening.
+    return {x:x+CELL/2,y:y+CELL/2,angle:open[Math.floor(next(rng)*open.length)][0]};
+  });
+}
+
+function initRound({ seed, config, players }, revised, defaults, maxPlayers=3) {
+  if (!Array.isArray(players) || players.length<2 || players.length>maxPlayers || new Set(players).size !== players.length ||
+      (maxPlayers>3?[...players]:players).some(x => typeof x !== 'string' || !x.trim() || x.length > 128)) {
+    throw new TypeError(maxPlayers>3?'two to eight distinct nonempty string player IDs are required'
+      :'two or three distinct nonempty string player IDs are required');
   }
   const c = normalizedConfig(config,defaults), rng = { value: seedValue(seed) };
   const width = c.cols * CELL, height = c.rows * CELL;
   const walls = generateMaze(c.cols, c.rows, rng);
-  const spawns = [
+  let spawns = [
     { x: CELL/2, y: CELL/2, angle: 0 },
     { x: width-CELL/2, y: height-CELL/2, angle: Math.PI }
   ];
-  if (next(rng) < 0.5) spawns.reverse();
+  if (players.length>3) spawns=multiplayerSpawns(c.cols,c.rows,walls,players.length,rng);
+  else if (next(rng) < 0.5) spawns.reverse();
   if (players.length === 3) {
     spawns.push({ x:width-CELL/2,y:CELL/2,angle:Math.PI },{ x:CELL/2,y:height-CELL/2,angle:0 });
     for (let i=spawns.length-1;i>0;i--) {
@@ -119,6 +153,7 @@ function initRound({ seed, config, players }, revised, defaults) {
 export const init = (input) => initRound(input, false, DEFAULT_CONFIG);
 export const initV3 = (input) => initRound(input, true, DEFAULT_CONFIG_V3);
 export const initV4 = (input) => initRound(input, true, DEFAULT_CONFIG_V4);
+export const initV5 = (input) => initRound(input, true, DEFAULT_CONFIG_V4, 8);
 
 function distanceToWallSquared(x, y, w) {
   return (x-between(x,w.x1,w.x2))**2 + (y-between(y,w.y1,w.y2))**2;
@@ -222,15 +257,23 @@ function moveTanks(s, actions, events) {
   // Rewind every conflicting move, repeating if a rewind creates a new conflict.
   const stopped=new Set();
   for (;;) {
+    const simultaneous=new Set();
     let changed=false;
+    const rewind=k=>{
+      proposed[k].x=s.tanks[k].x; proposed[k].y=s.tanks[k].y;
+      stopped.add(k); changed=true;
+    };
     for (let i=0;i<proposed.length;i++) for (let j=i+1;j<proposed.length;j++) {
       const a=proposed[i],b=proposed[j];
       if (!a.alive || !b.alive || Math.hypot(a.x-b.x,a.y-b.y)>=2*TANK_RADIUS) continue;
       for (const k of [i,j]) if (!stopped.has(k)) {
-        proposed[k].x=s.tanks[k].x; proposed[k].y=s.tanks[k].y;
-        stopped.add(k); changed=true;
+        // Four or more can only occur on v5. Resolve all conflicts per pass
+        // against one pose snapshot, not in iteration/seat order.
+        if (s.tanks.length>3) simultaneous.add(k);
+        else rewind(k);
       }
     }
+    for (const k of simultaneous) rewind(k);
     if (!changed) break;
   }
   if (stopped.size) events.push({type:'tank-stop',tankIds:[...stopped].sort((a,b)=>a-b).map(i=>proposed[i].id)});

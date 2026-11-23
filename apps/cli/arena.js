@@ -1,14 +1,14 @@
 import {parseArgs} from 'node:util';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {game,gameV1,gameV2,gameV3} from '../../games/tank-trouble/adapter/index.js';
+import {game,gameV1,gameV2,gameV3,gameV4} from '../../games/tank-trouble/adapter/index.js';
 import {recorder,verifyReplay} from '../../replay/index.js';
 import {makeMatch} from './match-options.js';
 import {loadBotRegistry} from './bot-registry.js';
 import {serve} from './serve.js';
 
 const root = fileURLToPath(new URL('../../',import.meta.url));
-const registry = Object.freeze(Object.fromEntries([game,gameV1,gameV2,gameV3].map(g=>[g.id+'@'+g.version,g])));
+const registry = Object.freeze(Object.fromEntries([game,gameV1,gameV2,gameV3,gameV4].map(g=>[g.id+'@'+g.version,g])));
 const [command,...args] = process.argv.slice(2);
 
 function integer(value) {
