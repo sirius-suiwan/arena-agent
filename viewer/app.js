@@ -899,7 +899,7 @@ async function readReplay(file, stillCurrent) {
   const reconstruct = createReplayReconstructor((manifest) => {
     if (manifest?.game !== 'tank-trouble') return null;
     return gameForRate(manifest.tickRate);
-  });
+  }, { mode: 'playback' });
   const candidate = blank();
   const reader = file.stream()
     .pipeThrough(new DecompressionStream('gzip'))

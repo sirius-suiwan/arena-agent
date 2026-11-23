@@ -5,13 +5,31 @@ export const MAX_REPLAY_LINE = 4 * 1024 * 1024;
 const isHash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const same = (a,b) => canonical(a) === canonical(b);
 
+// Browser and recorder Math implementations can differ by a few ULPs.
+// Only allow tiny drift in spatial event fields, never in IDs, ticks or scores.
+const SPATIAL_FIELDS = new Set(['x','y','vx','vy','endX','endY']);
+const POSITION_TOLERANCE = 1e-7;
+function equivalentPlaybackEvents(actual,recorded) {
+  return Array.isArray(recorded) && actual.length === recorded.length && actual.every((event,i)=>{
+    const other=recorded[i];
+    if (!other || typeof other !== 'object' || Array.isArray(other)) return false;
+    const keys=Object.keys(event);
+    return keys.length === Object.keys(other).length && keys.every(key=>{
+      if (!Object.hasOwn(other,key)) return false;
+      const a=event[key], b=other[key];
+      return same(a,b) || (SPATIAL_FIELDS.has(key) && Number.isFinite(a) && Number.isFinite(b) &&
+        Math.abs(a-b) <= POSITION_TOLERANCE);
+    });
+  });
+}
+
 export function parseReplayLine(line) {
   if (line.length > MAX_REPLAY_LINE) throw new Error('replay line too large');
   try { return JSON.parse(line); }
   catch { throw new Error('invalid replay JSON'); }
 }
 
-export function createReplayReconstructor(resolveGame) {
+export function createReplayReconstructor(resolveGame,{mode='strict'}={}) {
   let state, game, manifest, expected, tick = 0, ended = false;
   const check = (condition,message) => { if (!condition) throw new Error(`tick ${tick}: ${message}`); };
   return {
@@ -49,7 +67,8 @@ export function createReplayReconstructor(resolveGame) {
         const next = game.step(state,actions);
         state = next.state;
         check(state.tick === tick + 1,'state tick differs');
-        check(same(next.events,record.events),'events differ');
+        check(same(next.events,record.events) ||
+          (mode === 'playback' && equivalentPlaybackEvents(next.events,record.events)),'events differ');
         expected = next.result;
         tick++;
         return {...record,state};
