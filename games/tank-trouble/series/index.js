@@ -52,3 +52,5 @@ export function withClassicSeries(roundGame) {
     }
   });
 }
+
+export {withClassicSeriesV7} from './v7.js';

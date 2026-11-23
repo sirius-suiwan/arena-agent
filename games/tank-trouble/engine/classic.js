@@ -34,11 +34,26 @@ export const DEFAULT_CONFIG = Object.freeze({ cols: 8, rows: 6, maxTicks: 3600, 
 export const DEFAULT_CONFIG_V3 = Object.freeze({ ...DEFAULT_CONFIG, cols:12, rows:9 });
 export const DEFAULT_CONFIG_V4 = Object.freeze({ ...DEFAULT_CONFIG_V3, shellSpeed:5.2 });
 export const DEFAULT_CONFIG_V6 = Object.freeze({ ...DEFAULT_CONFIG_V4, shrinkAfterSeconds:40, shrinkDurationSeconds:15 });
+export const DEFAULT_CONFIG_V7 = Object.freeze({ ...DEFAULT_CONFIG_V6, mazeComplexity:'classic', friendlyFire:false, teams:undefined });
+const LOOP_OPENING_CHANCE=Object.freeze({open:0.60,classic:0.22,dense:0});
+const TEAM_IDS=Object.freeze(['1','2','3','4']);
 const CRATE_HALF_SIZE=8, PICKUP_PADDING=2;
 const ZONE_GRACE=2*TICK_RATE, ZONE_FINAL_MIN_HALF_SPAN=24;
 
+export function validateTeams(teams,players) {
+  if (teams===undefined) return undefined;
+  if (!Array.isArray(players)||new Set(players).size!==players.length||
+      !teams||typeof teams!=='object'||Array.isArray(teams)||
+      Object.keys(teams).length!==players.length||players.some(id=>
+        typeof id!=='string'||!/^[A-H]$/.test(id)||!Object.hasOwn(teams,id)||!TEAM_IDS.includes(teams[id]))) {
+    throw new TypeError('teams must map every occupied seat A–H to a team ID "1" through "4"');
+  }
+  if (new Set(players.map(id=>teams[id])).size<2) throw new RangeError('teams must contain at least two teams');
+  return Object.fromEntries(players.map(id=>[id,teams[id]]));
+}
+
 function normalizedConfig(input, defaults) {
-  if (input === undefined) return { ...defaults };
+  if (input === undefined) input={};
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('config must be an object');
   for (const key of Object.keys(input)) if (!Object.hasOwn(defaults, key)) throw new Error('unknown config key: ' + key);
   const c = { ...defaults, ...input };
@@ -59,10 +74,17 @@ function normalizedConfig(input, defaults) {
       c.maxTicks=Math.max(c.maxTicks,(c.shrinkAfterSeconds+c.shrinkDurationSeconds+5)*TICK_RATE);
     }
   }
+  if (Object.hasOwn(defaults,'mazeComplexity')) {
+    if (typeof c.mazeComplexity!=='string'||!Object.hasOwn(LOOP_OPENING_CHANCE,c.mazeComplexity)) {
+      throw new RangeError('mazeComplexity must be open, classic or dense');
+    }
+    if (typeof c.friendlyFire!=='boolean') throw new TypeError('friendlyFire must be a boolean');
+    if (c.teams===undefined) delete c.teams;
+  }
   return c;
 }
 
-function generateMaze(cols, rows, rng) {
+function generateMaze(cols, rows, rng, loopChance=LOOP_OPENING_CHANCE.classic) {
   const walls = [];
   const internal = [];
   for (let y = 0; y <= rows; y++) for (let x = 0; x <= cols; x++) {
@@ -93,7 +115,7 @@ function generateMaze(cols, rows, rng) {
   for (const e of internal) {
     const a = find(e.a), b = find(e.b);
     if (a !== b) parent[a] = b;
-    else if (next(rng) >= 0.22) walls.push(e.line);
+    else if (next(rng) >= loopChance) walls.push(e.line);
   }
   return walls;
 }
@@ -137,8 +159,9 @@ function initRound({ seed, config, players }, revised, defaults, maxPlayers=3) {
       :'two or three distinct nonempty string player IDs are required');
   }
   const c = normalizedConfig(config,defaults), rng = { value: seedValue(seed) };
+  if (c.teams!==undefined) c.teams=validateTeams(c.teams,players);
   const width = c.cols * CELL, height = c.rows * CELL;
-  const walls = generateMaze(c.cols, c.rows, rng);
+  const walls = generateMaze(c.cols, c.rows, rng, c.mazeComplexity===undefined?undefined:LOOP_OPENING_CHANCE[c.mazeComplexity]);
   let spawns = [
     { x: CELL/2, y: CELL/2, angle: 0 },
     { x: width-CELL/2, y: height-CELL/2, angle: Math.PI }
@@ -170,8 +193,14 @@ export function matchTickLimitV6({scoreToWin:_scoreToWin,...config}={}) {
   const {maxTicks}=normalizedConfig(config,DEFAULT_CONFIG_V6);
   return Math.min(100_000,Math.max(8400,3*(maxTicks+TICK_RATE)));
 }
-export function initV6(input) {
-  const state=initRound(input,true,DEFAULT_CONFIG_V6,8);
+export function roundTickLimitV7(config) {
+  return normalizedConfig(config,DEFAULT_CONFIG_V7).maxTicks;
+}
+export function matchTickLimitV7({scoreToWin:_scoreToWin,roundLimit:_roundLimit,...config}={}) {
+  return Math.min(100_000,Math.max(8400,3*(roundTickLimitV7(config)+TICK_RATE)));
+}
+function initWithZone(input, defaults) {
+  const state=initRound(input,true,defaults,8);
   const {width,height}=state;
   // The middle cell is reachable; for even dimensions choose the upper/left
   // tied cell so the center never lies on a maze wall.
@@ -186,6 +215,12 @@ export function initV6(input) {
     startTick,endTick:startTick+state.config.shrinkDurationSeconds*TICK_RATE,graceTicks:ZONE_GRACE,
     outsideTicks:Object.fromEntries(state.tanks.map(t=>[t.id,0]))};
   return {...state,zone,tanks:state.tanks.map(t=>({...t,invulnerable:false}))};
+}
+export const initV6 = input => initWithZone(input,DEFAULT_CONFIG_V6);
+export function initV7(input) {
+  const state=initWithZone(input,DEFAULT_CONFIG_V7);
+  const {teams,friendlyFire}=state.config;
+  return {...state,friendlyFire,...(teams?{teams:{...teams}}:{})};
 }
 
 function distanceToWallSquared(x, y, w) {
@@ -249,7 +284,8 @@ function bounceVelocity(b, normals) {
 
 // Ray path is a point sweep against wall segments, sharing the same corner
 // priority as shells. It can encounter its owner after the first reflection.
-const vulnerable=(s,t)=>t.alive && (!s.zone||!t.invulnerable);
+const vulnerable=(s,t,ownerId)=>t.alive && (!s.zone||!t.invulnerable) &&
+  (!s.teams||s.friendlyFire||ownerId===t.id||s.teams[t.id]!==s.teams[ownerId]);
 
 function traceLaser(s,tank,range,withTanks) {
   let {x,y}=tank;
@@ -260,7 +296,7 @@ function traceLaser(s,tank,range,withTanks) {
     const wall=wallHit(x,y,dx,dy,s.walls,0);
     let target=null;
     if (withTanks) for (const t of s.tanks) {
-      if (!vulnerable(s,t) || (segment===0&&t.id===tank.id)) continue;
+      if (!vulnerable(s,t,tank.id) || (segment===0&&t.id===tank.id)) continue;
       const f=circleHit(x,y,dx,dy,t.x,t.y,TANK_RADIUS);
       if (f!==null && (!target||f<target.f-EPS)) target={id:t.id,f};
     }
@@ -373,7 +409,7 @@ function fireShells(s, actions, events, impacts, deferred, shellSpeed, shellLimi
       const b={id:'b'+s.nextBullet++,owner:t.id,kind:'death-ray'};
       events.push({type:'weapon-fired',tankId:t.id,weapon:t.weapon,bulletId:b.id,x:t.x,y:t.y,endX,endY});
       for (const enemy of s.tanks) {
-        if (!vulnerable(s,enemy)||enemy.id===t.id) continue;
+        if (!vulnerable(s,enemy,t.id)||enemy.id===t.id) continue;
         const f=circleHit(t.x,t.y,dx*range,dy*range,enemy.x,enemy.y,TANK_RADIUS);
         if (f!==null) impacts.push({bullet:b,tankId:enemy.id,x:t.x+dx*range*f,y:t.y+dy*range*f});
       }
@@ -445,7 +481,7 @@ function advanceShell(b, s, events, impacts, deferred) {
     const wall=wallHit(b.x,b.y,dx,dy,s.walls);
     let target = null;
     for (const t of s.tanks) {
-      if (!vulnerable(s,t) || (t.id===b.owner && !b.ownerArmed)) continue;
+      if (!vulnerable(s,t,b.owner) || (t.id===b.owner && !b.ownerArmed)) continue;
       const radius=TANK_RADIUS+BULLET_RADIUS;
       const overlapping=(b.x-t.x)**2+(b.y-t.y)**2<radius**2-EPS;
       const f=overlapping?0:circleHit(b.x,b.y,dx,dy,t.x,t.y,radius);
@@ -533,7 +569,7 @@ function advanceMines(s,events,deferred) {
     const owner=s.tanks.find(t=>t.id===m.owner);
     if (!owner.alive||Math.hypot(owner.x-m.x,owner.y-m.y)>TANK_RADIUS+8) m.ownerCleared=true;
     if (s.tick<m.armedAt) return true;
-    const victim=s.tanks.find(t=>vulnerable(s,t)&&(t.id!==m.owner||m.ownerCleared)&&Math.hypot(t.x-m.x,t.y-m.y)<=TANK_RADIUS+6);
+    const victim=s.tanks.find(t=>vulnerable(s,t,m.owner)&&(t.id!==m.owner||m.ownerCleared)&&Math.hypot(t.x-m.x,t.y-m.y)<=TANK_RADIUS+6);
     if (!victim) return true;
     burst(m,s,events,'mine-burst',0,deferred);
     return false;
@@ -582,20 +618,26 @@ function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=M
   }
   if (withZone) advanceZone(s,events);
   const alive=s.tanks.filter(t=>t.alive);
+  const survivorTeam=alive.length && s.teams && alive.every(t=>s.teams[t.id]===s.teams[alive[0].id])
+    ?s.teams[alive[0].id]:null;
   if (alive.length===0) s.result={winner:null,reason:s.tanks.length===2?'double-knockout':'mutual-knockout'};
-  else if (alive.length===1) {
+  else if (alive.length===1 || survivorTeam!==null) {
     if (withZone) {
-      const survivor=alive[0];
-      survivor.invulnerable=true;
-      if (s.zone.outsideTicks[survivor.id]!==0) {
-        s.zone={...s.zone,outsideTicks:{...s.zone.outsideTicks,[survivor.id]:0}};
+      for(const survivor of alive) survivor.invulnerable=true;
+      const exposed=alive.filter(t=>s.zone.outsideTicks[t.id]!==0);
+      if (exposed.length) {
+        s.zone={...s.zone,outsideTicks:{...s.zone.outsideTicks,...Object.fromEntries(exposed.map(t=>[t.id,0]))}};
       }
     }
     if (s.settleUntil===null) {
       s.settleUntil=s.tick+SETTLE;
-      events.push({type:'last-tank-pending',tankId:alive[0].id,settleUntil:s.settleUntil});
+      events.push(survivorTeam!==null
+        ?{type:'last-team-pending',teamId:survivorTeam,tankIds:alive.map(t=>t.id),settleUntil:s.settleUntil}
+        :{type:'last-tank-pending',tankId:alive[0].id,settleUntil:s.settleUntil});
     }
-    if (s.tick>=s.settleUntil) s.result={winner:alive[0].id,reason:'last-tank'};
+    if (s.tick>=s.settleUntil) s.result=survivorTeam!==null
+      ?{winner:null,winnerTeam:survivorTeam,reason:'last-team'}
+      :{winner:alive[0].id,reason:'last-tank'};
     else if (revised) awardPickups(s,events,true,false);
   } else {
     awardPickups(s,events,revised);

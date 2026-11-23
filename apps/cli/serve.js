@@ -3,14 +3,12 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {recorder} from '../../replay/index.js';
 import {countKills,emptyKillTotals} from '../../viewer/score-data.js';
-import {humansForMode,makeMatch,parseCustomSeats,seatIds} from './match-options.js';
+import {humansForMode,makeMatch,parseCustomSeats,playersForMode,seatIds} from './match-options.js';
 import {botCatalog,loadBotRegistry} from './bot-registry.js';
+import {applyTankOptions,tankOptions} from './tank-options.js';
 
 const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8'};
 const json = (res,status,data) => { res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data)); };
-const shrinkFields=Object.freeze({
-  shrinkAfterSeconds:{default:40,min:0},shrinkDurationSeconds:{default:15,min:1}
-});
 async function requestBody(req) {
   if (req.headers['content-type']?.split(';')[0] !== 'application/json') throw new Error('expected JSON');
   const chunks = [];
@@ -39,7 +37,7 @@ export async function serve({game,root,base,port,config={}}) {
       first=event={...event,stats:{kills}};
     }
     if (event.type==='tick') {
-      kills=countKills(kills,event.events);
+      kills=countKills(kills,event.events,event.state.teams);
       latest=event={...event,stats:{kills}};
     }
     if (event.type==='end' || event.type==='error') terminal=event;
@@ -58,9 +56,7 @@ export async function serve({game,root,base,port,config={}}) {
     const path = req.url.split('?')[0];
     try {
       if (req.method==='GET' && path==='/api/bots') return json(res,200,{bots:botCatalog(await loadBotRegistry(root,game.id))});
-      if (req.method==='GET' && path==='/api/options') return json(res,200,Object.fromEntries(
-        Object.entries(shrinkFields).map(([key,rule])=>[key,config[key]??rule.default])
-      ));
+      if (req.method==='GET' && path==='/api/options') return json(res,200,tankOptions(config));
       if (req.method==='GET' && path==='/api/events') {
         if (clients.size >= 16) return json(res,503,{error:'too many viewers'});
         res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','Connection':'keep-alive'});
@@ -96,14 +92,7 @@ export async function serve({game,root,base,port,config={}}) {
         const data = await requestBody(req);
         if (active) return json(res,409,{error:'match already in progress'});
         if (!['bots','human','local2','local3','custom'].includes(data?.mode) || !Number.isSafeInteger(data.seed)) return json(res,400,{error:'invalid match options'});
-        const matchConfig={...config};
-        for (const [key,{min}] of Object.entries(shrinkFields)) {
-          if (data[key]===undefined) continue;
-          if (!Number.isInteger(data[key]) || data[key]<min || data[key]>120) {
-            return json(res,400,{error:`${key} must be ${min}–120 seconds`});
-          }
-          matchConfig[key]=data[key];
-        }
+        const matchConfig=applyTankOptions(config,data);
         const mode=data.mode;
         const botSeats=data.mode==='bots'?['A','B','C']:data.mode==='human'?['B']:[];
         if ((mode==='custom' && data.bots!==undefined) || (mode!=='custom' && data.seats!==undefined)) {
@@ -116,6 +105,9 @@ export async function serve({game,root,base,port,config={}}) {
         if (!paths || typeof paths!=='object' || Array.isArray(paths) ||
             Object.entries(paths).some(([seat,id])=>!botSeats.includes(seat) || typeof id!=='string' || !registry.has(id))) {
           return json(res,400,{error:'invalid bot selection'});
+        }
+        if (Object.hasOwn(data,'teams')) {
+          matchConfig.teams=game.validateTeams(data.teams,custom?.ids ?? playersForMode(mode,paths));
         }
         const names=data.playerNames;
         if (names!==undefined && (!names || typeof names!=='object' || Array.isArray(names) ||

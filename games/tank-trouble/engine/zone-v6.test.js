@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {initV5,initV6,stepV4,stepV6} from './classic.js';
-import {game,gameV5} from '../adapter/index.js';
+import {gameV6 as game,gameV5} from '../adapter/index.js';
 
 const players=['A','B'];
 const make=(config={})=>initV6({seed:37,config:{pickups:false,...config},players});

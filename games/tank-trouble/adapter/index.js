@@ -1,6 +1,7 @@
 import { init, step, TICK_RATE } from '../engine/engine.js';
 import * as classic from '../engine/classic.js';
-import {withClassicSeries} from '../series/index.js';
+import {withClassicSeries,withClassicSeriesV7} from '../series/index.js';
+export {validateTeams} from '../engine/classic.js';
 
 function validateAction(action) {
   if (!action || typeof action !== 'object' || Array.isArray(action) ||
@@ -87,4 +88,19 @@ export const classicRoundGameV6 = Object.freeze({
   }
 });
 
-export const game = withClassicSeries(classicRoundGameV6);
+export const gameV6 = withClassicSeries(classicRoundGameV6);
+
+export const classicRoundGameV7 = Object.freeze({
+  ...classicRoundGameV6,
+  version: '7',
+  init: classic.initV7,
+  validateTeams: classic.validateTeams,
+  roundTickLimit: classic.roundTickLimitV7,
+  matchTickLimit: classic.matchTickLimitV7,
+  observe(state,playerId) {
+    return {...classicRoundGameV6.observe(state,playerId),friendlyFire:state.friendlyFire,
+      ...(state.teams?{teams:{...state.teams}}:{})};
+  }
+});
+
+export const game = withClassicSeriesV7(classicRoundGameV7);

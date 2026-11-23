@@ -59,7 +59,7 @@ test('runs independent JS and Python bots and replays a tank match',async t=>{
   const dump=(await readFile(join(match.directory,'match.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(dump[0].readiness,{A:'ready',B:'ready'});
   assert.deepEqual(dump[0].manifest.playerNames,{A:'主机名',B:'斥候'});
-  assert.equal(dump[0].manifest.rulesVersion,'6');
+  assert.equal(dump[0].manifest.rulesVersion,'7');
   assert.equal(dump[0].state.shellLimit,10);
   assert.equal(dump[0].state.config.shellSpeed,5.2);
   assert.equal(dump[0].manifest.matchId,match.matchId);

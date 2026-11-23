@@ -37,7 +37,7 @@ test('eight independent bot seats record and verify the same authoritative ticks
   const result=await match.run();
   const [start,...rows]=await readLog(match.directory);
   const ticks=rows.filter(row=>row.type==='tick');
-  assert.equal(start.manifest.rulesVersion,'6');
+  assert.equal(start.manifest.rulesVersion,'7');
   assert.deepEqual(start.manifest.players,seatIds);
   assert.deepEqual(start.manifest.humanControls,{});
   assert.deepEqual(seatIds.map(id=>start.manifest.botVersions[id].id),ids);
@@ -45,7 +45,7 @@ test('eight independent bot seats record and verify the same authoritative ticks
   assert.equal(ticks.length,72);
   assert.ok(ticks.every(row=>seatIds.every(id=>!row.input[id].fallback)));
   assert.deepEqual(await verifyReplay(join(match.directory,'match.jsonl'),{
-    [game.id+'@6']:game,[game.id+'@5']:gameV5,[game.id+'@4']:gameV4
+    [game.id+'@7']:game,[game.id+'@5']:gameV5,[game.id+'@4']:gameV4
   }),{ticks:ticks.length,result});
 });
 
@@ -64,9 +64,9 @@ test('sparse mixed roster keeps bot and human seat identity; v4 records still ve
   assert.equal(start.manifest.playerNames.H,'鼠标玩家');
   assert.equal(start.manifest.botVersions.H.kind,'human');
   assert.equal(tick.input.H.accepted.turn,1);
-  assert.equal((await verifyReplay(join(match.directory,'match.jsonl'),{'tank-trouble@6':game})).ticks,15);
+  assert.equal((await verifyReplay(join(match.directory,'match.jsonl'),{'tank-trouble@7':game})).ticks,15);
 
   const old=await makeMatch({game:gameV4,root,base,seed:42,maxTicks:12,timeoutMs:1000,registry,recorder});
   await old.run();
-  assert.equal((await verifyReplay(join(old.directory,'match.jsonl'),{'tank-trouble@4':gameV4,'tank-trouble@6':game})).ticks,12);
+  assert.equal((await verifyReplay(join(old.directory,'match.jsonl'),{'tank-trouble@4':gameV4,'tank-trouble@7':game})).ticks,12);
 });
