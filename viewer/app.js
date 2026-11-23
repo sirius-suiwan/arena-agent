@@ -1,3 +1,4 @@
+import { matchOptionDefinitions, validOption, tidyName, readSetup, saveSetup, clearSetup, sanitizeSetup } from './settings-store.js';
 import { renderers } from './renderers.js';
 import { emptyKillTotals, countKills } from './score-data.js';
 import { indexLethalProjectiles, lethalProjectileRings } from './replay-highlight.js';
@@ -5,7 +6,7 @@ import { matchMode, keyboardAction, keySeat, pointerAction, humanControls, human
 
 const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
-  'battle', 'mode-label', 'match-form', 'seed', 'match-seed', 'match-insight', 'simulation-rate', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
+  'battle', 'mode-label', 'match-form', 'seed', 'match-seed', 'match-insight', 'simulation-rate', 'map-size-mode', 'map-size-preview', 'reset-setup', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'match-id', 'match-id-value', 'match-id-copy',
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
@@ -27,16 +28,9 @@ let playback = null;
 let starting = false;
 const teamIds = ['1', '2', '3', '4'];
 const teamLetter = (id) => 'ABCD'[teamIds.indexOf(id)] ?? id;
-const matchOptions = [
-  { id: 'simulation-rate', key: 'simulationRate', values: [25, 30, 60], initial: 25, label: '模拟频率' },
-  { id: 'round-limit', key: 'roundLimit', min: 0, max: 20, initial: 0, label: '总局数' },
-  { id: 'maze-cols', key: 'cols', min: 4, max: 16, initial: 12, label: '地图列数' },
-  { id: 'maze-rows', key: 'rows', min: 4, max: 12, initial: 9, label: '地图行数' },
-  { id: 'maze-complexity', key: 'mazeComplexity', values: ['open', 'classic', 'dense'], initial: 'classic', label: '迷宫复杂度' },
-  { id: 'friendly-fire', key: 'friendlyFire', initial: false },
-  { id: 'shrink-after', key: 'shrinkAfterSeconds', min: 0, max: 120, initial: 40, label: '缩圈开始时间' },
-  { id: 'shrink-duration', key: 'shrinkDurationSeconds', min: 1, max: 120, initial: 15, label: '缩圈持续时间' },
-];
+const matchOptions = matchOptionDefinitions.map(option => ({ ...option }));
+let setup = readSetup();
+let autoMapSizes = {};
 let botCatalog = new Map();
 const seatIds = [...'ABCDEFGH'];
 const customSeats = new Map();
@@ -92,10 +86,6 @@ function setStatus(text) {
 function setError(message) {
   el.error.hidden = !message;
   el.error.textContent = message || '';
-}
-
-function tidyName(value) {
-  return value.replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, '').trim().replace(/\s+/gu, ' ');
 }
 
 function playerName(manifest, id) {
@@ -468,7 +458,11 @@ function render() {
   }
   el['custom-start'].disabled = starting || matchActive || Boolean(customError);
   el.seed.disabled = starting || matchActive;
-  for (const option of matchOptions) el[option.id].disabled = starting || matchActive;
+  const autoMap = el['map-size-mode'].value === 'auto';
+  for (const option of matchOptions) el[option.id].disabled = starting || matchActive
+    || (autoMap && ['cols', 'rows'].includes(option.key));
+  el['reset-setup'].disabled = starting || matchActive;
+  updateMapPreview();
   const zoneText = zoneLabel(record?.state, match.manifest?.tickRate);
   el['arena-zone'].hidden = !zoneText;
   el['arena-zone'].textContent = zoneText;
@@ -705,8 +699,6 @@ function updateCustomSeatOptions() {
 }
 
 function rebuildCustomSeats() {
-  const values = Object.fromEntries([...customSeats].map(([id, { select }]) => [id, select.value]));
-  const assignments = Object.fromEntries([...customSeats].map(([id, { team }]) => [id, team.value]));
   const items = document.createDocumentFragment();
   customSeats.clear();
   for (const id of seatIds) {
@@ -723,9 +715,15 @@ function rebuildCustomSeats() {
       return option;
     });
     select.append(...options);
-    const previous = values[id] ?? (id === 'A' ? 'control:arrows' : id === 'B' ? 'control:esdf' : '');
+    const initial = id === 'A' ? 'control:arrows' : id === 'B' ? 'control:esdf' : '';
+    const inUse = Object.entries(setup.seats).some(([seat, value]) => seat !== id && value === initial);
+    const previous = setup.seats[id] ?? (inUse ? '' : initial);
     select.value = choices.some(([value]) => value === previous) ? previous : '';
-    select.addEventListener('change', updateCustomSeatOptions);
+    select.addEventListener('change', () => {
+      setup.seats[id] = select.value;
+      saveSetup(setup);
+      updateCustomSeatOptions();
+    });
     const team = makeNode('select', 'seat-team');
     team.id = `custom-team-${id}`;
     team.setAttribute('aria-label', `座位 ${id} 的队伍`);
@@ -734,8 +732,12 @@ function rebuildCustomSeats() {
       option.value = number;
       return option;
     }));
-    team.value = assignments[id] ?? (seatIds.indexOf(id) % 2 ? '2' : '1');
-    team.addEventListener('change', updateCustomSeatOptions);
+    team.value = setup.teams[id] ?? (seatIds.indexOf(id) % 2 ? '2' : '1');
+    team.addEventListener('change', () => {
+      setup.teams[id] = team.value;
+      saveSetup(setup);
+      updateCustomSeatOptions();
+    });
     customSeats.set(id, { select, options, team });
     const row = makeNode('div', 'custom-seat-row');
     label.append(select);
@@ -746,7 +748,21 @@ function rebuildCustomSeats() {
   updateCustomSeatOptions();
 }
 
-el['team-mode'].addEventListener('change', updateCustomSeatOptions);
+el['team-mode'].addEventListener('change', () => {
+  setup.teamMode = el['team-mode'].checked;
+  saveSetup(setup);
+  updateCustomSeatOptions();
+});
+
+function applyBotSelections() {
+  const firstBot = botCatalog.keys().next().value ?? '';
+  for (const seat of ['A', 'B', 'C']) {
+    const stored = setup.bots[seat];
+    const preferred = seat === 'B' ? 'laika' : 'gpt-dots';
+    el[`seat-bot-${seat}`].value = botCatalog.has(stored) ? stored
+      : seat === 'C' ? '' : botCatalog.has(preferred) ? preferred : firstBot;
+  }
+}
 
 async function loadBotCatalog() {
   const status = el['bot-catalog-status'];
@@ -765,7 +781,6 @@ async function loadBotCatalog() {
       status.textContent = '没有已注册的机器人，本地多人仍可开局。';
       return;
     }
-    const firstBot = botCatalog.keys().next().value;
     for (const seat of ['A', 'B', 'C']) {
       const select = el[`seat-bot-${seat}`];
       const options = document.createDocumentFragment();
@@ -782,10 +797,9 @@ async function loadBotCatalog() {
         options.append(option);
       }
       select.replaceChildren(options);
-      const preferred = seat === 'B' ? 'laika' : 'gpt-dots';
-      select.value = seat === 'C' ? '' : botCatalog.has(preferred) ? preferred : firstBot;
       select.disabled = false;
     }
+    applyBotSelections();
     status.hidden = true;
   } catch (error) {
     status.textContent = `无法读取机器人目录（${error.message}）。修正后可刷新重试，本地多人仍可开局。`;
@@ -794,15 +808,78 @@ async function loadBotCatalog() {
   }
 }
 
-for (const option of matchOptions) {
-  el[option.id].addEventListener('input', () => { option.edited = true; });
+function optionValue(option) {
+  const element = el[option.id];
+  if (typeof option.initial === 'boolean') return Boolean(element.checked);
+  if (typeof option.initial === 'number') return element.value ? Number(element.value) : NaN;
+  return element.value;
 }
 
-function validOption(value, option) {
-  if (option.values) return option.values.includes(value);
-  if (typeof option.initial === 'boolean') return typeof value === 'boolean';
-  return Number.isInteger(value) && value >= option.min && value <= option.max;
+function applyOption(option) {
+  const value = setup.options[option.key] ?? option.serverDefault ?? option.initial;
+  if (typeof value === 'boolean') el[option.id].checked = value;
+  else el[option.id].value = String(value);
 }
+
+function updateMapPreview() {
+  const preview = el['map-size-preview'];
+  const auto = el['map-size-mode'].value === 'auto';
+  preview.hidden = !auto;
+  if (!auto) return;
+  const sizeText = count => {
+    const size = autoMapSizes[count];
+    return size ? `${size.cols}×${size.rows}` : null;
+  };
+  const enabled = [...customSeats.values()].filter(({ select }) => select.value !== '').length;
+  const customSize = sizeText(enabled);
+  const preset = [2, 3].flatMap(count => sizeText(count) ? [`${count} 席 ${sizeText(count)}`] : []);
+  preview.textContent = [customSize ? `自定义：${enabled} 席，${customSize}` : '按实际上场人数选择地图',
+    preset.length ? `快捷开局：${preset.join('；')}` : ''].filter(Boolean).join('。');
+}
+
+for (const option of matchOptions) {
+  applyOption(option);
+  el[option.id].addEventListener('input', () => {
+    const value = optionValue(option);
+    if (validOption(value, option)) {
+      setup.options[option.key] = value;
+      saveSetup(setup);
+    }
+    if (option.key === 'mapSizeMode') queueDraw();
+  });
+}
+for (const seat of ['A', 'B', 'C']) {
+  el[`seat-bot-${seat}`].addEventListener('change', () => {
+    setup.bots[seat] = el[`seat-bot-${seat}`].value;
+    saveSetup(setup);
+    queueDraw();
+  });
+}
+function applyNames() {
+  for (const id of seatIds) el[`seat-name-${id}`].value = setup.names[id] ?? '';
+}
+applyNames();
+el['team-mode'].checked = setup.teamMode;
+for (const id of seatIds) {
+  const input = el[`seat-name-${id}`];
+  input.addEventListener('input', () => {
+    const value = tidyName(input.value);
+    if (Array.from(value).length <= MAX_SEAT_NAME_LENGTH) {
+      setup.names[id] = value;
+      saveSetup(setup);
+    }
+  });
+}
+el['reset-setup'].addEventListener('click', () => {
+  setup = sanitizeSetup();
+  clearSetup();
+  el.seed.value = '';
+  for (const option of matchOptions) applyOption(option);
+  el['team-mode'].checked = false;
+  applyNames();
+  applyBotSelections();
+  rebuildCustomSeats();
+});
 
 async function loadMatchOptions() {
   try {
@@ -813,10 +890,15 @@ async function loadMatchOptions() {
       const value = defaults?.[option.key];
       if (!validOption(value, option)) continue;
       option.serverDefault = value;
-      if (option.edited) continue;
-      if (typeof value === 'boolean') el[option.id].checked = value;
-      else el[option.id].value = String(value);
+      if (!Object.hasOwn(setup.options, option.key)) applyOption(option);
     }
+    for (let count = 2; count <= 8; count++) {
+      const size = defaults?.autoMapSizes?.[count];
+      if (size && ['cols', 'rows'].every(key => validOption(size[key], matchOptions.find(option => option.key === key)))) {
+        autoMapSizes[count] = { cols: size.cols, rows: size.rows };
+      }
+    }
+    queueDraw();
   } catch {
     // Keep usable settings while the local server is temporarily unreachable.
   }
@@ -833,16 +915,17 @@ el['match-form'].addEventListener('submit', async (event) => {
   if (el.seed.validity?.badInput || (seed !== undefined && (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff))) {
     return setError('种子必须是有效的非负整数。');
   }
-  const overrides = {};
+  const mapSizeMode = el['map-size-mode'].value;
+  const overrides = { mapSizeMode };
   for (const option of matchOptions) {
-    const element = el[option.id];
-    const value = typeof option.initial === 'boolean' ? Boolean(element.checked)
-      : typeof option.initial === 'number' ? (element.value ? Number(element.value) : NaN) : element.value;
+    const dimension = ['cols', 'rows'].includes(option.key);
+    if (dimension && mapSizeMode === 'auto') continue;
+    const value = optionValue(option);
     if (!validOption(value, option)) {
       return setError(option.values ? `请选择有效的${option.label}。`
         : `${option.label}必须是 ${option.min}–${option.max} 的整数。`);
     }
-    if (value !== (option.serverDefault ?? option.initial) || (option.edited && option.serverDefault === undefined)) {
+    if (dimension || value !== (option.serverDefault ?? option.initial) || Object.hasOwn(setup.options, option.key)) {
       overrides[option.key] = value;
     }
   }

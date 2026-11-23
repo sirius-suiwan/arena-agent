@@ -59,6 +59,12 @@
           <label class="shrink-setting">总局数
             <input id="round-limit" form="match-form" type="number" min="0" max="20" step="1" value="0" required>
           </label>
+          <label class="shrink-setting">地图大小
+            <select id="map-size-mode" aria-describedby="map-size-preview">
+              <option value="auto" selected>自动</option>
+              <option value="manual">手动</option>
+            </select>
+          </label>
           <label class="shrink-setting">地图列数
             <input id="maze-cols" form="match-form" type="number" min="4" max="16" step="1" value="12" required>
           </label>
@@ -89,8 +95,11 @@
             <input id="shrink-duration" form="match-form" type="number" min="1" max="120" step="1" value="15" required> 秒
           </label>
         </div>
+        <p class="hint" id="map-size-preview"></p>
         <p class="hint" id="simulation-rate-help">模拟频率是每秒规则更新次数，不是画面帧率。</p>
         <p class="hint">总局数填 0 按现行积分规则；队伍模式在自定义对局中开启。</p>
+        <p class="hint">设置自动保存在当前浏览器，种子除外。</p>
+        <button type="button" id="reset-setup">恢复默认</button>
       </details>
       <button type="button" id="continue-match" hidden>返回对局</button>
     </section>

@@ -292,3 +292,5 @@ body:has(#menu:not([hidden])) {
 .game-settings select { min-height: 28px; border: 1px solid #a9b7c3; border-radius: 4px; background: #fdfdfd; font: inherit; }
 .shrink-setting input[type="checkbox"], .team-mode input { width: 1rem; min-height: 1rem; padding: 0; accent-color: #325672; }
 #continue-match { margin: 0; }
+
+#reset-setup { display: block; margin: 8px auto 0; }
