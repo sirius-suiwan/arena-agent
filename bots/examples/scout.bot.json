@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "protocol": 1,
+  "id": "scout",
+  "name": "斥候",
+  "game": "tank-trouble",
+  "entry": "scout.py"
+}

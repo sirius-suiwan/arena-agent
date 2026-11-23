@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "protocol": 1,
+  "id": "laika",
+  "name": "Laika（复刻）",
+  "game": "tank-trouble",
+  "entry": "bot.js",
+  "files": ["policy.js"]
+}

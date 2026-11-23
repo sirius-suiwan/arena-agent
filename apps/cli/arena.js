@@ -4,6 +4,7 @@ import {fileURLToPath} from 'node:url';
 import {game,gameV1,gameV2,gameV3} from '../../games/tank-trouble/adapter/index.js';
 import {recorder,verifyReplay} from '../../replay/index.js';
 import {makeMatch} from './match-options.js';
+import {loadBotRegistry} from './bot-registry.js';
 import {serve} from './serve.js';
 
 const root = fileURLToPath(new URL('../../',import.meta.url));
@@ -40,11 +41,17 @@ try {
     const rounds = integer(values.rounds) ?? 1;
     if (rounds < 1 || rounds > 1000) throw new Error('rounds must be 1-1000');
     if (positionals.length) throw new Error('run does not accept positional arguments');
+    const bots=await loadBotRegistry(root,game.id);
+    for (const choice of [values['bot-a'],values['bot-b'],values['bot-c']]) {
+      if (choice!==undefined && !bots.has(choice) && /^[a-z][a-z0-9-]{0,47}$/.test(choice)) {
+        throw new Error('unknown bot id: '+choice);
+      }
+    }
     for (let i = 0; i < rounds; i++) {
       const match = await makeMatch({
         game,root,playerNames,base:resolve(values.out ?? 'runs'),seed:(integer(values.seed) ?? 42)+i,
         maxTicks:integer(values['max-ticks']),timeoutMs:integer(values['timeout-ms']),
-        paths:{A:values['bot-a'],B:values['bot-b'],C:values['bot-c']},config,recorder
+        paths:{A:values['bot-a'],B:values['bot-b'],C:values['bot-c']},registry:bots,config,recorder
       });
       console.log(JSON.stringify({directory:match.directory,result:await match.run()}));
     }
@@ -55,7 +62,7 @@ try {
     if (positionals.length) throw new Error('serve does not accept positional arguments');
     await serve({game,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
   } else if (!command || command === 'help') {
-    console.log('node apps/cli/arena.js run | verify <match.jsonl> | serve');
+    console.log('node apps/cli/arena.js run [--bot-a <id-or-path>] [--bot-b <id-or-path>] | verify <match.jsonl> | serve');
   } else {
     throw new Error(`unknown command: ${command}`);
   }

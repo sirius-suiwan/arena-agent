@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "protocol": 1,
+  "id": "turret",
+  "name": "巡回炮台",
+  "game": "tank-trouble",
+  "entry": "turret.js"
+}
