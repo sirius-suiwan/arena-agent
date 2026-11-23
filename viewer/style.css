@@ -62,8 +62,17 @@ button:disabled, input:disabled { opacity: .52; cursor: not-allowed; }
 }
 .pause-button:hover:not(:disabled) { background: #454545; }
 :focus-visible, .file-label:focus-within { outline: 2px solid #215b80; outline-offset: 2px; }
-.canvas-wrap { position: relative; overflow: hidden; }
-canvas#battle { width: 100%; height: clamp(222px, min(calc(100svh - 138px), 74vw), 890px); display: block; }
+/* The menu above retains its layout. A visible match fits its native aspect with no decorative surround. */
+main:has(#stage:not([hidden])) { width: calc(100% - 10px); padding: 3px 0 9px; }
+main:has(#stage:not([hidden])) .toolbar { padding: 0 0 2px; }
+.canvas-wrap {
+  --field-ratio: 1.3333333;
+  position: relative;
+  overflow: hidden;
+  width: min(100%, calc(max(155px, 100svh - 104px) * var(--field-ratio)));
+  margin-inline: auto;
+}
+canvas#battle { width: 100%; aspect-ratio: var(--field-ratio); display: block; }
 canvas#battle.pointer-control { cursor: crosshair; touch-action: none; }
 .round-notice {
   position: absolute; inset: auto 0 10px; width: fit-content; max-width: 94%; margin: auto;
@@ -72,14 +81,15 @@ canvas#battle.pointer-control { cursor: crosshair; touch-action: none; }
 }
 .round-notice.is-paused { inset: 0; height: fit-content; background: #252525ee; color: #fff; }
 .score-panel, .scoreboard { justify-content: center; }
-.score-panel { min-height: 32px; }
+.score-panel { min-height: 24px; }
 .scoreboard { gap: clamp(13px, 6vw, 70px); }
 .score { display: flex; align-items: center; gap: 5px; }
-.score-icon { width: 30px; height: 28px; display: block; }
-.score-number { font: 800 21px/1 ui-monospace, monospace; }
+.score-icon { width: 25px; height: 23px; display: block; }
+.weapon-badge { width: 17px; height: 17px; display: block; margin-left: 1px; }
+.score-number { font: 800 17px/1 ui-monospace, monospace; }
 .score-id { color: var(--muted); font: 700 10px ui-monospace, monospace; }
 .hint { color: var(--muted); font-size: 12px; }
-.control-hint { text-align: center; line-height: 1.5; margin: 5px 0 3px; }
+.control-hint { text-align: center; line-height: 1.3; margin: 2px 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .error { border: 1px solid #a33438; color: #8b1b1e; background: #ffe8e8; padding: 7px 10px; font-size: 13px; }
 .files { justify-content: flex-end; padding: 4px 3px 0; }
@@ -110,4 +120,8 @@ input[type=number] { width: 84px; margin-left: 3px; background: #fafafa; }
   .toolbar button { padding-inline: 6px; }
   .classic-menu button { border-width: 2px; min-height: 36px; }
   .stats label { margin-left: 0; }
+}
+
+@media (max-height: 550px) {
+  .canvas-wrap { width: min(100%, calc(max(130px, 100svh - 87px) * var(--field-ratio))); }
 }

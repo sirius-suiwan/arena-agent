@@ -6,7 +6,7 @@ const el = Object.fromEntries([
   'battle', 'mode-label', 'match-form', 'seed', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'pause', 'details', 'menu', 'stage', 'return-menu', 'continue-match', 'bot-start',
-  'scoreboard', 'round-label', 'round-notice',
+  'scoreboard', 'round-label', 'round-notice', 'canvas-wrap',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
 ].map((id) => [id, byId(id)]));
 
@@ -27,6 +27,8 @@ let eventRowsDirty = true;
 let importSequence = 0;
 let inputEpoch = 0;
 let scoreKey = '';
+let fieldRatio = '';
+const WEAPON_FEEDBACK_TICKS = 60;
 const heldKeys = new Set();
 const inputChains = new Map();
 const lastInput = new Map();
@@ -116,10 +118,12 @@ function effectsAt(frames, index) {
   const effects = [];
   const now = tickOf(frames[index]);
   const round = frames[index].state?.round;
-  for (let i = index; i >= 0 && now - tickOf(frames[i]) < 10; i--) {
+  for (let i = index; i >= 0 && now - tickOf(frames[i]) < WEAPON_FEEDBACK_TICKS; i--) {
     if (frames[i].state?.round !== round) break;
     const age = now - tickOf(frames[i]);
-    for (const event of frames[i].events) effects.push({ event, age });
+    for (const event of frames[i].events) {
+      if (age < 10 || event.type === 'pickup' || event.type === 'pickup-blocked') effects.push({ event, age });
+    }
   }
   return effects;
 }
@@ -127,15 +131,19 @@ function effectsAt(frames, index) {
 function renderScoreboard(match, state, renderer, paused) {
   const ids = state?.tanks?.map((tank) => tank.id) ?? match.manifest?.players ?? [];
   const scores = ids.map((id) => state?.scores?.[id] ?? (state?.result?.winner === id ? 1 : 0));
-  const key = JSON.stringify([match.manifest?.mode, ids, scores, renderer?.title]);
+  const equipment = ids.map((id) => renderer?.equippedWeapon?.(state?.tanks.find((tank) => tank.id === id), state) ?? null);
+  const key = JSON.stringify([match.manifest?.mode, ids, scores, equipment, renderer?.title]);
   if (scoreKey !== key) {
     scoreKey = key;
     const icons = [];
+    const weapons = [];
     const items = document.createDocumentFragment();
     ids.forEach((id, index) => {
       const row = document.createElement('span');
       row.className = 'score';
-      row.setAttribute('aria-label', `选手 ${id}：${scores[index]} 分`);
+      const weapon = equipment[index];
+      const weaponLabel = weapon && renderer?.weaponLabel?.(weapon);
+      row.setAttribute('aria-label', `选手 ${id}：${scores[index]} 分${weaponLabel ? `，已装备${weaponLabel}` : ''}`);
       const icon = document.createElement('canvas');
       icon.className = 'score-icon';
       icon.setAttribute('aria-hidden', 'true');
@@ -147,10 +155,19 @@ function renderScoreboard(match, state, renderer, paused) {
       label.className = 'score-id';
       label.textContent = id;
       row.append(icon, number, label);
+      if (weaponLabel) {
+        const badge = document.createElement('canvas');
+        badge.className = 'weapon-badge';
+        badge.title = `已装备${weaponLabel}`;
+        badge.setAttribute('aria-hidden', 'true');
+        weapons.push([badge, weapon]);
+        row.append(badge);
+      }
       items.append(row);
     });
     el.scoreboard.replaceChildren(items);
     icons.forEach((icon, index) => renderer?.scoreIcon?.(icon, index, match.manifest?.mode));
+    for (const [icon, weapon] of weapons) renderer?.weaponIcon?.(icon, weapon);
   }
   const round = state?.round ?? 1;
   el['round-label'].textContent = Number.isSafeInteger(state?.targetScore)
@@ -224,6 +241,11 @@ function render() {
   }
   const renderer = rendererFor(match.manifest);
   if (!menuVisible && renderer && record) {
+    const ratio = String(record.state.width / record.state.height);
+    if (ratio !== fieldRatio && Number.isFinite(Number(ratio)) && Number(ratio) > 0) {
+      fieldRatio = ratio;
+      el['canvas-wrap'].style.setProperty('--field-ratio', ratio);
+    }
     el.battle.setAttribute('aria-label', renderer.title);
     renderer.draw(el.battle, record.state, {
       mode: match.manifest?.mode,
@@ -315,7 +337,7 @@ function reduceLive(record) {
     if (tickOf(record) <= tickOf(live.frames.at(-1))) return;
     // Keep a small recent history so transient effects render the same way as replay.
     appendTick(live, record);
-    if (live.frames.length > 10) live.frames.shift();
+    if (live.frames.length > WEAPON_FEEDBACK_TICKS) live.frames.shift();
     updatePointer();
     if (live.events.length > 100) live.events = live.events.slice(-100);
   } else if (record.type === 'pause') {

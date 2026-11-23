@@ -1,9 +1,5 @@
-const teams = [
-  { fill: '#e12a29', light: '#f65549', shade: '#9d1417' },
-  { fill: '#44a431', light: '#69c94e', shade: '#24631c' },
-  { fill: '#2999d6', light: '#5dc3ee', shade: '#1b5b88' },
-];
-const graphite = { fill: '#545454', light: '#747474', shade: '#2f2f2f' };
+const teams = ['#da3434', '#4aab3d', '#2699cc'];
+const graphite = '#666666';
 const weapons = {
   'death-ray': '死光', laser: '激光', 'laser-sight': '激光', gatling: '加特林', frag: '破片弹', mine: '地雷',
   shell: '炮弹', shrapnel: '破片', shield: '护盾', rapid: '快速装填',
@@ -25,7 +21,7 @@ export function validateTankFrame(state) {
 }
 
 function layout(width, height, state) {
-  const padding = Math.min(width, height) * 0.023;
+  const padding = Math.min(width, height) * 0.009;
   const scale = Math.min((width - 2 * padding) / state.width, (height - 2 * padding) / state.height);
   return { scale, x: (width - state.width * scale) / 2, y: (height - state.height * scale) / 2 };
 }
@@ -54,94 +50,112 @@ function fitCanvas(canvas) {
   return { ctx: canvas.getContext('2d'), width, height, ratio };
 }
 
-function box(ctx, x, y, w, h, r, fill, stroke = null, width = 1.2) {
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, r);
-  ctx.fillStyle = fill;
-  ctx.fill();
-  if (stroke) {
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = width;
-    ctx.stroke();
-  }
+function tankGlyph(ctx, color) {
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-10, -9, 19, 4);
+  ctx.fillRect(-10, 5, 19, 4);
+  ctx.fillRect(6, -1.9, 8, 3.8);
+  ctx.fillRect(-9, -5, 17, 10);
+  ctx.fillStyle = color;
+  ctx.fillRect(-7.5, -4, 13.8, 8);
 }
 
-function tankGlyph(ctx, palette, weapon) {
-  box(ctx, -10.4, -10.3, 19.3, 5.5, 1.2, '#282828', '#171717', 1.2);
-  box(ctx, -10.4, 4.8, 19.3, 5.5, 1.2, '#282828', '#171717', 1.2);
-  ctx.fillStyle = '#606060';
-  for (const y of [-8.9, 6.4]) {
-    for (const x of [-8, -4, 0, 4]) ctx.fillRect(x, y, 1.2, 2.3);
-  }
-  box(ctx, -9.9, -6.4, 18.9, 12.8, 1.5, palette.fill, '#181818', 2);
-  ctx.fillStyle = palette.light;
-  ctx.fillRect(-7.7, -4.8, 14.2, 1.6);
-  ctx.fillStyle = palette.shade;
-  ctx.fillRect(-7.7, 4.1, 14.2, 1.4);
-
-  if (weapon === 'laser') {
-    box(ctx, 2.8, -2.4, 10.5, 4.8, 1, '#535353', '#151515', 1.4);
-    ctx.fillStyle = '#ed8b71';
-    ctx.fillRect(10.6, -1.3, 1.6, 2.6);
-  } else if (weapon === 'gatling') {
-    box(ctx, 2.8, -2.7, 10.4, 5.4, 1, '#5e5e5e', '#151515', 1.4);
-    ctx.fillStyle = '#151515';
-    ctx.fillRect(7.5, -1.8, 1.1, 3.6);
-    ctx.fillRect(10.5, -1.8, 1.1, 3.6);
-  } else if (weapon === 'death-ray') {
-    box(ctx, 2.8, -2.6, 10.8, 5.2, 1, '#575757', '#151515', 1.4);
-    ctx.fillStyle = '#edc356';
-    ctx.fillRect(10.2, -1.4, 2.1, 2.8);
+function weaponGlyph(ctx, kind) {
+  ctx.fillStyle = '#272727';
+  ctx.fillRect(-7.5, -7.5, 15, 15);
+  ctx.strokeStyle = '#fff';
+  ctx.fillStyle = '#fff';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  if (kind === 'laser' || kind === 'laser-sight') {
+    ctx.moveTo(-4.5, 4.2); ctx.lineTo(-1.2, -2.6); ctx.lineTo(1.5, 2); ctx.lineTo(4.3, -4);
+    ctx.stroke();
+  } else if (kind === 'death-ray') {
+    ctx.moveTo(-4.1, 4.1); ctx.lineTo(4.1, -4.1);
+    ctx.moveTo(0.6, -4.1); ctx.lineTo(4.1, -4.1); ctx.lineTo(4.1, -0.6);
+    ctx.stroke();
+  } else if (kind === 'gatling' || kind === 'rapid') {
+    for (const y of [-3.3, 0, 3.3]) {
+      ctx.moveTo(-4, y); ctx.lineTo(4, y);
+    }
+    ctx.stroke();
+  } else if (kind === 'mine') {
+    ctx.ellipse(0, 2, 4.5, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -3.7); ctx.stroke();
+  } else if (kind === 'frag') {
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3;
+      ctx.moveTo(Math.cos(a) * 2.2, Math.sin(a) * 2.2);
+      ctx.lineTo(Math.cos(a) * 4.8, Math.sin(a) * 4.8);
+    }
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, 1.15, 0, Math.PI * 2); ctx.fill();
+  } else if (kind === 'shield') {
+    ctx.moveTo(-3.6, -3.3); ctx.lineTo(3.6, -3.3); ctx.lineTo(2.8, 1.6);
+    ctx.lineTo(0, 4.1); ctx.lineTo(-2.8, 1.6); ctx.closePath(); ctx.stroke();
   } else {
-    box(ctx, 2.1, -1.8, 10.9, 3.6, 0.7, palette.fill, '#151515', 1.4);
+    ctx.arc(0, 0, 2.2, 0, Math.PI * 2); ctx.fill();
   }
-  box(ctx, -4.1, -4.2, 8.3, 8.4, 2.5, palette.light, '#151515', 1.6);
 }
 
 function drawCrate(ctx, pickup) {
   ctx.save();
   ctx.translate(pickup.x, pickup.y);
-  box(ctx, -8, -8, 16, 16, 1.4, '#a8a8a8', '#292929', 1.9);
-  ctx.fillStyle = '#d5d5d5';
-  ctx.fillRect(-6.3, -6.1, 12.6, 1.1);
-  ctx.fillStyle = '#313131';
-  ctx.strokeStyle = '#313131';
-  ctx.lineWidth = 1.7;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  if (pickup.type === 'laser' || pickup.type === 'laser-sight') {
-    ctx.moveTo(-4.7, 4.5); ctx.lineTo(-1.1, -1.6); ctx.lineTo(1.8, 0.6); ctx.lineTo(4.5, -4.4);
-    ctx.stroke();
-  } else if (pickup.type === 'death-ray') {
-    ctx.moveTo(-5, 4); ctx.lineTo(4.5, -4.5);
-    ctx.moveTo(1, -4.5); ctx.lineTo(4.5, -4.5); ctx.lineTo(4.5, -1);
-    ctx.moveTo(-5, 0.1); ctx.lineTo(-1.2, 0.1);
-    ctx.stroke();
-  } else if (pickup.type === 'gatling' || pickup.type === 'rapid') {
-    for (const y of [-3.2, 0, 3.2]) {
-      ctx.moveTo(-4.7, y); ctx.lineTo(4.5, y);
-    }
-    ctx.stroke();
-    ctx.fillRect(-2, -4.5, 1.5, 9);
-  } else if (pickup.type === 'mine') {
-    ctx.ellipse(0, 2, 5.1, 2.4, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(-2.6, 0); ctx.lineTo(-1.3, -2.7);
-    ctx.lineTo(1.4, -2.7); ctx.lineTo(2.6, 0); ctx.stroke();
-  } else if (pickup.type === 'frag') {
-    for (let i = 0; i < 8; i++) {
-      const angle = i * Math.PI / 4;
-      ctx.moveTo(Math.cos(angle) * 2.5, Math.sin(angle) * 2.5);
-      ctx.lineTo(Math.cos(angle) * 5.3, Math.sin(angle) * 5.3);
-    }
-    ctx.stroke();
-    ctx.beginPath(); ctx.arc(0, 0, 1.6, 0, Math.PI * 2); ctx.fill();
-  } else if (pickup.type === 'shield') {
-    ctx.moveTo(-4, -3.3); ctx.lineTo(4, -3.3); ctx.lineTo(3.3, 1.7);
-    ctx.lineTo(0, 4.8); ctx.lineTo(-3.3, 1.7); ctx.closePath(); ctx.stroke();
-  } else {
-    ctx.arc(0, 0, 2.5, 0, Math.PI * 2); ctx.fill();
-  }
+  weaponGlyph(ctx, pickup.type);
   ctx.restore();
+}
+
+export function equippedTankWeapon(tank, state) {
+  if (!tank?.alive) return null;
+  if (typeof tank.weapon === 'string' && Object.hasOwn(weapons, tank.weapon)) return tank.weapon;
+  if (tank.shield === true) return 'shield';
+  return tank.rapidUntil > state.tick ? 'rapid' : null;
+}
+
+export function tankWeaponLabel(weapon) {
+  return Object.hasOwn(weapons, weapon) ? weapons[weapon] : '';
+}
+
+function pickupHint(event) {
+  if (event.type === 'pickup-blocked') {
+    const name = tankWeaponLabel(event.heldWeapon);
+    return name ? `已装备${name}，不能再拾取` : '已有道具，不能再拾取';
+  }
+  const name = tankWeaponLabel(event.pickupType) || '道具';
+  if (['shield', 'rapid'].includes(event.pickupType)) return `获得${name}`;
+  const hold = event.activation === 'hold' || event.pickupType === 'gatling' || event.pickupType === 'death-ray';
+  if (event.releaseRequired) return hold ? `${name} · 松开后按住开火` : `${name} · 松开后再按开火`;
+  if (event.pickupType === 'frag') return `${name} · 按开火发射，再按引爆`;
+  return hold ? `${name} · 按住开火` : `${name} · 按开火`;
+}
+
+function drawPickupFeedback(ctx, state, effects) {
+  const shown = new Set();
+  for (const { event, age } of effects) {
+    if (!['pickup', 'pickup-blocked'].includes(event.type) || age >= 60 || shown.has(event.tankId)) continue;
+    const tank = state.tanks.find((item) => item.id === event.tankId && item.alive !== false);
+    if (!tank) continue;
+    shown.add(event.tankId);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, (60 - age) / 13);
+    if (event.type === 'pickup' && age < 24) {
+      ctx.beginPath(); ctx.arc(tank.x, tank.y, 13 + age * 0.3, 0, Math.PI * 2);
+      ctx.strokeStyle = '#464646'; ctx.lineWidth = 1.4; ctx.stroke();
+    }
+    const text = pickupHint(event);
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const labelWidth = Math.min(state.width - 10, (ctx.measureText(text)?.width ?? text.length * 11) + 8);
+    const center = Math.max(5 + labelWidth / 2, Math.min(state.width - 5 - labelWidth / 2, tank.x));
+    const top = tank.y >= 35 ? tank.y - 31 : tank.y + 16;
+    ctx.fillStyle = '#f1f1f1';
+    ctx.fillRect(center - labelWidth / 2, top, labelWidth, 15);
+    ctx.fillStyle = '#252525';
+    ctx.fillText(text, center, top + 7.5, labelWidth - 4);
+    ctx.restore();
+  }
 }
 
 function drawPath(ctx, path) {
@@ -193,7 +207,7 @@ export function drawTankFrame(canvas, state, { mode, effects = [] } = {}) {
   const { scale, x, y } = layout(width, height, state);
   ctx.setTransform(scale, 0, 0, scale, x, y);
   ctx.strokeStyle = '#494949';
-  ctx.lineWidth = Math.max(5.2, 2.4 * ratio / scale);
+  ctx.lineWidth = Math.max(3.7, 1.6 * ratio / scale);
   ctx.lineCap = 'square';
   ctx.beginPath();
   for (const wall of state.walls) {
@@ -223,7 +237,7 @@ export function drawTankFrame(canvas, state, { mode, effects = [] } = {}) {
     ctx.save();
     ctx.translate(tank.x, tank.y);
     ctx.rotate(Number.isFinite(tank.angle) ? tank.angle : 0);
-    tankGlyph(ctx, team(index, mode), tank.weapon);
+    tankGlyph(ctx, team(index, mode));
     ctx.restore();
   }
 
@@ -240,6 +254,7 @@ export function drawTankFrame(canvas, state, { mode, effects = [] } = {}) {
   ctx.rect(0, 0, state.width, state.height);
   ctx.clip();
   drawEffects(ctx, state, effects);
+  drawPickupFeedback(ctx, state, effects);
   ctx.restore();
 }
 
@@ -250,13 +265,22 @@ export function drawScoreIcon(canvas, index, mode) {
   ctx.clearRect(0, 0, width, height);
   const scale = Math.min(width, height) / 29;
   ctx.setTransform(scale, 0, 0, scale, width / 2, height / 2);
-  ctx.rotate(-0.58);
-  tankGlyph(ctx, team(index, mode), null);
+  tankGlyph(ctx, team(index, mode));
+}
+
+export function drawWeaponIcon(canvas, weapon) {
+  const { ctx, width, height } = fitCanvas(canvas);
+  if (!ctx) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  const scale = Math.min(width, height) / 17;
+  ctx.setTransform(scale, 0, 0, scale, width / 2, height / 2);
+  weaponGlyph(ctx, weapon);
 }
 
 const eventLabels = {
   shot: '开火', bounce: '弹丸反弹', hit: '命中', pickup: '取得道具',
-  'pickup-spawn': '道具刷新', 'shell-expired': '弹丸消失', 'shot-blocked': '未能开火',
+  'pickup-blocked': '已有武器，未拾取', 'pickup-spawn': '道具刷新', 'shell-expired': '弹丸消失', 'shot-blocked': '未能开火',
   'wall-stop': '撞墙', 'tank-stop': '坦克碰撞', destroyed: '击毁', ended: '对局结束',
   timeout: '动作超时', 'weapon-fired': '使用武器', 'frag-burst': '破片炸开',
   'weapon-charge': '武器蓄力', 'last-tank-pending': '等待炮火结算', 'mine-placed': '埋设地雷', 'mine-burst': '地雷爆炸', 'round-start': '开局',
