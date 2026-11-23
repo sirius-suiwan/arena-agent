@@ -1,5 +1,11 @@
 const teams = ['#da3434', '#4aab3d', '#2699cc'];
 const graphite = '#666666';
+const stageTeams = [
+  { hull: '#cf1719', turret: '#e02626', track: '#921a1b' },
+  { hull: '#429936', turret: '#55b444', track: '#2b6a26' },
+  { hull: '#278cba', turret: '#42a3cb', track: '#1d597a' },
+];
+const stageGraphite = { hull: '#434343', turret: '#616161', track: '#303030' };
 const weapons = {
   'death-ray': '死光', laser: '激光', 'laser-sight': '激光', gatling: '加特林', frag: '破片弹', mine: '地雷',
   shell: '炮弹', shrapnel: '破片', shield: '护盾', rapid: '快速装填',
@@ -7,6 +13,10 @@ const weapons = {
 
 function team(index, mode) {
   return mode === 'human' && index === 1 ? graphite : teams[index % teams.length];
+}
+
+function stageTeam(index, mode) {
+  return mode === 'human' && index === 1 ? stageGraphite : stageTeams[index % stageTeams.length];
 }
 
 function pointIsValid(item) {
@@ -60,11 +70,37 @@ function tankGlyph(ctx, color) {
   ctx.fillRect(-7.5, -4, 13.8, 8);
 }
 
-function weaponGlyph(ctx, kind) {
-  ctx.fillStyle = '#272727';
+function stageTankGlyph(ctx, color) {
+  ctx.lineJoin = 'miter';
+  ctx.lineWidth = 1.45;
+  ctx.strokeStyle = '#221d1d';
+  ctx.fillStyle = color.track;
+  ctx.fillRect(-10, -8.6, 19, 4);
+  ctx.strokeRect(-10, -8.6, 19, 4);
+  ctx.fillRect(-10, 4.6, 19, 4);
+  ctx.strokeRect(-10, 4.6, 19, 4);
+  ctx.fillStyle = color.hull;
+  ctx.fillRect(-9, -5.6, 17.5, 11.2);
+  ctx.strokeRect(-9, -5.6, 17.5, 11.2);
+  ctx.fillRect(2, -1.6, 12, 3.2);
+  ctx.strokeRect(2, -1.6, 12, 3.2);
+  ctx.beginPath();
+  ctx.arc(-0.8, 0, 4.55, 0, Math.PI * 2);
+  ctx.fillStyle = color.turret;
+  ctx.fill();
+  ctx.stroke();
+}
+
+function weaponGlyph(ctx, kind, onField = false) {
+  ctx.fillStyle = onField ? '#8d8d8d' : '#272727';
   ctx.fillRect(-7.5, -7.5, 15, 15);
-  ctx.strokeStyle = '#fff';
-  ctx.fillStyle = '#fff';
+  if (onField) {
+    ctx.lineWidth = 0.9;
+    ctx.strokeStyle = '#606060';
+    ctx.strokeRect(-7, -7, 14, 14);
+  }
+  ctx.strokeStyle = onField ? '#383838' : '#fff';
+  ctx.fillStyle = onField ? '#383838' : '#fff';
   ctx.lineWidth = 1.5;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -103,7 +139,7 @@ function weaponGlyph(ctx, kind) {
 function drawCrate(ctx, pickup) {
   ctx.save();
   ctx.translate(pickup.x, pickup.y);
-  weaponGlyph(ctx, pickup.type);
+  weaponGlyph(ctx, pickup.type, true);
   ctx.restore();
 }
 
@@ -201,21 +237,35 @@ export function drawTankFrame(canvas, state, { mode, effects = [] } = {}) {
   const { ctx, width, height, ratio } = fitCanvas(canvas);
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#e4e4e4';
+  ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, width, height);
   if (!validateTankFrame(state)) return;
   const { scale, x, y } = layout(width, height, state);
   ctx.setTransform(scale, 0, 0, scale, x, y);
-  ctx.strokeStyle = '#494949';
-  ctx.lineWidth = Math.max(3.7, 1.6 * ratio / scale);
+  ctx.fillStyle = '#e6e6e6';
+  ctx.fillRect(0, 0, state.width, state.height);
+
+  // Static exterior walls match the interior gray; the thin black rim sits at the outer edge.
+  const wallWidth = Math.max(5.3, 1.7 * ratio / scale);
+  ctx.strokeStyle = '#4c4c4c';
+  ctx.lineWidth = wallWidth;
   ctx.lineCap = 'square';
+  ctx.lineJoin = 'miter';
+  ctx.strokeRect(0, 0, state.width, state.height);
   ctx.beginPath();
   for (const wall of state.walls) {
     if (![wall?.x1, wall?.y1, wall?.x2, wall?.y2].every(Number.isFinite)) continue;
+    const exterior = (wall.x1 === wall.x2 && (wall.x1 === 0 || wall.x1 === state.width)) ||
+      (wall.y1 === wall.y2 && (wall.y1 === 0 || wall.y1 === state.height));
+    if (exterior) continue;
     ctx.moveTo(wall.x1, wall.y1);
     ctx.lineTo(wall.x2, wall.y2);
   }
   ctx.stroke();
+  const rim = wallWidth / 2;
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = ratio / scale;
+  ctx.strokeRect(-rim, -rim, state.width + 2 * rim, state.height + 2 * rim);
 
   for (const pickup of state.pickups) if (pointIsValid(pickup)) drawCrate(ctx, pickup);
   for (const mine of Array.isArray(state.mines) ? state.mines : []) {
@@ -237,7 +287,7 @@ export function drawTankFrame(canvas, state, { mode, effects = [] } = {}) {
     ctx.save();
     ctx.translate(tank.x, tank.y);
     ctx.rotate(Number.isFinite(tank.angle) ? tank.angle : 0);
-    tankGlyph(ctx, team(index, mode));
+    stageTankGlyph(ctx, stageTeam(index, mode));
     ctx.restore();
   }
 

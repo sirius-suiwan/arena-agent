@@ -73,6 +73,7 @@ button.match-id {
 .pause-button:hover:not(:disabled) { background: #454545; }
 :focus-visible, .file-label:focus-within { outline: 2px solid #215b80; outline-offset: 2px; }
 /* The menu above retains its layout. A visible match fits its native aspect with no decorative surround. */
+body:has(#stage:not([hidden])) { background: #fff; }
 main:has(#stage:not([hidden])) { width: calc(100% - 10px); padding: 3px 0 9px; }
 main:has(#stage:not([hidden])) .toolbar { padding: 0 0 2px; }
 .canvas-wrap {
