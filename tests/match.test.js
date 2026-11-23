@@ -8,7 +8,7 @@ import {runMatch,stateHash} from '../core/match.js';
 import {recorder,verifyReplay} from '../replay/index.js';
 import {makeMatch} from '../apps/cli/match-options.js';
 import {LocalBot} from '../runners/local-process/index.js';
-import {game,gameV1,gameV2} from '../games/tank-trouble/adapter/index.js';
+import {game,gameV1,gameV2,gameV3} from '../games/tank-trouble/adapter/index.js';
 import {normalizePlayerName} from '../protocol/bot/player-name.js';
 import {jumpGame} from './fixtures/jump-game.js';
 
@@ -59,7 +59,9 @@ test('runs independent JS and Python bots and replays a tank match',async t=>{
   const dump=(await readFile(join(match.directory,'match.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(dump[0].readiness,{A:'ready',B:'ready'});
   assert.deepEqual(dump[0].manifest.playerNames,{A:'主机名',B:'斥候'});
-  assert.equal(dump[0].manifest.rulesVersion,'3');
+  assert.equal(dump[0].manifest.rulesVersion,'4');
+  assert.equal(dump[0].state.shellLimit,10);
+  assert.equal(dump[0].state.config.shellSpeed,5.2);
   assert.equal(dump[0].manifest.matchId,match.matchId);
   assert.equal(basename(match.directory),match.matchId);
   assert.equal(JSON.parse(await readFile(join(match.directory,'manifest.json'),'utf8')).matchId,match.matchId);
@@ -71,7 +73,7 @@ test('runs independent JS and Python bots and replays a tank match',async t=>{
   await assert.rejects(verifyReplay(join(match.directory,'truncated.jsonl'),{[game.id]:game}), /missing end/);
 });
 
-test('prior v1 logs select the frozen rules when v2 and v3 are present',async t=>{
+test('prior v1 logs select the frozen rules with newer versions present',async t=>{
   const base=await folder(t);
   const match=await makeMatch({game:gameV1,root,base,seed:42,maxTicks:12,timeoutMs:1000,recorder});
   const result=await match.run();

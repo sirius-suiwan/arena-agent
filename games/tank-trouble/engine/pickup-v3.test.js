@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {classicRoundGameV3 as v3,classicRoundGame as v2,game,gameV2} from '../adapter/index.js';
+import {classicRoundGameV3 as v3,classicRoundGame as v2,gameV3 as game,gameV2} from '../adapter/index.js';
 
 const act=(fire=false)=>({throttle:0,turn:0,fire});
 const input={seed:'pickup-regression',players:['amber','blue']};

@@ -53,4 +53,16 @@ export const classicRoundGameV3 = Object.freeze({
   step: classic.stepV3
 });
 
-export const game = withClassicSeries(classicRoundGameV3);
+export const gameV3 = withClassicSeries(classicRoundGameV3);
+
+export const classicRoundGameV4 = Object.freeze({
+  ...classicRoundGameV3,
+  version: '4',
+  init: classic.initV4,
+  observe(state,playerId) {
+    return {...classicRoundGameV3.observe(state,playerId),shellSpeed:state.config.shellSpeed,shellLimit:state.shellLimit};
+  },
+  step: classic.stepV4
+});
+
+export const game = withClassicSeries(classicRoundGameV4);

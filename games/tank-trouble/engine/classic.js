@@ -6,7 +6,7 @@ export const PICKUP_TYPES = Object.freeze(['death-ray', 'gatling', 'mine', 'frag
 const SETTLE = 180, MINE_ARM = 30, FRAG_TTL = 240, SHRAPNEL_TTL=60;
 const LASER_RANGE=576, LASER_GUIDE=256;
 const DEATH_CHARGE=90, GATLING_AMMO=18, GATLING_CHARGE=18, GATLING_GAP=5;
-const MAX_SHELLS = 5;
+const MAX_SHELLS = 5, MAX_SHELLS_V4 = 10;
 const between = (x, a, b) => Math.max(a, Math.min(b, x));
 
 function next(rng) {
@@ -32,17 +32,21 @@ function seedValue(input) {
 
 export const DEFAULT_CONFIG = Object.freeze({ cols: 8, rows: 6, maxTicks: 3600, pickupInterval: 360, pickups: true });
 export const DEFAULT_CONFIG_V3 = Object.freeze({ ...DEFAULT_CONFIG, cols:12, rows:9 });
+export const DEFAULT_CONFIG_V4 = Object.freeze({ ...DEFAULT_CONFIG_V3, shellSpeed:5.2 });
 const CRATE_HALF_SIZE=8, PICKUP_PADDING=2;
 
 function normalizedConfig(input, defaults) {
   if (input === undefined) return { ...defaults };
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('config must be an object');
-  for (const key of Object.keys(input)) if (!Object.hasOwn(DEFAULT_CONFIG, key)) throw new Error('unknown config key: ' + key);
+  for (const key of Object.keys(input)) if (!Object.hasOwn(defaults, key)) throw new Error('unknown config key: ' + key);
   const c = { ...defaults, ...input };
   for (const [key, lo, hi] of [['cols',4,16],['rows',4,12],['maxTicks',1,36000],['pickupInterval',1,3600]]) {
     if (!Number.isInteger(c[key]) || c[key] < lo || c[key] > hi) throw new RangeError(key + ' must be an integer in [' + lo + ', ' + hi + ']');
   }
   if (typeof c.pickups !== 'boolean') throw new TypeError('pickups must be a boolean');
+  if (Object.hasOwn(defaults,'shellSpeed') && (!Number.isFinite(c.shellSpeed)||c.shellSpeed<3||c.shellSpeed>9)) {
+    throw new RangeError('shellSpeed must be a finite number between 3 and 9 px/tick');
+  }
   return c;
 }
 
@@ -82,12 +86,12 @@ function generateMaze(cols, rows, rng) {
   return walls;
 }
 
-function initRound({ seed, config, players }, revised) {
+function initRound({ seed, config, players }, revised, defaults) {
   if (!Array.isArray(players) || ![2,3].includes(players.length) || new Set(players).size !== players.length ||
       players.some(x => typeof x !== 'string' || !x.trim() || x.length > 128)) {
     throw new TypeError('two or three distinct nonempty string player IDs are required');
   }
-  const c = normalizedConfig(config,revised?DEFAULT_CONFIG_V3:DEFAULT_CONFIG), rng = { value: seedValue(seed) };
+  const c = normalizedConfig(config,defaults), rng = { value: seedValue(seed) };
   const width = c.cols * CELL, height = c.rows * CELL;
   const walls = generateMaze(c.cols, c.rows, rng);
   const spawns = [
@@ -107,12 +111,14 @@ function initRound({ seed, config, players }, revised) {
     tanks: players.map((id,i) => ({ id, ...spawns[i], alive: true, cooldown: 0, weapon:null,
       weaponAmmo:0, weaponCharge:0, weaponGap:0, fragId:null, fireHeld:false, aimAngle:null, aimGuide:null })),
     bullets: [], pickups: [], mines:[], settleUntil:null, result: null,
-    ...(revised?{pickupBlocks:[]}:null)
+    ...(revised?{pickupBlocks:[]}:null),
+    ...(Object.hasOwn(defaults,'shellSpeed')?{shellLimit:MAX_SHELLS_V4}:null)
   };
 }
 
-export const init = (input) => initRound(input, false);
-export const initV3 = (input) => initRound(input, true);
+export const init = (input) => initRound(input, false, DEFAULT_CONFIG);
+export const initV3 = (input) => initRound(input, true, DEFAULT_CONFIG_V3);
+export const initV4 = (input) => initRound(input, true, DEFAULT_CONFIG_V4);
 
 function distanceToWallSquared(x, y, w) {
   return (x-between(x,w.x1,w.x2))**2 + (y-between(y,w.y1,w.y2))**2;
@@ -255,7 +261,7 @@ function burst(b,s,events,type, angle, deferred) {
   }
 }
 
-function fireShells(s, actions, events, impacts, deferred) {
+function fireShells(s, actions, events, impacts, deferred, shellSpeed, shellLimit) {
   for (const t of s.tanks) {
     if (!t.alive) continue;
     const firing=Object.hasOwn(actions,t.id)&&actions[t.id].fire;
@@ -333,11 +339,11 @@ function fireShells(s, actions, events, impacts, deferred) {
       }
       continue;
     }
-    if (t.cooldown > 0 || s.bullets.filter(b=>b.owner===t.id&&b.kind==='shell').length >= MAX_SHELLS) {
+    if (t.cooldown > 0 || s.bullets.filter(b=>b.owner===t.id&&b.kind==='shell').length >= shellLimit) {
       events.push({type:'shot-blocked', tankId:t.id, reason:t.cooldown>0?'cooldown':'shell-limit'});
       continue;
     }
-    shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:SHELL_SPEED,ttl:LIFETIME,kind:'shell'});
+    shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:shellSpeed,ttl:LIFETIME,kind:'shell'});
     t.cooldown=COOLDOWN;
   }
 }
@@ -456,13 +462,13 @@ function advanceMines(s,events,deferred) {
   });
 }
 
-function stepRound(state, actions, revised) {
+function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=MAX_SHELLS) {
   if (state.result) return {state,events:[],result:state.result};
   const s={...state,tick:state.tick+1,bullets:state.bullets.map(b=>({...b})),pickups:[...state.pickups],
     mines:state.mines.map(m=>({...m}))};
   const events=[], impacts=[], deferred=[];
   moveTanks(s,actions,events);
-  fireShells(s,actions,events,impacts,deferred);
+  fireShells(s,actions,events,impacts,deferred,shellSpeed,shellLimit);
   s.bullets=s.bullets.filter(b=>advanceShell(b,s,events,impacts,deferred));
   advanceMines(s,events,deferred);
   for (const sp of deferred) shell(s,events,sp);
@@ -501,3 +507,4 @@ function stepRound(state, actions, revised) {
 
 export const step = (state, actions) => stepRound(state, actions, false);
 export const stepV3 = (state, actions) => stepRound(state, actions, true);
+export const stepV4 = (state, actions) => stepRound(state, actions, true, state.config.shellSpeed, MAX_SHELLS_V4);

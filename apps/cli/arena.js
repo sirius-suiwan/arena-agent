@@ -1,13 +1,13 @@
 import {parseArgs} from 'node:util';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {game,gameV1,gameV2} from '../../games/tank-trouble/adapter/index.js';
+import {game,gameV1,gameV2,gameV3} from '../../games/tank-trouble/adapter/index.js';
 import {recorder,verifyReplay} from '../../replay/index.js';
 import {makeMatch} from './match-options.js';
 import {serve} from './serve.js';
 
 const root = fileURLToPath(new URL('../../',import.meta.url));
-const registry = Object.freeze(Object.fromEntries([game,gameV1,gameV2].map(g=>[g.id+'@'+g.version,g])));
+const registry = Object.freeze(Object.fromEntries([game,gameV1,gameV2,gameV3].map(g=>[g.id+'@'+g.version,g])));
 const [command,...args] = process.argv.slice(2);
 
 function integer(value) {
@@ -22,11 +22,16 @@ try {
     args,allowPositionals:true,options:{
       seed:{type:'string'}, 'max-ticks':{type:'string'}, 'timeout-ms':{type:'string'},
       'bot-a':{type:'string'},'bot-b':{type:'string'},'bot-c':{type:'string'},'score-to-win':{type:'string'},port:{type:'string'},
-      rounds:{type:'string'},out:{type:'string'},'name-a':{type:'string'},'name-b':{type:'string'},'name-c':{type:'string'},cols:{type:'string'},rows:{type:'string'}
+      rounds:{type:'string'},out:{type:'string'},'name-a':{type:'string'},'name-b':{type:'string'},'name-c':{type:'string'},cols:{type:'string'},rows:{type:'string'},'shell-speed':{type:'string'}
     }
   });
   const config=Object.fromEntries([['cols',values.cols],['rows',values.rows],['scoreToWin',values['score-to-win']]]
     .filter(([,value])=>value!==undefined).map(([key,value])=>[key,integer(value)]));
+  if (values['shell-speed']!==undefined) {
+    const speed=Number(values['shell-speed']);
+    if (!Number.isFinite(speed) || speed<3 || speed>9) throw new Error('shell speed must be 3–9 px/tick');
+    config.shellSpeed=speed;
+  }
   const playerNames=Object.fromEntries(['A','B','C'].flatMap(id=>{
     const value=values['name-'+id.toLowerCase()];
     return value===undefined?[]:[[id,value]];
