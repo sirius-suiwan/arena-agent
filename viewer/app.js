@@ -1,4 +1,5 @@
 import { renderers } from './renderers.js';
+import { killHighlight } from './replay-highlight.js';
 import { matchMode, keyboardAction, keySeat, pointerAction } from './input.js';
 
 const byId = (id) => document.getElementById(id);
@@ -8,12 +9,17 @@ const el = Object.fromEntries([
   'match-id', 'match-id-value', 'match-id-copy',
   'pause', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
   'scoreboard', 'round-label', 'round-notice', 'canvas-wrap',
+  'kill-panel', 'kill-markers', 'kill-status',
+  'seat-name-A', 'seat-name-B', 'seat-name-C',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
 ].map((id) => [id, byId(id)]));
 
 const blank = () => ({ manifest: null, frames: [], events: [], totalEvents: 0, result: null, done: false, paused: false });
 let live = blank();
 let replay = null;
+let selectedKill = null;
+let markerSource = null;
+let markerButtons = new Map();
 let frameIndex = 0;
 let playback = null;
 let requestedMode = null;
@@ -30,6 +36,7 @@ let inputEpoch = 0;
 let scoreKey = '';
 let fieldRatio = '';
 const WEAPON_FEEDBACK_TICKS = 60;
+const MAX_SEAT_NAME_LENGTH = 24;
 const heldKeys = new Set();
 const inputChains = new Map();
 const lastInput = new Map();
@@ -62,11 +69,28 @@ function setError(message) {
   el.error.textContent = message || '';
 }
 
-function outcome(result) {
+function tidyName(value) {
+  return value.replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, '').trim().replace(/\s+/gu, ' ');
+}
+
+function playerName(manifest, id) {
+  const names = manifest?.playerNames;
+  const value = names && Object.hasOwn(names, id) ? names[id] : null;
+  if (typeof value !== 'string') return id;
+  const trimmed = tidyName(value);
+  return trimmed && Array.from(trimmed).length <= MAX_SEAT_NAME_LENGTH ? trimmed : id;
+}
+
+function playerLabel(manifest, id) {
+  const name = playerName(manifest, id);
+  return name === id ? id : `${name}（${id}）`;
+}
+
+function outcome(result, manifest) {
   if (!result || typeof result !== 'object') return '结果未记录';
   const reason = result.reason;
   const reasonText = ({ 'last-tank': '场上最后一辆坦克', timeout: '达到时间上限', tick_limit: '达到时间上限', 'double-knockout': '同时被击毁', 'score-target': '达到目标分数', 'score-limit': '达到目标分数', 'round-limit': '达到局数上限' })[reason] ?? reason;
-  const winner = result.winner == null ? '平局' : `选手 ${result.winner} 获胜`;
+  const winner = result.winner == null ? '平局' : `选手 ${playerLabel(manifest, result.winner)} 获胜`;
   return reasonText ? `${winner}（${reasonText}）` : winner;
 }
 
@@ -88,20 +112,62 @@ function renderEvents(match, isReplay) {
     const entry = document.createElement(isReplay ? 'button' : 'span');
     if (isReplay) {
       entry.type = 'button';
+      if (row.event.type === 'destroyed') {
+        entry.classList.add('kill-event');
+        entry.title = '跳至击毁，并高亮致命弹道';
+      }
       entry.addEventListener('click', () => {
         stopPlayback();
-        seek(row.index);
+        seek(row.index, row.event.type === 'destroyed' ? row : null);
       });
       if (row.index === frameIndex) entry.setAttribute('aria-current', 'true');
     } else entry.className = 'event-text';
     const label = document.createElement('span');
     label.className = 'event-tick';
     label.textContent = `#${row.tick}`;
-    entry.append(label, document.createTextNode(formatEvent(row.event)));
+    entry.append(label, document.createTextNode(formatEvent(row.event, (id) => playerLabel(match.manifest, id))));
     li.append(entry);
     items.append(li);
   }
   el['event-list'].replaceChildren(items);
+}
+
+function renderKillMarkers() {
+  const panel = el['kill-panel'];
+  if (!replay) { panel.hidden = true; return; }
+  if (markerSource !== replay) {
+    markerSource = replay;
+    markerButtons = new Map();
+    const items = document.createDocumentFragment();
+    for (const row of replay.events) {
+      const event = row.event;
+      if (event.type !== 'destroyed') continue;
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      const ownerId = event.ownerId ?? event.owner;
+      const victim = playerLabel(replay.manifest, event.tankId ?? event.targetId ?? '？');
+      const owner = ownerId == null ? '？' : playerLabel(replay.manifest, ownerId);
+      button.textContent = `#${row.tick} ${owner} → ${victim}`;
+      button.addEventListener('click', () => { stopPlayback(); seek(row.index, row); });
+      markerButtons.set(row, button);
+      item.append(button);
+      items.append(item);
+    }
+    el['kill-markers'].replaceChildren(items);
+  }
+  panel.hidden = markerButtons.size === 0;
+  for (const [row, button] of markerButtons) {
+    button.setAttribute('aria-pressed', String(row === selectedKill?.row));
+  }
+  const status = el['kill-status'];
+  status.hidden = !selectedKill;
+  if (selectedKill) {
+    const { highlight } = selectedKill;
+    status.textContent = highlight
+      ? (highlight.selfHit ? '高亮：反弹或自伤导致击毁。' : '高亮：造成击毁的弹道。')
+      : '该回放缺少弹道数据，只定位到击毁时刻。';
+  }
 }
 
 function nearestEventIndex(events, index, limit) {
@@ -133,7 +199,8 @@ function renderScoreboard(match, state, renderer, paused) {
   const ids = state?.tanks?.map((tank) => tank.id) ?? match.manifest?.players ?? [];
   const scores = ids.map((id) => state?.scores?.[id] ?? (state?.result?.winner === id ? 1 : 0));
   const equipment = ids.map((id) => renderer?.equippedWeapon?.(state?.tanks.find((tank) => tank.id === id), state) ?? null);
-  const key = JSON.stringify([match.manifest?.mode, ids, scores, equipment, renderer?.title]);
+  const names = ids.map((id) => playerName(match.manifest, id));
+  const key = JSON.stringify([match.manifest?.mode, ids, names, scores, equipment, renderer?.title]);
   if (scoreKey !== key) {
     scoreKey = key;
     const icons = [];
@@ -144,7 +211,10 @@ function renderScoreboard(match, state, renderer, paused) {
       row.className = 'score';
       const weapon = equipment[index];
       const weaponLabel = weapon && renderer?.weaponLabel?.(weapon);
-      row.setAttribute('aria-label', `选手 ${id}：${scores[index]} 分${weaponLabel ? `，已装备${weaponLabel}` : ''}`);
+      const name = names[index];
+      const player = playerLabel(match.manifest, id);
+      row.setAttribute('aria-label', `选手 ${player}：${scores[index]} 分${weaponLabel ? `，已装备${weaponLabel}` : ''}`);
+      row.title = player;
       const icon = document.createElement('canvas');
       icon.className = 'score-icon';
       icon.setAttribute('aria-hidden', 'true');
@@ -155,7 +225,15 @@ function renderScoreboard(match, state, renderer, paused) {
       const label = document.createElement('span');
       label.className = 'score-id';
       label.textContent = id;
-      row.append(icon, number, label);
+      row.append(icon, number);
+      if (name !== id) {
+        const nameLabel = document.createElement('span');
+        nameLabel.className = 'score-name';
+        nameLabel.textContent = name;
+        nameLabel.dir = 'auto';
+        row.append(nameLabel);
+      }
+      row.append(label);
       if (weaponLabel) {
         const badge = document.createElement('canvas');
         badge.className = 'weapon-badge';
@@ -180,13 +258,13 @@ function renderScoreboard(match, state, renderer, paused) {
     notice.textContent = '已暂停';
   } else if (state?.phase === 'intermission') {
     notice.hidden = false;
-    notice.textContent = state.roundWinner == null ? '本局平局' : `选手 ${state.roundWinner} 拿下本局`;
+    notice.textContent = state.roundWinner == null ? '本局平局' : `选手 ${playerLabel(match.manifest, state.roundWinner)} 拿下本局`;
   } else if (state?.phase === 'finished' && state.result) {
     notice.hidden = false;
-    notice.textContent = outcome(state.result);
+    notice.textContent = outcome(state.result, match.manifest);
   } else if (match.done && match.result && (!replay || frameIndex === match.frames.length - 1)) {
     notice.hidden = false;
-    notice.textContent = outcome(match.result);
+    notice.textContent = outcome(match.result, match.manifest);
   } else notice.hidden = true;
 }
 
@@ -284,13 +362,17 @@ function render() {
     renderer.draw(el.battle, record.state, {
       mode: match.manifest?.mode,
       effects: effectsAt(match.frames, current),
+      highlight: replay && selectedKill?.row.index === current ? selectedKill.highlight : null,
     });
   } else if (!menuVisible) {
     el.battle.getContext('2d')?.clearRect(0, 0, el.battle.width, el.battle.height);
   }
   if (!menuVisible) renderScoreboard(match, record?.state, renderer, replay ? replayStarted && !playback &&
     frameIndex < match.frames.length - 1 : live.paused && !live.done);
-  if (el.details.open) renderEvents(match, Boolean(replay));
+  if (el.details.open) {
+    renderEvents(match, Boolean(replay));
+    renderKillMarkers();
+  }
 }
 
 function queueDraw(updateEvents = false) {
@@ -303,7 +385,7 @@ function queueDraw(updateEvents = false) {
 function liveStatus() {
   if (replay) return;
   if (live.done) {
-    setStatus(live.result ? `对局结束：${outcome(live.result)}。` : '对局已结束。');
+    setStatus(live.result ? `对局结束：${outcome(live.result, live.manifest)}。` : '对局已结束。');
   } else if (live.manifest) {
     const seed = live.manifest.seed;
     setStatus(live.paused ? '对局已暂停。'
@@ -313,9 +395,10 @@ function liveStatus() {
   }
 }
 
-function seek(index) {
+function seek(index, killRow = null) {
   if (!replay) return;
   frameIndex = Math.max(0, Math.min(replay.frames.length - 1, index));
+  selectedKill = killRow ? { row: killRow, highlight: killHighlight(replay.frames, frameIndex, killRow.event) } : null;
   queueDraw(true);
 }
 
@@ -330,6 +413,7 @@ function play() {
   if (playback) return stopPlayback();
   if (frameIndex === replay.frames.length - 1) seek(0);
   replayStarted = true;
+  selectedKill = null;
   const startTick = tickOf(replay.frames[frameIndex]);
   const rate = Number(replay.manifest.tickRate);
   const tickRate = Number.isFinite(rate) && rate > 0 ? rate : 60;
@@ -467,9 +551,21 @@ el['match-form'].addEventListener('submit', async (event) => {
   const mode = matchMode(requested) ? requested : 'human';
   const seed = Number(el.seed.value);
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return setError('种子必须是有效的非负整数。');
+  const seats = mode === 'local3' ? ['A', 'B', 'C'] : ['A', 'B'];
+  const playerNames = {};
+  for (const id of seats) {
+    const name = tidyName(el[`seat-name-${id}`].value);
+    if (Array.from(name).length > MAX_SEAT_NAME_LENGTH) {
+      el.details.open = true;
+      el[`seat-name-${id}`].focus();
+      return setError(`坦克 ${id} 的名字最多 ${MAX_SEAT_NAME_LENGTH} 个字符。`);
+    }
+    if (name) playerNames[id] = name;
+  }
   importSequence++;
   stopPlayback();
   replay = null;
+  selectedKill = null;
   replayStarted = false;
   menuVisible = false;
   starting = true;
@@ -478,7 +574,7 @@ el['match-form'].addEventListener('submit', async (event) => {
   setStatus('正在启动对局…');
   queueDraw(true);
   try {
-    await post('/api/match', { mode, seed });
+    await post('/api/match', { mode, seed, ...(Object.keys(playerNames).length ? { playerNames } : {}) });
   } catch (error) {
     if (!replay) {
       if (!live.manifest || live.done) menuVisible = true;
@@ -561,10 +657,11 @@ el['replay-file'].addEventListener('change', async () => {
     const candidate = await readReplay(file, () => importId === importSequence);
     if (!candidate || importId !== importSequence) return;
     replay = candidate;
+    selectedKill = null;
     replayStarted = false;
     menuVisible = false;
     frameIndex = 0;
-    setStatus(candidate.done ? `回放：${outcome(candidate.result)}。` : '已打开记录，未找到结束行。');
+    setStatus(candidate.done ? `回放：${outcome(candidate.result, candidate.manifest)}。` : '已打开记录，未找到结束行。');
     queueDraw(true);
   } catch (error) {
     if (importId !== importSequence) return;
@@ -578,6 +675,7 @@ el['back-live'].addEventListener('click', () => {
   importSequence++;
   stopPlayback();
   replay = null;
+  selectedKill = null;
   replayStarted = false;
   menuVisible = !live.manifest;
   setError('');

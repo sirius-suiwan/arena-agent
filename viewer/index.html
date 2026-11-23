@@ -61,12 +61,26 @@
             <input id="seed" form="match-form" type="number" min="0" max="4294967295" value="12" required>
           </label>
         </div>
+        <section class="seat-name-settings" aria-labelledby="seat-names-title">
+          <h2 id="seat-names-title">下局坦克名称</h2>
+          <p class="hint" id="seat-name-help">留空使用 bot 提供的名字或座位 ID；C 仅用于三人对战。</p>
+          <div class="seat-name-inputs" aria-describedby="seat-name-help">
+            <label for="seat-name-A">A <input id="seat-name-A" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
+            <label for="seat-name-B">B <input id="seat-name-B" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
+            <label for="seat-name-C">C <input id="seat-name-C" type="text" maxlength="48" placeholder="自动命名" autocomplete="off" dir="auto"></label>
+          </div>
+        </section>
         <div id="timeline-panel" class="timeline" hidden>
           <label for="timeline">回放时间轴</label>
           <input id="timeline" type="range" min="0" max="0" value="0" aria-label="按帧查找回放">
           <div class="transport">
             <button id="prev" type="button">上一帧</button>
             <button id="next" type="button">下一帧</button>
+          </div>
+          <div id="kill-panel" class="kill-panel" hidden>
+            <p class="hint">击毁标记（点击查看致命弹道）</p>
+            <ol id="kill-markers" aria-label="回放中的击毁标记"></ol>
+            <p id="kill-status" class="hint" role="status" hidden></p>
           </div>
         </div>
         <section aria-labelledby="events-title">

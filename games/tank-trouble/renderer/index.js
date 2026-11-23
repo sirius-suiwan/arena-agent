@@ -1,22 +1,20 @@
-const teams = ['#da3434', '#4aab3d', '#2699cc'];
-const graphite = '#666666';
-const stageTeams = [
-  { hull: '#cf1719', turret: '#e02626', track: '#921a1b' },
-  { hull: '#429936', turret: '#55b444', track: '#2b6a26' },
-  { hull: '#278cba', turret: '#42a3cb', track: '#1d597a' },
+const teams = [
+  { hull: '#dc655f', turret: '#f18c80', track: '#913c3b', outline: '#653535' },
+  { hull: '#48a783', turret: '#7bc8a7', track: '#2f705c', outline: '#2d5549' },
+  { hull: '#448ec0', turret: '#77aed0', track: '#315f85', outline: '#314c68' },
 ];
-const stageGraphite = { hull: '#434343', turret: '#616161', track: '#303030' };
+const graphite = { hull: '#6b7385', turret: '#959dae', track: '#484e5b', outline: '#383e4b' };
 const weapons = {
   'death-ray': '死光', laser: '激光', 'laser-sight': '激光', gatling: '加特林', frag: '破片弹', mine: '地雷',
   shell: '炮弹', shrapnel: '破片', shield: '护盾', rapid: '快速装填',
 };
 
 function team(index, mode) {
-  return mode === 'human' && index === 1 ? graphite : teams[index % teams.length];
+  return index < 0 || (mode === 'human' && index === 1) ? graphite : teams[index % teams.length];
 }
 
-function stageTeam(index, mode) {
-  return mode === 'human' && index === 1 ? stageGraphite : stageTeams[index % stageTeams.length];
+function teamForOwner(state, mode, id) {
+  return team(state.tanks.findIndex((tank) => tank.id === id), mode);
 }
 
 function pointIsValid(item) {
@@ -72,8 +70,8 @@ function tankGlyph(ctx, color) {
 
 function stageTankGlyph(ctx, color) {
   ctx.lineJoin = 'miter';
-  ctx.lineWidth = 1.45;
-  ctx.strokeStyle = '#221d1d';
+  ctx.lineWidth = 1.15;
+  ctx.strokeStyle = color.outline;
   ctx.fillStyle = color.track;
   ctx.fillRect(-10, -8.6, 19, 4);
   ctx.strokeRect(-10, -8.6, 19, 4);
@@ -202,26 +200,28 @@ function drawPath(ctx, path) {
   return true;
 }
 
-function drawEffects(ctx, state, effects) {
+function drawEffects(ctx, state, effects, mode) {
   for (const { event, age } of effects) {
     const alpha = Math.max(0, 1 - age / 10);
     if (!alpha) continue;
     ctx.save();
     ctx.globalAlpha = alpha;
+    const tint = teamForOwner(state, mode, event.ownerId ?? event.tankId);
     if (event.type === 'weapon-fired' && event.weapon === 'death-ray'
         && [event.x, event.y, event.endX, event.endY].every(Number.isFinite)) {
       ctx.beginPath(); ctx.moveTo(event.x, event.y); ctx.lineTo(event.endX, event.endY);
-      ctx.lineWidth = 4.4; ctx.strokeStyle = '#8d2929'; ctx.stroke();
-      ctx.lineWidth = 1.7; ctx.strokeStyle = '#fff0a0'; ctx.stroke();
+      ctx.lineWidth = 4.2; ctx.strokeStyle = tint.outline; ctx.stroke();
+      ctx.lineWidth = 2.5; ctx.strokeStyle = tint.hull; ctx.stroke();
+      ctx.lineWidth = 0.9; ctx.strokeStyle = tint.turret; ctx.stroke();
     } else if (event.type === 'weapon-fired' && event.weapon === 'laser' && drawPath(ctx, event.path)) {
-      ctx.strokeStyle = '#b33931'; ctx.lineWidth = 3.6; ctx.stroke();
-      ctx.strokeStyle = '#ffce8a'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.strokeStyle = tint.outline; ctx.lineWidth = 3.6; ctx.stroke();
+      ctx.strokeStyle = tint.turret; ctx.lineWidth = 1.9; ctx.stroke();
     } else if (['mine-burst', 'frag-burst', 'destroyed'].includes(event.type)) {
       const point = pointIsValid(event) ? event : state.tanks.find((tank) => tank.id === event.tankId);
       if (pointIsValid(point)) {
         ctx.beginPath(); ctx.arc(point.x, point.y, 3 + age * 2, 0, Math.PI * 2);
-        ctx.strokeStyle = '#525252'; ctx.lineWidth = 1.45; ctx.stroke();
-        ctx.fillStyle = '#8c8c8c';
+        ctx.strokeStyle = tint.outline; ctx.lineWidth = 1.45; ctx.stroke();
+        ctx.fillStyle = tint.hull;
         for (let i = 0; i < 7; i++) {
           const a = i * 2.4;
           ctx.fillRect(point.x + Math.cos(a) * (age + 4), point.y + Math.sin(a) * (age + 4), 1.7, 1.7);
@@ -232,8 +232,30 @@ function drawEffects(ctx, state, effects) {
   }
 }
 
+function drawKillHighlight(ctx, state, mode, highlight) {
+  if (!highlight) return;
+  const color = teamForOwner(state, mode, highlight.ownerId);
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (drawPath(ctx, highlight.points)) {
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 5.4; ctx.stroke();
+    ctx.strokeStyle = color.outline; ctx.lineWidth = 2.8;
+    ctx.setLineDash([5.5, 3.5]); ctx.stroke(); ctx.setLineDash([]);
+  }
+  const hit = highlight.hit;
+  if (pointIsValid(hit)) {
+    ctx.beginPath(); ctx.arc(hit.x, hit.y, 9, 0, Math.PI * 2);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 4.6; ctx.stroke();
+    ctx.strokeStyle = color.outline; ctx.lineWidth = 2.2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(hit.x, hit.y, 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = color.hull; ctx.fill();
+  }
+  ctx.restore();
+}
+
 /** Draw a read-only projection of an authoritative tank state; no art files from the original are used. */
-export function drawTankFrame(canvas, state, { mode, effects = [] } = {}) {
+export function drawTankFrame(canvas, state, { mode, effects = [], highlight = null } = {}) {
   const { ctx, width, height, ratio } = fitCanvas(canvas);
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -272,38 +294,43 @@ export function drawTankFrame(canvas, state, { mode, effects = [] } = {}) {
     if (!pointIsValid(mine)) continue;
     ctx.beginPath();
     ctx.ellipse(mine.x, mine.y, 6.5, 4.5, 0, 0, Math.PI * 2);
-    ctx.fillStyle = '#3b3b3b'; ctx.fill();
-    ctx.fillStyle = (state.roundTick ?? state.tick) >= mine.armedAt ? '#cf4134' : '#a3a3a3';
+    const color = teamForOwner(state, mode, mine.ownerId ?? mine.owner);
+    ctx.fillStyle = color.hull; ctx.fill();
+    ctx.strokeStyle = color.outline; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = (state.roundTick ?? state.tick) >= mine.armedAt ? color.outline : color.turret;
     ctx.fillRect(mine.x - 1.5, mine.y - 1.5, 3, 3);
   }
   for (const [index, tank] of state.tanks.entries()) {
     if (!pointIsValid(tank) || tank.alive === false) continue;
+    const color = team(index, mode);
     if (drawPath(ctx, tank.aimGuide)) {
       ctx.save();
       ctx.setLineDash([3.4, 4.2]);
-      ctx.strokeStyle = '#832f2c'; ctx.lineWidth = 1.25; ctx.stroke();
+      ctx.strokeStyle = color.outline; ctx.lineWidth = 1.25; ctx.stroke();
       ctx.restore();
     }
     ctx.save();
     ctx.translate(tank.x, tank.y);
     ctx.rotate(Number.isFinite(tank.angle) ? tank.angle : 0);
-    stageTankGlyph(ctx, stageTeam(index, mode));
+    stageTankGlyph(ctx, color);
     ctx.restore();
   }
 
-  ctx.fillStyle = '#242424';
   for (const bullet of state.bullets) {
     if (!pointIsValid(bullet)) continue;
     const size = bullet.kind === 'frag' ? 4.1 : bullet.kind === 'gatling' || bullet.kind === 'shrapnel' ? 2.1 : 3.1;
     ctx.beginPath();
     ctx.arc(bullet.x, bullet.y, Math.max(size, ratio / scale), 0, Math.PI * 2);
-    ctx.fill();
+    const color = teamForOwner(state, mode, bullet.ownerId ?? bullet.owner);
+    ctx.fillStyle = color.hull; ctx.fill();
+    ctx.strokeStyle = color.outline; ctx.lineWidth = Math.max(0.82, ratio * 0.6 / scale); ctx.stroke();
   }
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, state.width, state.height);
   ctx.clip();
-  drawEffects(ctx, state, effects);
+  drawEffects(ctx, state, effects, mode);
+  drawKillHighlight(ctx, state, mode, highlight);
   drawPickupFeedback(ctx, state, effects);
   ctx.restore();
 }
@@ -315,7 +342,7 @@ export function drawScoreIcon(canvas, index, mode) {
   ctx.clearRect(0, 0, width, height);
   const scale = Math.min(width, height) / 29;
   ctx.setTransform(scale, 0, 0, scale, width / 2, height / 2);
-  tankGlyph(ctx, team(index, mode));
+  tankGlyph(ctx, team(index, mode).hull);
 }
 
 export function drawWeaponIcon(canvas, weapon) {
@@ -337,7 +364,7 @@ const eventLabels = {
   'round-end': '本局结束',
 };
 
-export function formatTankEvent(event) {
+export function formatTankEvent(event, displayPlayer = (id) => id) {
   const type = event.type || '事件';
   const kind = eventLabels[type] ?? type;
   const hit = type === 'hit' || type === 'destroyed';
@@ -349,9 +376,9 @@ export function formatTankEvent(event) {
     ? `(${event.x.toFixed(1)}, ${event.y.toFixed(1)})` : null;
   const weapon = event.pickupType ?? event.weapon;
   const labels = [kind, event.round == null ? null : `第 ${event.round} 局`,
-    actor == null ? null : `选手 ${actor}`, target == null ? null : `目标 ${target}`,
+    actor == null ? null : `选手 ${displayPlayer(actor)}`, target == null ? null : `目标 ${displayPlayer(target)}`,
     shell == null ? null : `弹丸 ${shell}`, weapon == null ? null : weapons[weapon] ?? weapon,
-    event.winner == null ? null : `选手 ${event.winner} 获胜`,
+    event.winner == null ? null : `选手 ${displayPlayer(event.winner)} 获胜`,
     event.absorbed ? '护盾吸收' : null, position];
   return labels.filter(Boolean).join(' · ');
 }
