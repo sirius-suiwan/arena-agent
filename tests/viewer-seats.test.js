@@ -16,7 +16,7 @@ test('control routing follows assignments rather than fixed seat letters',()=>{
   assert.match(humanHelp(manifest),/D：.*G：.*H：/);
 });
 
-test('quick modes and historical recordings retain their control mappings',()=>{
+test('quick modes retain their control mappings',()=>{
   assert.deepEqual(humanControls({mode:'local3'}),{A:'arrows',B:'esdf',C:'mouse'});
   assert.equal(keySeat({mode:'human'},'KeyD'),'A');
   assert.equal(keySeat({mode:'local2'},'KeyD'),'B');

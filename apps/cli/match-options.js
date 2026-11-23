@@ -35,7 +35,7 @@ export function parseCustomSeats(roster,registry) {
 }
 
 export async function makeMatch({game,root,base,seed,config={},maxTicks=game.matchTickLimit?.(config)??game.defaultMatchTicks??3600,timeoutMs=50,mode='bots',realtime=false,paths={},registry=new Map(),human={},playerNames={},recorder,onRecord,roster}) {
-  if (mode==='human' && game.version.startsWith('8-')) config={...config,classicSolo:true};
+  if (mode==='human' && game.id==='tank-trouble') config={...config,classicSolo:true};
   const custom=mode==='custom'?parseCustomSeats(roster,registry):null;
   if (custom) paths=custom.paths;
   const ids=custom?.ids ?? playersForMode(mode,paths);

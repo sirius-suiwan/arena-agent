@@ -13,6 +13,6 @@ node apps/cli/arena.js run --seed 12 --score-to-win 1 \
 
 When the rules provide a shrinking safe rectangle, it estimates maze travel time, heads for a safe reachable cell before the boundary reaches it, and skips unsafe pickups. Immediate projectile avoidance still controls each action.
 
-Classic v8 reads the effective movement, projectile and tick profile from each observation. It releases between regular shots, respects the five-shell limit, holds a started Gatling burst through ammunition depletion unless evading, and steers RC missiles through the ordinary turn input.
+Classic reads the effective movement, projectile and tick profile from each observation. It releases between regular shots, respects the configured live-shell limit, holds a started Gatling burst through ammunition depletion unless evading, and steers RC missiles through the ordinary turn input. Missing or invalid profiles produce a neutral action.
 
 All search loops have fixed bounds and all tie breaks are deterministic. This is a local geometric heuristic, not a perfect forward simulator: predictions approximate wall endpoints, treat opponents as stationary during the shot estimate, and cannot anticipate new inputs or weapons. A single match is not a strength benchmark.

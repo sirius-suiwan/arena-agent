@@ -1,18 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameV5 as game,gameV4,classicRoundGameV5 as roundGame} from '../adapter/index.js';
+import {gameForRate} from '../adapter/index.js';
 
+import {init,step} from './classic.js';
+const game=gameForRate(60);
+const roundGame={init:input=>init(input,60),step};
 const eight=Array.from({length:8},(_,i)=>String.fromCharCode(65+i));
 const input={seed:'eight-seats',players:eight,config:{cols:4,rows:4}};
 
-test('v5 validates two to eight unique IDs and preserves v4 small layouts',()=>{
-  assert.equal(game.version,'5');
-  assert.equal(gameV4.version,'4');
+test('validates two to eight unique IDs',()=>{
   for (const n of [2,3]) {
     const opts={...input,players:eight.slice(0,n)};
-    assert.deepEqual(game.init(opts),gameV4.init(opts));
+    assert.deepEqual(game.init(opts).tanks.map(t=>t.id),opts.players);
   }
-  assert.throws(()=>gameV4.init(input),/two or three/);
   assert.throws(()=>roundGame.init({...input,players:new Array(2)}),/two to eight/);
   for(const players of [[],['A'],[...'ABCDEFGHI'],['A','A'],['A', ' ']]) {
     assert.throws(()=>game.init({...input,players}),/two to eight/);
@@ -49,7 +49,7 @@ test('a multi-seat collision pass rewinds all jointly blocked moves',()=>{
   const forward={throttle:1,turn:0,fire:false};
   const r=roundGame.step(s,{A:forward,B:forward,C:forward,D:forward});
   assert.deepEqual(r.events,[{type:'tank-stop',tankIds:['A','B','C']}]);
-  assert.deepEqual(r.state.tanks.map(t=>t.x),[40,64.5,91,202.2]);
+  assert.deepEqual(r.state.tanks.map(t=>t.x),[40,64.5,91,200+128/60]);
 });
 
 test('eight seats carry a winner score into a fresh seeded round',()=>{

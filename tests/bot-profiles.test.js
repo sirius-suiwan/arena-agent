@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {classicProfile} from '../games/tank-trouble/engine/profile-v8.js';
+import {classicProfile} from '../games/tank-trouble/engine/profile.js';
 import {makePolicy} from '../bots/gpt-dots/policy.js';
 import {createLaikaPolicy} from '../bots/laika/policy.js';
 

@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {makeMatch,parseCustomSeats,playersForMode,seatIds} from '../apps/cli/match-options.js';
 import {loadBotRegistry} from '../apps/cli/bot-registry.js';
-import {game,gameV4,gameV5} from '../games/tank-trouble/adapter/index.js';
+import {game,gameForRate} from '../games/tank-trouble/adapter/index.js';
 import {recorder,verifyReplay} from '../replay/index.js';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
@@ -32,12 +32,14 @@ test('eight independent bot seats record and verify the same authoritative ticks
   t.after(()=>rm(base,{recursive:true,force:true}));
   const registry=await loadBotRegistry(root,game.id);
   const ids=['laika','laika','gpt-dots','gpt-dots','laika','gpt-dots','laika','gpt-dots'];
-  const match=await makeMatch({game,root,base,seed:123,mode:'custom',maxTicks:72,timeoutMs:1000,
+  const selected=gameForRate(60);
+  const match=await makeMatch({game:selected,root,base,seed:123,mode:'custom',maxTicks:72,timeoutMs:1000,
     roster:Object.fromEntries(seatIds.map((id,i)=>[id,{bot:ids[i]}])),registry,recorder});
   const result=await match.run();
   const [start,...rows]=await readLog(match.directory);
   const ticks=rows.filter(row=>row.type==='tick');
-  assert.equal(start.manifest.rulesVersion,'8-25');
+  assert.equal(start.manifest.rulesVersion,selected.version);
+  assert.equal(start.manifest.tickRate,selected.tickRate);
   assert.deepEqual(start.manifest.players,seatIds);
   assert.deepEqual(start.manifest.humanControls,{});
   assert.deepEqual(seatIds.map(id=>start.manifest.botVersions[id].id),ids);
@@ -45,16 +47,17 @@ test('eight independent bot seats record and verify the same authoritative ticks
   assert.equal(ticks.length,72);
   assert.ok(ticks.every(row=>seatIds.every(id=>!row.input[id].fallback)));
   assert.deepEqual(await verifyReplay(join(match.directory,'match.jsonl'),{
-    [game.id+'@8-25']:game,[game.id+'@5']:gameV5,[game.id+'@4']:gameV4
+    [selected.id+'@'+selected.version]:selected
   }),{ticks:ticks.length,result});
 });
 
-test('sparse mixed roster keeps bot and human seat identity; v4 records still verify',async t=>{
+test('sparse mixed roster keeps bot and human seat identity at 30 Hz',async t=>{
   const base=await mkdtemp(join(tmpdir(),'arena-mixed-'));
   t.after(()=>rm(base,{recursive:true,force:true}));
   const registry=await loadBotRegistry(root,game.id);
   const dir=()=>({act:()=>({value:{throttle:0,turn:1,fire:false}})});
-  const match=await makeMatch({game,root,base,seed:12,mode:'custom',maxTicks:15,timeoutMs:1000,
+  const selected=gameForRate(30);
+  const match=await makeMatch({game:selected,root,base,seed:12,mode:'custom',maxTicks:15,timeoutMs:1000,
     roster:{B:{control:'esdf'},C:{bot:'laika'},E:{control:'arrows'},H:{control:'mouse'}},
     human:{B:dir(),E:dir(),H:dir()},playerNames:{H:'鼠标玩家'},registry,recorder});
   await match.run();
@@ -64,9 +67,6 @@ test('sparse mixed roster keeps bot and human seat identity; v4 records still ve
   assert.equal(start.manifest.playerNames.H,'鼠标玩家');
   assert.equal(start.manifest.botVersions.H.kind,'human');
   assert.equal(tick.input.H.accepted.turn,1);
-  assert.equal((await verifyReplay(join(match.directory,'match.jsonl'),{'tank-trouble@8-25':game})).ticks,15);
+  assert.equal((await verifyReplay(join(match.directory,'match.jsonl'),{[selected.id+'@'+selected.version]:selected})).ticks,15);
 
-  const old=await makeMatch({game:gameV4,root,base,seed:42,maxTicks:12,timeoutMs:1000,registry,recorder});
-  await old.run();
-  assert.equal((await verifyReplay(join(old.directory,'match.jsonl'),{'tank-trouble@4':gameV4,'tank-trouble@8-25':game})).ticks,12);
 });

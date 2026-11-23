@@ -23,9 +23,9 @@ test('a small ring follows only a future lethal projectile, during playback and 
   assert.deepEqual(lethalProjectileRings(null,frames[1],1),[]);
 });
 
-test('an absorbed shot is not lethal and an instant ray only marks its actual impact',()=>{
-  const frames=[frame(undefined,[bullet('b1',1,2)],[{type:'hit',absorbed:true,bulletId:'b1',x:2,y:3}]),
-    frame(undefined,[],[{type:'destroyed',bulletId:'ray',tankId:'B',ownerId:'A'},
+test('a Death Ray only marks its actual impact',()=>{
+  const frames=[frame(1,[bullet('b1',1,2)]),
+    frame(1,[],[{type:'destroyed',bulletId:'ray',tankId:'B',ownerId:'A'},
       {type:'hit',bulletId:'ray',tankId:'B',x:6,y:7}])];
   const index=indexLethalProjectiles(frames);
   assert.deepEqual(lethalProjectileRings(index,frames[0],0),[]);

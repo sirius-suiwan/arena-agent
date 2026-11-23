@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import {withClassicSeries} from '../games/tank-trouble/series/index.js';
 
 const simpleRound = {
-  id:'fixture',version:'2',tickRate:60,
+  id:'fixture',version:'fixture',tickRate:60,
   init: ({seed,players})=>({tick:0,seed,players}),
   observe:state=>({tick:state.tick}),
   step: (state,{winner})=>({state:{...state,tick:state.tick+1},events:[],result:{winner,reason:'round'}})

@@ -1,5 +1,5 @@
 const point = value => Number.isFinite(value?.x) && Number.isFinite(value?.y);
-const roundKey = frame => frame.state?.round ?? null;
+const roundKey = frame => frame.state.round;
 
 // Completed replays let us identify a lethal projectile before its impact.
 // IDs reset with each round. Keep impact rings separate from moving projectiles.
@@ -15,8 +15,8 @@ export function indexLethalProjectiles(frames) {
       const lethal = rounds.get(key);
       const id = event.bulletId;
       const hit = events.find(item => item?.type === 'hit' && item.bulletId === id &&
-        (item.tankId ?? item.targetId) === (event.tankId ?? event.targetId) && !item.absorbed && point(item));
-      const ownerId = event.ownerId ?? hit?.ownerId ?? null;
+        item.tankId === event.tankId && point(item));
+      const ownerId = event.ownerId;
       if (!lethal.has(id)) lethal.set(id, {index, ownerId});
       if (hit) {
         if (!impacts.has(index)) impacts.set(index, []);
@@ -35,7 +35,7 @@ export function lethalProjectileRings(indexed, frame, index) {
     const kill = lethal?.get(projectile?.id);
     // The snapshot at the killing tick may no longer contain the projectile.
     if (kill && index < kill.index && point(projectile)) {
-      rings.push({x:projectile.x,y:projectile.y,ownerId:projectile.ownerId ?? projectile.owner ?? kill.ownerId});
+      rings.push({x:projectile.x,y:projectile.y,ownerId:projectile.owner ?? kill.ownerId});
     }
   }
   rings.push(...(indexed.impacts.get(index) ?? []));

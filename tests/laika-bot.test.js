@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {createLaikaPolicy} from '../bots/laika/policy.js';
 import {game} from '../games/tank-trouble/adapter/index.js';
+import {classicProfile} from '../games/tank-trouble/engine/profile.js';
 
 const me={id:'A',x:40,y:40,angle:0,alive:true,weapon:null};
 const enemy={id:'B',x:160,y:40,angle:Math.PI,alive:true,weapon:null};
 const ob=(overrides={})=>({tick:4,round:1,roundTick:4,phase:'playing',width:256,height:256,
-  playerId:'A',tanks:[me,enemy],walls:[],bullets:[],pickups:[],shellSpeed:5.2,shellLimit:10,...overrides});
+  playerId:'A',tanks:[me,enemy],walls:[],bullets:[],pickups:[],profile:classicProfile(25),shellSpeed:144/25,shellLimit:10,...overrides});
 
 test('Laika chooses an unobstructed shot and does not hold an edge-triggered weapon',()=>{
   assert.deepEqual(createLaikaPolicy()(ob()),{throttle:0,turn:0,fire:true});
@@ -56,7 +57,7 @@ test('Laika policy is deterministic on a fixed observation stream',()=>{
 });
 
 test('Laika Node bot responds with valid JSONL on the host tick and announces its name',()=>{
-  const src=[{type:'start',protocol:1,game:'tank-trouble',playerId:'A',rulesVersion:'4'},{
+  const src=[{type:'start',protocol:1,game:'tank-trouble',playerId:'A',rulesVersion:game.version},{
     type:'observe',tick:71,observation:ob()
   }].map(JSON.stringify).join('\n')+'\n';
   const p=spawnSync(process.execPath,['bots/laika/bot.js'],{input:src,encoding:'utf8',timeout:2500});
@@ -67,4 +68,10 @@ test('Laika Node bot responds with valid JSONL on the host tick and announces it
   assert.equal(action.type,'action');
   assert.equal(action.tick,71);
   assert.deepEqual(game.validateAction(action.action),action.action);
+});
+
+test('bot returns a safe neutral action without its declared simulation profile',()=>{
+  for(const profile of [undefined,{},{...classicProfile(25),forwardSpeed:0}]) {
+    assert.deepEqual(createLaikaPolicy()(ob({profile})),{throttle:0,turn:0,fire:false});
+  }
 });

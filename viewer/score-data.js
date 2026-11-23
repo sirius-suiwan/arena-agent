@@ -6,8 +6,8 @@ export function countKills(current,events,teams) {
   const seen=new Set();
   for (const event of events ?? []) {
     if (event?.type!=='destroyed') continue;
-    const owner=event.ownerId ?? event.owner;
-    const victim=event.tankId ?? event.targetId;
+    const owner=event.ownerId;
+    const victim=event.tankId;
     if (owner==null || victim==null || owner===victim || (teams?.[owner] != null && teams[owner] === teams[victim]) || seen.has(victim) ||
         !Object.hasOwn(current,owner) || !Object.hasOwn(current,victim)) continue;
     if (next===current) next={...current};
@@ -19,8 +19,8 @@ export function countKills(current,events,teams) {
 
 export function availableShellSlots(state,id) {
   const cap=state?.shellLimit;
-  const limit=Number.isInteger(cap) && cap>=1 && cap<=32 ? cap : 5;
-  const active=(state?.bullets ?? []).filter(b=>(b?.ownerId ?? b?.owner)===id &&
-    (b.kind==null || b.kind==='shell')).length;
+  if (!Number.isSafeInteger(cap) || cap < 1 || cap > 32) return null;
+  const limit=cap;
+  const active=(state?.bullets ?? []).filter(b=>b?.owner===id && b.kind==='shell').length;
   return {limit,available:Math.max(0,limit-active)};
 }

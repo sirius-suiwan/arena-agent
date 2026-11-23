@@ -1,15 +1,8 @@
-import {CLASSIC_DATA,CLASSIC_FRAME_RATE,classicProfile} from './profile-v8.js';
+import {CLASSIC_DATA,CLASSIC_FRAME_RATE,classicProfile} from './profile.js';
 
-export const TICK_RATE = 60;
 const CELL = 64, TANK_RADIUS = 12, BULLET_RADIUS = 3;
-const MOVE = 2.2, TURN = 0.06, SHELL_SPEED = 6, LIFETIME = 450, COOLDOWN = 24;
 const EPS = 1e-7, TAU = 2 * Math.PI;
-export const PICKUP_TYPES = Object.freeze(['death-ray', 'gatling', 'mine', 'frag', 'laser']);
-export const PICKUP_TYPES_V8 = Object.freeze(Object.keys(CLASSIC_DATA.crates.weights));
-const SETTLE = 180, MINE_ARM = 30, FRAG_TTL = 240, SHRAPNEL_TTL=60;
-const LASER_RANGE=576, LASER_GUIDE=256;
-const DEATH_CHARGE=90, GATLING_AMMO=18, GATLING_CHARGE=18, GATLING_GAP=5;
-const MAX_SHELLS = 5, MAX_SHELLS_V4 = 10;
+export const PICKUP_TYPES = Object.freeze(Object.keys(CLASSIC_DATA.crates.weights));
 const between = (x, a, b) => Math.max(a, Math.min(b, x));
 
 function next(rng) {
@@ -33,17 +26,13 @@ function seedValue(input) {
   return (hash >>> 0) || 1;
 }
 
-export const DEFAULT_CONFIG = Object.freeze({ cols: 8, rows: 6, maxTicks: 3600, pickupInterval: 360, pickups: true });
-export const DEFAULT_CONFIG_V3 = Object.freeze({ ...DEFAULT_CONFIG, cols:12, rows:9 });
-export const DEFAULT_CONFIG_V4 = Object.freeze({ ...DEFAULT_CONFIG_V3, shellSpeed:5.2 });
-export const DEFAULT_CONFIG_V6 = Object.freeze({ ...DEFAULT_CONFIG_V4, shrinkAfterSeconds:40, shrinkDurationSeconds:15 });
-export const DEFAULT_CONFIG_V7 = Object.freeze({ ...DEFAULT_CONFIG_V6, mazeComplexity:'classic', friendlyFire:false, teams:undefined });
-const defaultsV8 = profile => ({...DEFAULT_CONFIG_V7,maxTicks:60*profile.tickRate,
-  shellSpeed:profile.shellSpeed,classicSolo:false});
+const defaults = profile => ({cols:12,rows:9,maxTicks:60*profile.tickRate,pickupInterval:360,
+  pickups:true,shellSpeed:profile.shellSpeed,shrinkAfterSeconds:40,shrinkDurationSeconds:15,
+  mazeComplexity:'classic',friendlyFire:false,teams:undefined,classicSolo:false});
 const LOOP_OPENING_CHANCE=Object.freeze({open:0.60,classic:0.22,dense:0});
 const TEAM_IDS=Object.freeze(['1','2','3','4']);
 const CRATE_HALF_SIZE=8, PICKUP_PADDING=2;
-const ZONE_GRACE=2*TICK_RATE, ZONE_FINAL_MIN_HALF_SPAN=24;
+const ZONE_FINAL_MIN_HALF_SPAN=24;
 
 export function validateTeams(teams,players) {
   if (teams===undefined) return undefined;
@@ -57,45 +46,33 @@ export function validateTeams(teams,players) {
   return Object.fromEntries(players.map(id=>[id,teams[id]]));
 }
 
-function normalizedConfig(input, defaults, profile) {
-  if (input === undefined) input={};
+function normalizedConfig(input={}, profile) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('config must be an object');
-  for (const key of Object.keys(input)) if (!Object.hasOwn(defaults, key)) throw new Error('unknown config key: ' + key);
-  const c = { ...defaults, ...input };
-  const tickRate=profile?.tickRate??TICK_RATE;
-  for (const [key, lo, hi] of [['cols',4,16],['rows',4,12],['maxTicks',1,36000],['pickupInterval',1,3600]]) {
+  const base=defaults(profile);
+  for (const key of Object.keys(input)) if (!Object.hasOwn(base, key)) throw new Error('unknown config key: ' + key);
+  const c = {...base,...input};
+  for (const [key, lo, hi] of [['cols',4,16],['rows',4,12],['maxTicks',1,36000],['pickupInterval',1,3600],
+    ['shrinkAfterSeconds',0,120],['shrinkDurationSeconds',1,120]]) {
     if (!Number.isInteger(c[key]) || c[key] < lo || c[key] > hi) throw new RangeError(key + ' must be an integer in [' + lo + ', ' + hi + ']');
   }
-  if (typeof c.pickups !== 'boolean') throw new TypeError('pickups must be a boolean');
-  if (Object.hasOwn(defaults,'shellSpeed') && (!profile||Object.hasOwn(input,'shellSpeed')) &&
-      (!Number.isFinite(c.shellSpeed)||c.shellSpeed<3||c.shellSpeed>9)) {
+  for (const key of ['pickups','friendlyFire','classicSolo']) {
+    if (typeof c[key] !== 'boolean') throw new TypeError(key+' must be a boolean');
+  }
+  if (Object.hasOwn(input,'shellSpeed') && (!Number.isFinite(c.shellSpeed)||c.shellSpeed<3||c.shellSpeed>9)) {
     throw new RangeError('shellSpeed must be a finite number between 3 and 9 px/tick');
   }
-  if (Object.hasOwn(defaults,'shrinkAfterSeconds')) {
-    for (const [key,lo] of [['shrinkAfterSeconds',0],['shrinkDurationSeconds',1]]) {
-      if (!Number.isInteger(c[key])||c[key]<lo||c[key]>120) {
-        throw new RangeError(key+' must be an integer in ['+lo+', 120]');
-      }
-    }
-    if (!Object.hasOwn(input,'maxTicks')) {
-      c.maxTicks=Math.max(c.maxTicks,(c.shrinkAfterSeconds+c.shrinkDurationSeconds+5)*tickRate);
-    }
+  if (!Object.hasOwn(input,'maxTicks')) {
+    c.maxTicks=Math.max(c.maxTicks,(c.shrinkAfterSeconds+c.shrinkDurationSeconds+5)*profile.tickRate);
   }
-  if (Object.hasOwn(defaults,'mazeComplexity')) {
-    if (typeof c.mazeComplexity!=='string'||!Object.hasOwn(LOOP_OPENING_CHANCE,c.mazeComplexity)) {
-      throw new RangeError('mazeComplexity must be open, classic or dense');
-    }
-    if (typeof c.friendlyFire!=='boolean') throw new TypeError('friendlyFire must be a boolean');
-    if (c.teams===undefined) delete c.teams;
+  if (typeof c.mazeComplexity!=='string'||!Object.hasOwn(LOOP_OPENING_CHANCE,c.mazeComplexity)) {
+    throw new RangeError('mazeComplexity must be open, classic or dense');
   }
-  if (profile) {
-    if (typeof c.classicSolo!=='boolean') throw new TypeError('classicSolo must be a boolean');
-    if (!Object.hasOwn(input,'pickupInterval')) delete c.pickupInterval;
-  }
+  if (c.teams===undefined) delete c.teams;
+  if (!Object.hasOwn(input,'pickupInterval')) delete c.pickupInterval;
   return c;
 }
 
-function generateMaze(cols, rows, rng, loopChance=LOOP_OPENING_CHANCE.classic) {
+function generateMaze(cols, rows, rng, loopChance) {
   const walls = [];
   const internal = [];
   for (let y = 0; y <= rows; y++) for (let x = 0; x <= cols; x++) {
@@ -163,16 +140,15 @@ function multiplayerSpawns(cols, rows, walls, count, rng) {
   });
 }
 
-function initRound({ seed, config, players }, revised, defaults, maxPlayers=3, profile) {
-  if (!Array.isArray(players) || players.length<2 || players.length>maxPlayers || new Set(players).size !== players.length ||
-      (maxPlayers>3?[...players]:players).some(x => typeof x !== 'string' || !x.trim() || x.length > 128)) {
-    throw new TypeError(maxPlayers>3?'two to eight distinct nonempty string player IDs are required'
-      :'two or three distinct nonempty string player IDs are required');
+function initRound({ seed, config, players }, profile) {
+  if (!Array.isArray(players) || players.length<2 || players.length>8 || new Set(players).size !== players.length ||
+      [...players].some(x => typeof x !== 'string' || !x.trim() || x.length > 128)) {
+    throw new TypeError('two to eight distinct nonempty string player IDs are required');
   }
-  const c = normalizedConfig(config,defaults,profile), rng = { value: seedValue(seed) };
+  const c = normalizedConfig(config,profile), rng = { value: seedValue(seed) };
   if (c.teams!==undefined) c.teams=validateTeams(c.teams,players);
   const width = c.cols * CELL, height = c.rows * CELL;
-  const walls = generateMaze(c.cols, c.rows, rng, c.mazeComplexity===undefined?undefined:LOOP_OPENING_CHANCE[c.mazeComplexity]);
+  const walls = generateMaze(c.cols, c.rows, rng, LOOP_OPENING_CHANCE[c.mazeComplexity]);
   let spawns = [
     { x: CELL/2, y: CELL/2, angle: 0 },
     { x: width-CELL/2, y: height-CELL/2, angle: Math.PI }
@@ -191,28 +167,13 @@ function initRound({ seed, config, players }, revised, defaults, maxPlayers=3, p
     tanks: players.map((id,i) => ({ id, ...spawns[i], alive: true, cooldown: 0, weapon:null,
       weaponAmmo:0, weaponCharge:0, weaponGap:0, fragId:null, fireHeld:false, aimAngle:null, aimGuide:null })),
     bullets: [], pickups: [], mines:[], settleUntil:null, result: null,
-    ...(revised?{pickupBlocks:[]}:null),
-    ...(Object.hasOwn(defaults,'shellSpeed')?{shellLimit:profile?.shellLimit??MAX_SHELLS_V4}:null)
+    pickupBlocks:[],shellLimit:profile.shellLimit
   };
 }
 
-export const init = (input) => initRound(input, false, DEFAULT_CONFIG);
-export const initV3 = (input) => initRound(input, true, DEFAULT_CONFIG_V3);
-export const initV4 = (input) => initRound(input, true, DEFAULT_CONFIG_V4);
-export const initV5 = (input) => initRound(input, true, DEFAULT_CONFIG_V4, 8);
-export function matchTickLimitV6({scoreToWin:_scoreToWin,...config}={}) {
-  const {maxTicks}=normalizedConfig(config,DEFAULT_CONFIG_V6);
-  return Math.min(100_000,Math.max(8400,3*(maxTicks+TICK_RATE)));
-}
-export function roundTickLimitV7(config) {
-  return normalizedConfig(config,DEFAULT_CONFIG_V7).maxTicks;
-}
-export function matchTickLimitV7({scoreToWin:_scoreToWin,roundLimit:_roundLimit,...config}={}) {
-  return Math.min(100_000,Math.max(8400,3*(roundTickLimitV7(config)+TICK_RATE)));
-}
-function initWithZone(input, defaults, profile) {
-  const state=initRound(input,true,defaults,8,profile);
-  const tickRate=profile?.tickRate??TICK_RATE;
+function initWithZone(input,profile) {
+  const state=initRound(input,profile);
+  const tickRate=profile.tickRate;
   const {width,height}=state;
   // The middle cell is reachable; for even dimensions choose the upper/left
   // tied cell so the center never lies on a maze wall.
@@ -224,27 +185,21 @@ function initWithZone(input, defaults, profile) {
   const startTick=state.config.shrinkAfterSeconds*tickRate;
   const zone={x,y,halfWidth:initialHalfWidth,halfHeight:initialHalfHeight,initialHalfWidth,initialHalfHeight,
     finalHalfWidth:width*finalScale,finalHalfHeight:height*finalScale,
-    startTick,endTick:startTick+state.config.shrinkDurationSeconds*tickRate,graceTicks:profile?.zoneGraceTicks??ZONE_GRACE,
+    startTick,endTick:startTick+state.config.shrinkDurationSeconds*tickRate,graceTicks:profile.zoneGraceTicks,
     outsideTicks:Object.fromEntries(state.tanks.map(t=>[t.id,0]))};
   return {...state,zone,tanks:state.tanks.map(t=>({...t,invulnerable:false}))};
 }
-export const initV6 = input => initWithZone(input,DEFAULT_CONFIG_V6);
-export function initV7(input) {
-  const state=initWithZone(input,DEFAULT_CONFIG_V7);
-  const {teams,friendlyFire}=state.config;
-  return {...state,friendlyFire,...(teams?{teams:{...teams}}:{})};
-}
 
-export function roundTickLimitV8(config, tickRate) {
+export function roundTickLimit(config, tickRate) {
   const profile=classicProfile(tickRate);
-  return normalizedConfig(config,defaultsV8(profile),profile).maxTicks;
+  return normalizedConfig(config,profile).maxTicks;
 }
-export function matchTickLimitV8({scoreToWin:_scoreToWin,roundLimit:_roundLimit,...config}={}, tickRate) {
-  return Math.min(100_000,Math.max(140*tickRate,3*(roundTickLimitV8(config,tickRate)+tickRate)));
+export function matchTickLimit({scoreToWin:_scoreToWin,roundLimit:_roundLimit,...config}={}, tickRate) {
+  return Math.min(100_000,Math.max(140*tickRate,3*(roundTickLimit(config,tickRate)+tickRate)));
 }
-export function initV8(input,tickRate) {
+export function init(input,tickRate) {
   const profile=classicProfile(tickRate);
-  const state=initWithZone(input,defaultsV8(profile),profile);
+  const state=initWithZone(input,profile);
   const {teams,friendlyFire,shellSpeed}=state.config;
   const rng={value:state.rng};
   const nextPickupAt=state.config.pickups?classicPickupDelay(state,rng,tickRate,true):null;
@@ -311,48 +266,35 @@ function bounceVelocity(b, normals) {
   b.vx -= 2*dot*nx; b.vy -= 2*dot*ny;
 }
 
-// Ray path is a point sweep against wall segments, sharing the same corner
-// priority as shells. It can encounter its owner after the first reflection.
-const vulnerable=(s,t,ownerId)=>t.alive && (!s.zone||!t.invulnerable) &&
+const vulnerable=(s,t,ownerId)=>t.alive && !t.invulnerable &&
   (!s.teams||s.friendlyFire||ownerId===t.id||s.teams[t.id]!==s.teams[ownerId]);
 
-function traceLaser(s,tank,range,withTanks) {
+// The preview follows wall reflections but never predicts hits on tanks.
+function laserGuide(s,tank,range) {
   let {x,y}=tank;
   const dir={vx:Math.cos(tank.angle),vy:Math.sin(tank.angle)};
   const path=[{x,y}];
   for (let segment=0;segment<16 && range>EPS;segment++) {
     const dx=dir.vx*range,dy=dir.vy*range;
     const wall=wallHit(x,y,dx,dy,s.walls,0);
-    let target=null;
-    if (withTanks) for (const t of s.tanks) {
-      if (!vulnerable(s,t,tank.id) || (segment===0&&t.id===tank.id)) continue;
-      const f=circleHit(x,y,dx,dy,t.x,t.y,TANK_RADIUS);
-      if (f!==null && (!target||f<target.f-EPS)) target={id:t.id,f};
-    }
-    if (target&&(!wall||target.f<wall.t-EPS)) {
-      const end={x:x+dx*target.f,y:y+dy*target.f};
-      return {path:[...path,end],targetId:target.id};
-    }
-    if (!wall) return {path:[...path,{x:x+dx,y:y+dy}],targetId:null};
+    if (!wall) return [...path,{x:x+dx,y:y+dy}];
     x+=dx*wall.t;y+=dy*wall.t;
     path.push({x,y});
     bounceVelocity(dir,wall.normals);
     x+=dir.vx*EPS*4;y+=dir.vy*EPS*4;
     range*=1-wall.t;
   }
-  return {path,targetId:null};
+  return path;
 }
 
 function moveTanks(s, actions, events) {
   const proposed = s.tanks.map(t => {
     if (!t.alive) return { ...t };
     const a = Object.hasOwn(actions,t.id) ? actions[t.id] : { throttle: 0, turn: 0, fire: false };
-    const locked=s.profile
-      ? t.weapon==='remote'&&t.fragId!=null ||
-        t.weapon==='death-ray'&&(t.weaponCharge>0&&t.beamUntil===undefined||t.beamUntil>s.tick)
-      : t.weapon==='death-ray'&&t.weaponCharge>0&&a.fire;
-    const turnRate=s.profile?.turnSpeed??TURN;
-    const moveRate=s.profile?(a.throttle<0?s.profile.reverseSpeed:s.profile.forwardSpeed):MOVE;
+    const locked=t.weapon==='remote'&&t.fragId!=null ||
+      t.weapon==='death-ray'&&(t.weaponCharge>0&&t.beamUntil===undefined||t.beamUntil>s.tick);
+    const turnRate=s.profile.turnSpeed;
+    const moveRate=a.throttle<0?s.profile.reverseSpeed:s.profile.forwardSpeed;
     const angle = ((t.angle+(locked?0:a.turn*turnRate))%TAU+TAU)%TAU;
     const x = t.x+Math.cos(angle)*(locked?0:a.throttle*moveRate), y = t.y+Math.sin(angle)*(locked?0:a.throttle*moveRate);
     const blocked = s.walls.some(w => distanceToWallSquared(x,y,w) < TANK_RADIUS**2);
@@ -372,8 +314,8 @@ function moveTanks(s, actions, events) {
       const a=proposed[i],b=proposed[j];
       if (!a.alive || !b.alive || Math.hypot(a.x-b.x,a.y-b.y)>=2*TANK_RADIUS) continue;
       for (const k of [i,j]) if (!stopped.has(k)) {
-        // Four or more can only occur on v5. Resolve all conflicts per pass
-        // against one pose snapshot, not in iteration/seat order.
+        // With four or more tanks, resolve all conflicts against one pose
+        // snapshot rather than in iteration/seat order.
         if (s.tanks.length>3) simultaneous.add(k);
         else rewind(k);
       }
@@ -406,21 +348,20 @@ function resetClassicWeapon(t) {
 }
 
 function burst(b,s,events,type, angle, deferred) {
-  const count=s.profile?.fragmentCount??(type==='mine-burst'?12:16);
+  const count=s.profile.fragmentCount;
   events.push({type,x:b.x,y:b.y,ownerId:b.owner,[type==='mine-burst'?'mineId':'bulletId']:b.id});
   // Queue bursts after the projectile loop: child objects first advance on
   // the next tick. They get their own stable IDs and explicit source ID.
   for (let i=0;i<count;i++) {
     const heading=angle+i*TAU/count;
     const x=b.x,y=b.y;
-    deferred.push({owner:b.owner,x,y,angle:heading,speed:s.profile?.fragmentSpeed??5,ttl:s.profile?.fragmentTtl??SHRAPNEL_TTL,kind:'shrapnel',sourceId:b.id});
+    deferred.push({owner:b.owner,x,y,angle:heading,speed:s.profile.fragmentSpeed,ttl:s.profile.fragmentTtl,kind:'shrapnel',sourceId:b.id});
   }
 }
 
 function projectileByOwner(s,t) { return s.bullets.find(b=>b.id===t.fragId); }
 
 function guideClassicMissiles(s,actions) {
-  if (!s.profile) return;
   const p=s.profile;
   for (const b of s.bullets) {
     if (b.kind!=='missile'&&b.kind!=='remote') continue;
@@ -561,101 +502,13 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
   }
 }
 
-function fireShells(s, actions, events, impacts, deferred, shellSpeed, shellLimit) {
-  if (s.profile) return fireClassicWeapons(s,actions,events,impacts,deferred);
-  for (const t of s.tanks) {
-    if (!t.alive) continue;
-    const firing=Object.hasOwn(actions,t.id)&&actions[t.id].fire;
-    const pressed=firing&&!t.fireHeld;
-    t.fireHeld=firing;
-    if (t.weaponGap>0) t.weaponGap--;
-    if (!firing) {
-      if (t.weapon==='death-ray') {t.weaponCharge=0;t.aimAngle=null;}
-      continue;
-    }
-    if (t.weapon==='laser') {
-      if (!pressed) continue;
-      const {path,targetId}=traceLaser(s,t,LASER_RANGE,true);
-      const b={id:'b'+s.nextBullet++,owner:t.id,kind:'laser'};
-      const end=path.at(-1);
-      events.push({type:'weapon-fired',tankId:t.id,weapon:'laser',bulletId:b.id,x:t.x,y:t.y,
-        endX:end.x,endY:end.y,path});
-      if (targetId!==null) impacts.push({bullet:b,tankId:targetId,x:end.x,y:end.y});
-      resetWeapon(t);
-      continue;
-    }
-    if (t.weapon==='death-ray') {
-      if (!t.weaponCharge) {
-        t.aimAngle=t.angle;
-        events.push({type:'weapon-charge',tankId:t.id,weapon:t.weapon,x:t.x,y:t.y});
-      }
-      if (++t.weaponCharge<DEATH_CHARGE) continue;
-      const dx=Math.cos(t.aimAngle),dy=Math.sin(t.aimAngle);
-      const range=Math.hypot(s.width,s.height);
-      const endX=t.x+dx*range,endY=t.y+dy*range;
-      const b={id:'b'+s.nextBullet++,owner:t.id,kind:'death-ray'};
-      events.push({type:'weapon-fired',tankId:t.id,weapon:t.weapon,bulletId:b.id,x:t.x,y:t.y,endX,endY});
-      for (const enemy of s.tanks) {
-        if (!vulnerable(s,enemy,t.id)||enemy.id===t.id) continue;
-        const f=circleHit(t.x,t.y,dx*range,dy*range,enemy.x,enemy.y,TANK_RADIUS);
-        if (f!==null) impacts.push({bullet:b,tankId:enemy.id,x:t.x+dx*range*f,y:t.y+dy*range*f});
-      }
-      resetWeapon(t);
-      continue;
-    }
-    if (t.weapon==='gatling') {
-      if (t.weaponCharge<GATLING_CHARGE) t.weaponCharge++;
-      if (t.weaponCharge<GATLING_CHARGE || t.weaponGap) continue;
-      const spread=((t.weaponAmmo%3)-1)*0.045;
-      shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle+spread,speed:7.5,ttl:90,kind:'gatling'});
-      t.weaponGap=GATLING_GAP;
-      if (--t.weaponAmmo===0) resetWeapon(t);
-      continue;
-    }
-    if (t.weapon==='mine') {
-      if (!pressed) continue;
-      const dx=Math.cos(t.angle),dy=Math.sin(t.angle);
-      // Clamp to the last unobstructed point between the hull and the wall.
-      const hit=wallHit(t.x,t.y,-dx*16,-dy*16,s.walls);
-      const dist=hit?Math.max(0,hit.t*16-0.1):16;
-      const mine={id:'m'+s.nextMine++,owner:t.id,x:t.x-dx*dist,y:t.y-dy*dist,
-        armedAt:s.tick+MINE_ARM,ownerCleared:false};
-      s.mines.push(mine);
-      events.push({type:'mine-placed',mineId:mine.id,tankId:t.id,x:mine.x,y:mine.y,armedAt:mine.armedAt});
-      if (--t.weaponAmmo===0) resetWeapon(t);
-      continue;
-    }
-    if (t.weapon==='frag') {
-      if (!pressed) continue;
-      if (t.fragId===null) {
-        t.fragId=shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:4.5,ttl:FRAG_TTL,kind:'frag'}).id;
-        t.weaponAmmo=0;
-      } else {
-        const b=s.bullets.find(b=>b.id===t.fragId);
-        if (b) {
-          s.bullets=s.bullets.filter(other=>other.id!==b.id);
-          burst(b,s,events,'frag-burst',Math.atan2(b.vy,b.vx),deferred);
-        }
-        resetWeapon(t);
-      }
-      continue;
-    }
-    if (t.cooldown > 0 || s.bullets.filter(b=>b.owner===t.id&&b.kind==='shell').length >= shellLimit) {
-      events.push({type:'shot-blocked', tankId:t.id, reason:t.cooldown>0?'cooldown':'shell-limit'});
-      continue;
-    }
-    shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:shellSpeed,ttl:LIFETIME,kind:'shell'});
-    t.cooldown=COOLDOWN;
-  }
-}
-
 function advanceShell(b, s, events, impacts, deferred) {
   function expire(reason) {
     if (b.kind==='frag') {
       burst(b,s,events,'frag-burst',Math.atan2(b.vy,b.vx),deferred);
       const owner=s.tanks.find(t=>t.id===b.owner);
       if (owner?.fragId===b.id) resetWeapon(owner);
-    } else if (s.profile&&b.kind==='remote') {
+    } else if (b.kind==='remote') {
       const owner=s.tanks.find(t=>t.id===b.owner);
       if (owner?.fragId===b.id) resetClassicWeapon(owner);
     }
@@ -663,8 +516,8 @@ function advanceShell(b, s, events, impacts, deferred) {
     return false;
   }
   if (b.ttl <= 0) return false;
-  let remaining = s.profile?Math.min(1,b.ttl):1;
-  const radius=s.profile&&b.kind==='laser'?0:BULLET_RADIUS;
+  let remaining = Math.min(1,b.ttl);
+  const radius=b.kind==='laser'?0:BULLET_RADIUS;
   // Sweep through the remaining fraction after each bounce; hard cap guarantees
   // bounded work in degenerate geometry.
   for (let i=0;i<8 && remaining>EPS;i++) {
@@ -681,7 +534,7 @@ function advanceShell(b, s, events, impacts, deferred) {
     if (target && (!wall || target.f < wall.t-EPS)) {
       b.x+=dx*target.f; b.y+=dy*target.f;
       impacts.push({bullet:b,tankId:target.t.id,x:b.x,y:b.y});
-      return b.kind==='frag'||s.profile&&b.kind==='remote'?expire('impact'):false;
+      return b.kind==='frag'||b.kind==='remote'?expire('impact'):false;
     }
     if (!wall) {
       b.x+=dx; b.y+=dy;
@@ -690,7 +543,7 @@ function advanceShell(b, s, events, impacts, deferred) {
       break;
     }
     b.x+=dx*wall.t; b.y+=dy*wall.t;
-    if(s.profile&&b.kind==='shrapnel') return expire('wall');
+    if(b.kind==='shrapnel') return expire('wall');
     bounceVelocity(b,wall.normals);
     b.ownerArmed=true;
     events.push({type:'bounce',bulletId:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy});
@@ -700,7 +553,7 @@ function advanceShell(b, s, events, impacts, deferred) {
       return expire('bounce-limit');
     }
   }
-  if(s.profile&&b.kind==='missile') b.age++;
+  if(b.kind==='missile') b.age++;
   b.ttl--;
   return b.ttl>0 || expire('ttl');
 }
@@ -724,11 +577,11 @@ function chooseClassicCrate(rng) {
   return pool.at(-1)?.[0];
 }
 
-function awardPickups(s, events, revised=false, spawn=true) {
+function awardPickups(s, events, spawn=true) {
   if (!s.config.pickups) return;
   const rng = {value:s.rng};
-  const attempt=spawn&&(s.profile ? s.tick>=s.nextPickupAt : s.tick%s.config.pickupInterval===0);
-  if (attempt && s.pickups.length < (s.profile?.crateLimit??4)) {
+  const attempt=spawn&&s.tick>=s.nextPickupAt;
+  if (attempt && s.pickups.length < s.profile.crateLimit) {
     const spots=[];
     for (let y=CELL/2;y<s.height;y+=CELL) for (let x=CELL/2;x<s.width;x+=CELL) {
       if (s.pickups.some(p=>p.x===x&&p.y===y) || s.tanks.some(t=>t.alive&&Math.hypot(t.x-x,t.y-y)<30)) continue;
@@ -736,26 +589,24 @@ function awardPickups(s, events, revised=false, spawn=true) {
     }
     if (spots.length) {
       const p={id:'p'+s.nextPickup++,...spots[Math.floor(next(rng)*spots.length)],
-        type:s.profile?(s.config.classicSolo?CLASSIC_DATA.crates.soloType:chooseClassicCrate(rng))
-          :PICKUP_TYPES[Math.floor(next(rng)*PICKUP_TYPES.length)]};
+        type:s.config.classicSolo?CLASSIC_DATA.crates.soloType:chooseClassicCrate(rng)};
       s.pickups.push(p);
       events.push({type:'pickup-spawn',pickupType:p.type,pickupId:p.id,x:p.x,y:p.y});
     }
   }
   // An attempt at the cap or without a legal position still resets the timer.
-  if (s.profile&&attempt) s.nextPickupAt=s.tick+classicPickupDelay(s,rng,s.profile.tickRate,false);
+  if (attempt) s.nextPickupAt=s.tick+classicPickupDelay(s,rng,s.profile.tickRate,false);
   const blocked=[];
   const blockedPreviously=s.pickupBlocks;
   s.pickups=s.pickups.filter(p=>{
     const contact=(t)=>{
-      if (!revised) return Math.hypot(t.x-p.x,t.y-p.y)<=TANK_RADIUS+8;
       const dx=Math.max(Math.abs(t.x-p.x)-CRATE_HALF_SIZE,0),dy=Math.max(Math.abs(t.y-p.y)-CRATE_HALF_SIZE,0);
       return dx*dx+dy*dy <= (TANK_RADIUS+PICKUP_PADDING)**2;
     };
     const touched=s.tanks.filter(t=>t.alive&&contact(t));
     const candidates=touched.filter(t=>!t.weapon);
     if (!candidates.length) {
-      if (revised) for (const t of touched) {
+      for (const t of touched) {
         blocked.push({tankId:t.id,pickupId:p.id});
         if (!blockedPreviously?.some(b=>b.tankId===t.id&&b.pickupId===p.id)) {
           events.push({type:'pickup-blocked',tankId:t.id,pickupId:p.id,pickupType:p.type,
@@ -769,15 +620,14 @@ function awardPickups(s, events, revised=false, spawn=true) {
     const tied=candidates.filter((_t,i)=>Math.abs(distances[i]-minimum)<=EPS);
     const winner=tied.length===1?tied[0]:tied[Math.floor(next(rng)*tied.length)];
     winner.weapon=p.type;
-    winner.weaponAmmo=p.type==='gatling'?(s.profile?.gatlingAmmo??GATLING_AMMO):p.type==='mine'?(s.profile?.mineAmmo??3):1;
-    const needsPress=Boolean(s.profile)||p.type!=='gatling'&&p.type!=='death-ray';
+    winner.weaponAmmo=p.type==='gatling'?s.profile.gatlingAmmo:p.type==='mine'?s.profile.mineAmmo:1;
     events.push({type:'pickup',tankId:winner.id,pickupId:p.id,pickupType:p.type,x:p.x,y:p.y,
-      ...(revised?{weaponAmmo:winner.weaponAmmo,activation:needsPress?'press':'hold',releaseRequired:needsPress&&winner.fireHeld}:null)});
+      weaponAmmo:winner.weaponAmmo,activation:'press',releaseRequired:winner.fireHeld});
 
     return false;
   });
   s.rng=rng.value;
-  if (revised) s.pickupBlocks=blocked;
+  s.pickupBlocks=blocked;
 }
 
 function advanceClassicMines(s,events,deferred) {
@@ -797,19 +647,6 @@ function advanceClassicMines(s,events,deferred) {
       events.push({type:'mine-trigger',mineId:m.id,tankId:victim.id,x:m.x,y:m.y,detonateAt:m.detonateAt});
     }
     return true;
-  });
-}
-
-function advanceMines(s,events,deferred) {
-  if (s.profile) return advanceClassicMines(s,events,deferred);
-  s.mines=s.mines.filter(m=>{
-    const owner=s.tanks.find(t=>t.id===m.owner);
-    if (!owner.alive||Math.hypot(owner.x-m.x,owner.y-m.y)>TANK_RADIUS+8) m.ownerCleared=true;
-    if (s.tick<m.armedAt) return true;
-    const victim=s.tanks.find(t=>vulnerable(s,t,m.owner)&&(t.id!==m.owner||m.ownerCleared)&&Math.hypot(t.x-m.x,t.y-m.y)<=TANK_RADIUS+6);
-    if (!victim) return true;
-    burst(m,s,events,'mine-burst',0,deferred);
-    return false;
   });
 }
 
@@ -834,16 +671,16 @@ function advanceZone(s, events) {
   s.zone={...zone,halfWidth,halfHeight,outsideTicks};
 }
 
-function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=MAX_SHELLS, withZone=false) {
+export function step(state, actions) {
   if (state.result) return {state,events:[],result:state.result};
   const s={...state,tick:state.tick+1,bullets:state.bullets.map(b=>({...b})),pickups:[...state.pickups],
     mines:state.mines.map(m=>({...m}))};
   const events=[], impacts=[], deferred=[];
   moveTanks(s,actions,events);
-  if (s.profile) guideClassicMissiles(s,actions);
-  fireShells(s,actions,events,impacts,deferred,shellSpeed,shellLimit);
+  guideClassicMissiles(s,actions);
+  fireClassicWeapons(s,actions,events,impacts,deferred);
   s.bullets=s.bullets.filter(b=>advanceShell(b,s,events,impacts,deferred));
-  advanceMines(s,events,deferred);
+  advanceClassicMines(s,events,deferred);
   for (const sp of deferred) shell(s,events,sp);
   // All impacts are collected against the same pre-damage tank poses.
   for (const impact of impacts) {
@@ -854,21 +691,19 @@ function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=M
       events.push({type:'destroyed',tankId:t.id,bulletId:b.id,ownerId:b.owner,kind:b.kind});
     }
   }
-  if (withZone) advanceZone(s,events);
+  advanceZone(s,events);
   const alive=s.tanks.filter(t=>t.alive);
   const survivorTeam=alive.length && s.teams && alive.every(t=>s.teams[t.id]===s.teams[alive[0].id])
     ?s.teams[alive[0].id]:null;
   if (alive.length===0) s.result={winner:null,reason:s.tanks.length===2?'double-knockout':'mutual-knockout'};
   else if (alive.length===1 || survivorTeam!==null) {
-    if (withZone) {
-      for(const survivor of alive) survivor.invulnerable=true;
-      const exposed=alive.filter(t=>s.zone.outsideTicks[t.id]!==0);
-      if (exposed.length) {
-        s.zone={...s.zone,outsideTicks:{...s.zone.outsideTicks,...Object.fromEntries(exposed.map(t=>[t.id,0]))}};
-      }
+    for(const survivor of alive) survivor.invulnerable=true;
+    const exposed=alive.filter(t=>s.zone.outsideTicks[t.id]!==0);
+    if (exposed.length) {
+      s.zone={...s.zone,outsideTicks:{...s.zone.outsideTicks,...Object.fromEntries(exposed.map(t=>[t.id,0]))}};
     }
     if (s.settleUntil===null) {
-      s.settleUntil=s.tick+(s.profile?.settleTicks??SETTLE);
+      s.settleUntil=s.tick+s.profile.settleTicks;
       events.push(survivorTeam!==null
         ?{type:'last-team-pending',teamId:survivorTeam,tankIds:alive.map(t=>t.id),settleUntil:s.settleUntil}
         :{type:'last-tank-pending',tankId:alive[0].id,settleUntil:s.settleUntil});
@@ -876,24 +711,18 @@ function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=M
     if (s.tick>=s.settleUntil) s.result=survivorTeam!==null
       ?{winner:null,winnerTeam:survivorTeam,reason:'last-team'}
       :{winner:alive[0].id,reason:'last-tank'};
-    else if (revised) awardPickups(s,events,true,false);
+    else awardPickups(s,events,false);
   } else {
-    awardPickups(s,events,revised);
+    awardPickups(s,events);
     if (s.tick>=s.config.maxTicks) s.result={winner:null,reason:'timeout'};
   }
   // The guide previews only geometry and stops earlier than a real shot. Freeze
   // nested geometry because the generic observation copies tank records shallowly.
   for (const t of s.tanks) t.aimGuide=t.alive&&t.weapon==='laser'
-    ? Object.freeze(traceLaser(s,t,LASER_GUIDE,false).path.map(p=>Object.freeze(p))) : null;
+    ? Object.freeze(laserGuide(s,t,s.profile.laserGuide).map(p=>Object.freeze(p))) : null;
   if (s.result) {
-    if (revised) s.pickupBlocks=[];
+    s.pickupBlocks=[];
     events.push({type:'ended',...s.result});
   }
   return {state:s,events,result:s.result};
 }
-
-export const step = (state, actions) => stepRound(state, actions, false);
-export const stepV3 = (state, actions) => stepRound(state, actions, true);
-export const stepV4 = (state, actions) => stepRound(state, actions, true, state.config.shellSpeed, MAX_SHELLS_V4);
-export const stepV6 = (state, actions) => stepRound(state, actions, true, state.config.shellSpeed, MAX_SHELLS_V4, true);
-export const stepV8 = (state, actions) => stepRound(state, actions, true, state.profile.shellSpeed, state.profile.shellLimit, true);

@@ -24,7 +24,6 @@ let markerSource = null;
 let markerButtons = new Map();
 let frameIndex = 0;
 let playback = null;
-let requestedMode = null;
 let starting = false;
 const teamIds = ['1', '2', '3', '4'];
 const teamLetter = (id) => 'ABCD'[teamIds.indexOf(id)] ?? id;
@@ -66,7 +65,7 @@ let pointerTarget = null;
 let pointerPressed = false;
 const neutral = { throttle: 0, turn: 0, fire: false };
 function tickOf(record) {
-  return record.state?.tick ?? record.tick ?? 0;
+  return record?.state?.tick ?? 0;
 }
 
 function appendTick(match, record) {
@@ -173,8 +172,8 @@ function renderKillMarkers() {
       const item = document.createElement('li');
       const button = document.createElement('button');
       button.type = 'button';
-      const ownerId = event.ownerId ?? event.owner;
-      const victim = playerLabel(replay.manifest, event.tankId ?? event.targetId ?? '？');
+      const ownerId = event.ownerId;
+      const victim = playerLabel(replay.manifest, event.tankId ?? '？');
       const owner = ownerId == null ? '？' : playerLabel(replay.manifest, ownerId);
       button.textContent = `#${row.tick} ${owner} → ${victim}`;
       button.addEventListener('click', () => { stopPlayback(); seek(row.index, row); });
@@ -215,7 +214,7 @@ function effectsAt(frames, index, manifestRate) {
   const rate = recordedTickRate(manifestRate);
   for (let i = index; i >= 0 && now - tickOf(frames[i]) < EFFECT_MAX_AGE_SECONDS * rate; i--) {
     if (frames[i].state?.round !== round) break;
-    // Visual effects use the legacy 60 Hz scale, independently of simulation rate.
+    // Visual effects use 1/60-second units, independently of simulation rate.
     const age = (now - tickOf(frames[i])) * EFFECT_BASE_TICK_RATE / rate;
     for (const event of frames[i].events) {
       if (age < 10 || event.type === 'pickup' || event.type === 'pickup-blocked') effects.push({ event, age });
@@ -236,7 +235,7 @@ function setText(node, text) {
 }
 
 function teamsFor(manifest, state) {
-  return state?.teams ?? manifest?.config?.teams ?? manifest?.teams ?? {};
+  return state?.teams ?? manifest?.config?.teams ?? {};
 }
 
 function renderScoreboard(match, state, renderer, kills = {}) {
@@ -567,7 +566,7 @@ function reduceLive(record) {
     inputEpoch++;
     resetInput();
     live = blank();
-    live.manifest = { ...record.manifest, mode: record.manifest?.mode ?? requestedMode };
+    live.manifest = record.manifest;
     appendTick(live, record);
     if (!replay) setError('');
   } else if (record.type === 'tick' && record.state && live.manifest && (!live.done || live.result?.reason === 'stopped')) {
@@ -812,7 +811,7 @@ async function loadMatchOptions() {
       else el[option.id].value = String(value);
     }
   } catch {
-    // Keep usable placeholders with older or temporarily unreachable servers.
+    // Keep usable settings while the local server is temporarily unreachable.
   }
 }
 void loadMatchOptions();
@@ -861,7 +860,6 @@ el['match-form'].addEventListener('submit', async (event) => {
   selectedKill = null;
   menuVisible = false;
   starting = true;
-  requestedMode = mode;
   setError('');
   setStatus('正在启动对局…');
   queueDraw(true);
@@ -887,12 +885,12 @@ el['match-form'].addEventListener('submit', async (event) => {
 });
 
 function rendererFor(manifest) {
-  const game = manifest?.game ?? manifest?.gameId;
+  const game = manifest?.game;
   return Object.hasOwn(renderers, game) ? renderers[game] : null;
 }
 
 function validateFrame(record, manifest) {
-  return Number.isSafeInteger(tickOf(record)) && tickOf(record) >= 0
+  return Number.isSafeInteger(record.state?.tick) && record.state.tick >= 0
     && rendererFor(manifest)?.validate(record.state);
 }
 
@@ -911,7 +909,9 @@ async function readReplay(file, stillCurrent) {
     if (candidate.done) throw new Error(`第 ${number} 行在结束记录之后。`);
     if (record.type === 'start' && !candidate.manifest) {
       candidate.manifest = record.manifest;
-      if (!rendererFor(candidate.manifest)) throw new Error('这个游戏还没有可用的画面渲染器。');
+      const renderer = rendererFor(candidate.manifest);
+      if (!renderer) throw new Error('这个游戏还没有可用的画面渲染器。');
+      if (!renderer.supportsReplay(candidate.manifest)) throw new Error('此回放的规则版本或模拟频率不受支持。');
       if (!validateFrame(record, candidate.manifest)) throw new Error('开局帧结构不完整。');
       appendTick(candidate, record);
     } else if (record.type === 'tick' && candidate.manifest && validateFrame(record, candidate.manifest)

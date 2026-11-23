@@ -1,5 +1,7 @@
 // Observation-only receding-horizon strategy for Arena Agent Tank Trouble.
-const CELL=64, R=12, MOVE=2.2, TURN=0.06, HORIZON=14;
+const CELL=64, R=12, HORIZON=14;
+// Reference distance for the route-time heuristic, not the actual movement rate.
+const ROUTE_REFERENCE_STEP=2.2;
 const EPS=1e-6;
 const TURN_OPTIONS=[0,-1,1];
 const MOVES= [0,1,-1].flatMap(throttle=>TURN_OPTIONS.map(turn=>({throttle,turn,fire:false})));
@@ -8,13 +10,13 @@ const d2=(a,b)=>(a.x-b.x)**2+(a.y-b.y)**2;
 const wrap=(a)=>Math.atan2(Math.sin(a),Math.cos(a));
 const heading=(a,b)=>Math.atan2(b.y-a.y,b.x-a.x);
 const clamp=(n,min,max)=>Math.max(min,Math.min(max,n));
-const legacy={f:MOVE,b:MOVE,turn:TURN,ticks:n=>n,routeTicks:n=>n};
-const positive=(n,fallback)=>Number.isFinite(n)&&n>0?n:fallback;
+const validProfile=profile=>['tickRate','forwardSpeed','reverseSpeed','turnSpeed',
+  'shellLimit','shellSpeed','gatlingSpeed','missileSpeed','laserSpeed','laserTtl','remoteTurn']
+  .every(key=>Number.isFinite(profile?.[key])&&profile[key]>0);
 function kinetics(profile) {
-  if(!profile) return legacy;
-  const rate=positive(profile.tickRate,60), f=positive(profile.forwardSpeed,MOVE);
-  return {f,b:positive(profile.reverseSpeed,MOVE),turn:positive(profile.turnSpeed,TURN),classic:true,
-    ticks:n=>Math.max(1,Math.round(n*rate/60)),routeTicks:n=>Math.max(1,Math.ceil(n*MOVE/f))};
+  const {tickRate,forwardSpeed:f,reverseSpeed:b,turnSpeed:turn}=profile;
+  return {f,b,turn,ticks:n=>Math.max(1,Math.round(n*tickRate/60)),
+    routeTicks:n=>Math.max(1,Math.ceil(n*ROUTE_REFERENCE_STEP/f))};
 }
 const stepDistance=(throttle,physics)=>throttle*(throttle<0?physics.b:physics.f);
 
@@ -136,8 +138,8 @@ function hazardTrack(me,projectiles,walls,physics) {
   for (const b of selected) {
     const horizon=physics.ticks(HORIZON), life=Math.min(horizon,b.ttl??horizon);
     if(!Number.isFinite(b.vx+b.vy)||life<=0) continue;
-    const radius=physics.classic&&b.kind==='laser'?0:3;
-    const path=segments(b.x,b.y,b.vx,b.vy,life,walls,radius,physics.classic&&b.kind==='shrapnel'?0:3);
+    const radius=b.kind==='laser'?0:3;
+    const path=segments(b.x,b.y,b.vx,b.vy,life,walls,radius,b.kind==='shrapnel'?0:3);
     let t=0;
     for (const s of path) {
       if(b.owner!==me.id||b.ownerArmed||s.bounced) tracks.push({...s,start:t});
@@ -288,7 +290,7 @@ export function makePolicy() {
   let lockAim=null,aimStarted=null,navUntil=0;
   let routeCache=null,routeCell=-1;
   return obs=>{
-    if (!Array.isArray(obs?.tanks)||!Array.isArray(obs.walls)||!Array.isArray(obs.bullets)) return neutral();
+    if (!Array.isArray(obs?.tanks)||!Array.isArray(obs.walls)||!Array.isArray(obs.bullets)||!validProfile(obs.profile)) return neutral();
     const me=obs.tanks.find(t=>t.id===obs.playerId&&t.alive);
     if(!me||obs.phase==='intermission') return neutral();
     if(!map||round!==(obs.round??1)) {
@@ -301,8 +303,8 @@ export function makePolicy() {
     const enemies=obs.tanks.filter(t=>t.alive&&t.id!==me.id).sort((a,b)=>d2(me,a)-d2(me,b));
     const nearbyEnemies=enemies.filter(t=>d2(me,t)<500**2).slice(0,4);
     const obstacles=nearWalls(me,map.walls,60);
-    const ammo=obs.bullets.reduce((n,b)=>n+Number(b.owner===me.id&&(b.kind==='shell'||b.kind===undefined)),0);
-    const armed=ammo<(profile?.shellLimit??obs.shellLimit??5);
+    const ammo=obs.bullets.reduce((n,b)=>n+Number(b.owner===me.id&&b.kind==='shell'),0);
+    const armed=ammo<profile.shellLimit;
     const cell=map.index(me);
     if(routeCell!==cell) {routeCache=bfs(map,cell);routeCell=cell;}
     const {costs,next}=routeCache;
@@ -359,16 +361,14 @@ export function makePolicy() {
     }
     let preferred=route,navigating=hasRoute;
     const weapon=me.weapon;
-    const shellSpeed=profile?.shellSpeed??obs.shellSpeed??6;
-    const shotSpeed=!profile&&weapon==='frag'?4.5:weapon==='gatling'?(profile?.gatlingSpeed??7.5)
-      :['frag','missile','remote'].includes(weapon)?(profile?.missileSpeed??shellSpeed):shellSpeed;
-    const laserRange=profile?positive(profile.laserSpeed*profile.laserTtl,11.2*CELL):576;
-    const ready=weapon?!(weapon==='gatling'&&(me.weaponGap>0||(profile&&me.weaponAmmo===0))):armed&&(me.cooldown??0)<=1;
+    const shotSpeed=weapon==='gatling'?profile.gatlingSpeed
+      :['frag','missile','remote'].includes(weapon)?profile.missileSpeed:profile.shellSpeed;
+    const laserRange=profile.laserSpeed*profile.laserTtl;
+    const ready=weapon?!(weapon==='gatling'&&(me.weaponGap>0||me.weaponAmmo===0)):armed;
     const canUse=ready&&weapon!=='mine'&&!(weapon==='frag'&&me.fragId);
     if(!zonePressure&&canUse&&nearbyEnemies.length&&tick>=navUntil) {
       const beam=weapon==='laser'||weapon==='death-ray';
-      const press=profile||weapon==='laser'||weapon==='frag';
-      const canPress=!press||!me.fireHeld;
+      const canPress=!me.fireHeld;
       const directRange=beam?(weapon==='laser'?laserRange:576):physics.ticks(58);
       const currentShot=shot(me,me.angle,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange);
       const immediatelyUseful=currentShot&&currentShot.hit!==me.id&&currentShot.travel<=(beam?12:physics.ticks(12));
@@ -404,8 +404,7 @@ export function makePolicy() {
         } else aimStarted=null;
       }
     } else {lockAim=null;aimStarted=null;}
-    if(!profile&&!zonePressure&&weapon==='death-ray'&&me.weaponCharge>0&&enemies.length) {preferred={...neutral(),fire:true};navigating=false;}
-    if(profile&&weapon==='gatling'&&me.weaponCharge>0&&(me.weaponAmmo??1)>0&&!zonePressure) preferred={...preferred,fire:true};
+    if(weapon==='gatling'&&me.weaponCharge>0&&(me.weaponAmmo??1)>0&&!zonePressure) preferred={...preferred,fire:true};
     if(!zonePressure&&weapon==='frag'&&me.fragId&&!me.fireHeld) {
       const bomb=obs.bullets.find(b=>b.id===me.fragId);
       if(bomb&&d2(me,bomb)>75**2&&enemies.some(e=>d2(e,bomb)<70**2)) preferred.fire=true;
@@ -430,15 +429,15 @@ export function makePolicy() {
         preferred={...candidate};
       }
     }
-    if(profile&&weapon==='remote'&&me.fragId) {
+    if(weapon==='remote'&&me.fragId) {
       const missile=obs.bullets.find(b=>b.id===me.fragId);
       if(missile&&nearest) {
         const error=wrap(heading(missile,nearest)-Math.atan2(missile.vy,missile.vx));
-        preferred={throttle:0,turn:Math.abs(error)>positive(profile.remoteTurn,physics.turn)/2?Math.sign(error):0,fire:false};
+        preferred={throttle:0,turn:Math.abs(error)>profile.remoteTurn/2?Math.sign(error):0,fire:false};
         navigating=false;
       }
     }
-    if(profile&&weapon==='death-ray'&&me.weaponCharge>0) {preferred=neutral();navigating=false;}
+    if(weapon==='death-ray'&&me.weaponCharge>0) {preferred=neutral();navigating=false;}
     oldPose={x:me.x,y:me.y,angle:me.angle,throttle:preferred.throttle,turn:preferred.turn,navigating};
     return preferred;
   };

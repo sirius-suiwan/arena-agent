@@ -1,7 +1,7 @@
 import {parseArgs} from 'node:util';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {game,gameV1,gameV2,gameV3,gameV4,gameV5,gameV6,gameV7,gameV8_25,gameV8_30,gameV8_60} from '../../games/tank-trouble/adapter/index.js';
+import {game,gamesByRate,gameForRate} from '../../games/tank-trouble/adapter/index.js';
 import {recorder,verifyReplay} from '../../replay/index.js';
 import {makeMatch,playersForMode,seatIds} from './match-options.js';
 import {loadBotRegistry} from './bot-registry.js';
@@ -9,9 +9,7 @@ import {serve} from './serve.js';
 import {applyTankOptions} from './tank-options.js';
 
 const root = fileURLToPath(new URL('../../',import.meta.url));
-const profiles=new Map([gameV8_25,gameV8_30,gameV8_60].map(g=>[g.tickRate,g]));
-const selectGame=rate=>profiles.get(rate);
-const registry = Object.freeze(Object.fromEntries([gameV1,gameV2,gameV3,gameV4,gameV5,gameV6,gameV7,...profiles.values()].map(g=>[g.id+'@'+g.version,g])));
+const registry = Object.freeze(Object.fromEntries(Object.values(gamesByRate).map(g=>[g.id+'@'+g.version,g])));
 const [command,...args] = process.argv.slice(2);
 const seatFlags=prefix=>Object.fromEntries(seatIds.map(id=>[prefix+id.toLowerCase(),{type:'string'}]));
 
@@ -41,7 +39,7 @@ try {
     overrides.friendlyFire=values['friendly-fire']==='on';
   }
   const {simulationRate=game.tickRate,...config}=applyTankOptions({},overrides);
-  const selectedGame=selectGame(simulationRate);
+  const selectedGame=gameForRate(simulationRate);
   if (values['score-to-win']!==undefined) config.scoreToWin=integer(values['score-to-win']);
   if (values.teams!==undefined && command!=='run') throw new Error('--teams is supported by run; use the custom lobby for live teams');
   if (values['shell-speed']!==undefined) {
@@ -79,7 +77,7 @@ try {
     console.log(JSON.stringify(await verifyReplay(positionals[0],registry)));
   } else if (command === 'serve') {
     if (positionals.length) throw new Error('serve does not accept positional arguments');
-    await serve({game:selectedGame,selectGame,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
+    await serve({game:selectedGame,selectGame:gameForRate,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
   } else if (!command || command === 'help') {
     console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl> | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <open|classic|dense> --friendly-fire <on|off>\nrun only: --teams \'{"A":"1","B":"2"}\'');
   } else {

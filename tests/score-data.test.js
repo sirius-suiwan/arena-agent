@@ -23,9 +23,8 @@ test('friendly-fire eliminations never count in the opposing kill tally',()=>{
   ],{A:'1',B:'1',C:'2'}),{A:1,B:0,C:0});
 });
 
-test('ammunition meter counts only live normal shells and handles older games',()=>{
+test('ammunition meter counts only live normal shells',()=>{
   const bullets=[{owner:'A',kind:'shell'},{owner:'A',kind:'frag'},{owner:'B',kind:'shell'}];
   assert.deepEqual(availableShellSlots({shellLimit:10,bullets},'A'),{limit:10,available:9});
-  assert.deepEqual(availableShellSlots({bullets:[{owner:'A'}]},'A'),{limit:5,available:4});
   assert.deepEqual(availableShellSlots({shellLimit:10,bullets:bullets.slice(1)},'A'),{limit:10,available:10});
 });

@@ -3,8 +3,6 @@
 // See LICENSE for the original notice and limitations. This is not Sublab's Laika.
 const TAU = 2 * Math.PI;
 const CELL = 64;
-const TURN = 0.06;
-const MOVE = 2.2;
 const RADIUS = 12;
 const EPS = 1e-5;
 const LOOKAHEAD = 16;
@@ -13,14 +11,12 @@ const deltaAngle = (target, now) => ((target-now + Math.PI + TAU) % TAU) - Math.
 const sqDist = (a,b) => (a.x-b.x)**2 + (a.y-b.y)**2;
 const clamp = (x,lo,hi) => Math.min(hi,Math.max(lo,x));
 const dirs = [[-1,0],[0,-1],[1,0],[0,1]];
-const pressWeapon = (w) => w==='laser'||w==='frag'||w==='mine';
-const legacy={f:MOVE,b:MOVE,turn:TURN,ticks:n=>n,classic:false};
-const positive=(n,fallback)=>Number.isFinite(n)&&n>0?n:fallback;
+const validProfile=profile=>['tickRate','forwardSpeed','reverseSpeed','turnSpeed',
+  'shellLimit','shellSpeed','gatlingSpeed','missileSpeed','laserSpeed','laserTtl','remoteTurn']
+  .every(key=>Number.isFinite(profile?.[key])&&profile[key]>0);
 function kinetics(profile) {
-  if(!profile) return legacy;
-  const rate=positive(profile.tickRate,60);
-  return {f:positive(profile.forwardSpeed,MOVE),b:positive(profile.reverseSpeed,MOVE),
-    turn:positive(profile.turnSpeed,TURN),ticks:n=>Math.max(1,Math.round(n*rate/60)),classic:true};
+  const {tickRate,forwardSpeed:f,reverseSpeed:b,turnSpeed:turn}=profile;
+  return {f,b,turn,ticks:n=>Math.max(1,Math.round(n*tickRate/60))};
 }
 const stepDistance=(throttle,physics)=>throttle*(throttle<0?physics.b:physics.f);
 
@@ -127,10 +123,10 @@ function dangerSamples(me,bullets,walls,physics) {
     if (speed<EPS) continue;
     for (let i=0;i<horizon&&i<(b.ttl??horizon);i++) {
       let dx=vx/speed,dy=vy/speed;
-      const radius=physics.classic&&b.kind==='laser'?0:3;
+      const radius=b.kind==='laser'?0:3;
       const w=wallCross(p,dx,dy,speed,walls,radius);
       if(w.flipX||w.flipY) {
-        if(physics.classic&&b.kind==='shrapnel') break;
+        if(b.kind==='shrapnel') break;
         p={x:p.x+dx*w.distance,y:p.y+dy*w.distance};
         if(w.flipX) vx=-vx;
         if(w.flipY) vy=-vy;
@@ -204,28 +200,27 @@ function chooseAim(me,enemies,walls,range,tick,physics) {
 export function createLaikaPolicy() {
   let round=-1,board=null,prior=null,blocked=0,unwedge=0,incumbent=null,aggression=0.5;
   return (obs) => {
-    if (!Array.isArray(obs?.tanks)||!Array.isArray(obs.walls)||!Array.isArray(obs.bullets)) return {...NEUTRAL};
+    if (!Array.isArray(obs?.tanks)||!Array.isArray(obs.walls)||!Array.isArray(obs.bullets)||!validProfile(obs.profile)) return {...NEUTRAL};
     if (obs.round!==round||!board) {
       round=obs.round;board=newBoard(obs);prior=null;blocked=0;unwedge=0;incumbent=null;aggression=0.5;
     }
     const tick=obs.roundTick??obs.tick??0;
     const me=obs.tanks.find(t=>t.id===obs.playerId&&t.alive);
     if (!me||obs.phase==='intermission') return {...NEUTRAL};
-    const physics=kinetics(obs.profile);
+    const profile=obs.profile, physics=kinetics(profile);
     const enemies=obs.tanks.filter(t=>t.alive&&t.id!==me.id);
     if(prior?.throttle) blocked=sqDist(prior,me)<0.2?blocked+1:0;
     else blocked=0;
     if(blocked>=physics.ticks(4)){unwedge=physics.ticks(10);blocked=0;}
     const home=board.cell(me),paths=routes(board,home);
-    const liveShells=obs.bullets.filter(b=>b.owner===me.id&&(b.kind===undefined||b.kind==='shell')).length;
-    const ammo=liveShells<(obs.profile?.shellLimit??obs.shellLimit??5);
+    const liveShells=obs.bullets.filter(b=>b.owner===me.id&&b.kind==='shell').length;
+    const ammo=liveShells<profile.shellLimit;
     const ordered=enemies.toSorted((a,b)=>paths.d[board.cell(a)]-paths.d[board.cell(b)]||sqDist(a,me)-sqDist(b,me));
     const target=ordered[0];
-    const profile=obs.profile, shellSpeed=positive(profile?.shellSpeed,obs.shellSpeed??6);
-    const classicShotSpeed=me.weapon==='gatling'?positive(profile?.gatlingSpeed,shellSpeed)
-      :['frag','missile','remote'].includes(me.weapon)?positive(profile?.missileSpeed,shellSpeed):shellSpeed;
-    const classicRange=me.weapon==='laser'?positive(profile?.laserSpeed*profile?.laserTtl,11.2*CELL):classicShotSpeed*physics.ticks(106);
-    const range=me.weapon==='death-ray'?Math.hypot(obs.width,obs.height):physics.classic?classicRange:me.weapon==='laser'?576:550;
+    const shotSpeed=me.weapon==='gatling'?profile.gatlingSpeed
+      :['frag','missile','remote'].includes(me.weapon)?profile.missileSpeed:profile.shellSpeed;
+    const range=me.weapon==='death-ray'?Math.hypot(obs.width,obs.height)
+      :me.weapon==='laser'?profile.laserSpeed*profile.laserTtl:shotSpeed*physics.ticks(106);
     const bank=target&&(ammo||me.weapon)?chooseAim(me,ordered,board.walls,range,tick,physics):null;
 
     // Policy port: candidate scores compete each tick, with incumbent decay.
@@ -267,12 +262,11 @@ export function createLaikaPolicy() {
         const direction=me.angle+turn*physics.turn;
         const shot=shotTrace(me,direction,ordered,board.walls,range,{
           radius:me.weapon==='laser'||me.weapon==='death-ray'?0:3,through:me.weapon==='death-ray'});
-        action.fire=Boolean(shot.target&&!shot.self)&&(!pressWeapon(me.weapon)||!me.fireHeld);
+        action.fire=Boolean(shot.target&&!shot.self)&&!me.fireHeld;
         if(action.fire&&!prior?.fire) aggression=Math.max(0,aggression-0.2);
       }
     } else aggression=Math.min(0.5,aggression+0.01);
-    if(!physics.classic&&me.weapon==='death-ray'&&me.weaponCharge>0&&target) action={...NEUTRAL,fire:true};
-    const sustainingGatling=physics.classic&&me.weapon==='gatling'&&me.weaponCharge>0&&(me.weaponAmmo??1)>0;
+    const sustainingGatling=me.weapon==='gatling'&&me.weaponCharge>0&&(me.weaponAmmo??1)>0;
     if(sustainingGatling) action.fire=true;
     if(me.weapon==='frag'&&me.fragId) {
       const b=obs.bullets.find(b=>b.id===me.fragId);
@@ -291,16 +285,16 @@ export function createLaikaPolicy() {
       const dodge=safestMotion(me,board.walls,samples,goal?.point,physics);
       action={throttle:dodge.throttle,turn:dodge.turn,fire:false};
     }
-    if(physics.classic&&action.fire&&me.fireHeld&&!sustainingGatling) action.fire=false;
-    if(physics.classic&&me.weapon==='gatling'&&me.weaponAmmo===0) action.fire=false;
-    if(physics.classic&&me.weapon==='remote'&&me.fragId) {
+    if(action.fire&&me.fireHeld&&!sustainingGatling) action.fire=false;
+    if(me.weapon==='gatling'&&me.weaponAmmo===0) action.fire=false;
+    if(me.weapon==='remote'&&me.fragId) {
       const missile=obs.bullets.find(b=>b.id===me.fragId);
       if(missile&&target) {
         const diff=deltaAngle(Math.atan2(target.y-missile.y,target.x-missile.x),Math.atan2(missile.vy,missile.vx));
-        action={...NEUTRAL,turn:Math.abs(diff)>positive(profile.remoteTurn,physics.turn)/2?Math.sign(diff):0};
+        action={...NEUTRAL,turn:Math.abs(diff)>profile.remoteTurn/2?Math.sign(diff):0};
       }
     }
-    if(physics.classic&&me.weapon==='death-ray'&&me.weaponCharge>0) action={...NEUTRAL};
+    if(me.weapon==='death-ray'&&me.weaponCharge>0) action={...NEUTRAL};
     prior={x:me.x,y:me.y,...action};
     return action;
   };

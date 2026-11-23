@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {gameV7 as game,gameV6,classicRoundGameV7 as roundGame,validateTeams} from '../adapter/index.js';
+import {gameForRate,validateTeams} from '../adapter/index.js';
 
+import {init,step} from './classic.js';
+const game=gameForRate(60);
+const roundGame={init:input=>init(input,60),step,observe:(...args)=>game.observe(...args)};
 const players=['A','B','D'], teams={A:'1',B:'1',D:'4'};
 const neutral={throttle:0,turn:0,fire:false};
 const fire={...neutral,fire:true};
@@ -13,7 +16,7 @@ const shot=(owner,x,vx,kind='shell')=>({id:'shot',owner,kind,x,y:80,vx,vy:0,ttl:
 const tank=(s,id)=>s.tanks.find(t=>t.id===id);
 const weapon=(s,id,props)=>({...s,tanks:s.tanks.map(t=>t.id===id?{...t,...props}:t)});
 
-test('v7 validates complete sparse, detached team assignments and toggle types',()=>{
+test('validates complete sparse, detached team assignments and toggle types',()=>{
   assert.equal(validateTeams(undefined,players),undefined);
   const labels=validateTeams(teams,players);
   labels.A='2';
@@ -25,7 +28,7 @@ test('v7 validates complete sparse, detached team assignments and toggle types',
   assert.throws(()=>roundGame.init({seed:1,players,config:{friendlyFire:'false'}}),/friendlyFire/);
   assert.throws(()=>roundGame.init({seed:1,players,config:{mazeComplexity:'constructor'}}),/mazeComplexity/);
   const s=roundGame.init({seed:1,players,config:{teams}});
-  const obs=roundGame.observe(s,'A');
+  const obs=game.observe(game.init({seed:1,players,config:{teams}}),'A');
   assert.deepEqual(obs.teams,teams);
   assert.equal(obs.friendlyFire,false);
   obs.teams.A='2';
@@ -34,7 +37,7 @@ test('v7 validates complete sparse, detached team assignments and toggle types',
   assert(!Object.hasOwn(roundGame.init({seed:1,players}).config,'teams'));
 });
 
-test('all v7 maze densities are seeded and connected; classic matches v6 geometry',()=>{
+test('all maze densities are seeded and connected',()=>{
   const input={seed:91,players};
   const make=mazeComplexity=>roundGame.init({...input,config:{mazeComplexity}});
   for(const mode of ['open','classic','dense']){
@@ -58,7 +61,6 @@ test('all v7 maze densities are seeded and connected; classic matches v6 geometr
   }
   assert(make('open').walls.length<make('classic').walls.length);
   assert(make('classic').walls.length<make('dense').walls.length);
-  assert.deepEqual(make('classic').walls,gameV6.init(input).walls);
 });
 
 test('teammates do not block ordinary shells, fragments or lasers with friendly fire disabled',()=>{
@@ -69,7 +71,8 @@ test('teammates do not block ordinary shells, fragments or lasers with friendly 
     assert.equal(tank(r.state,'D').alive,false);
   }
   const s=weapon(setup(),'A',{weapon:'laser',weaponAmmo:1});
-  const r=roundGame.step(s,{A:fire});
+  let r=roundGame.step(s,{A:fire});
+  for(let i=0;i<2&&!r.events.some(e=>e.type==='hit');i++) r=roundGame.step(r.state,{});
   assert.equal(tank(r.state,'B').alive,true);
   assert.equal(tank(r.state,'D').alive,false);
   assert.equal(r.events.find(e=>e.type==='hit')?.kind,'laser');
@@ -88,18 +91,18 @@ test('friendly fire enables teammate hits, while self-damage remains possible wi
 });
 
 test('enemy beams can hit through teammates and allied tanks cannot trigger / be hurt by mines',()=>{
-  const deathray=weapon(setup(),'A',{weapon:'death-ray',weaponAmmo:1,weaponCharge:89,aimAngle:0});
+  const deathray=weapon(setup(),'A',{weapon:'death-ray',weaponAmmo:1,weaponCharge:35,aimAngle:0});
   const beam=roundGame.step(deathray,{A:fire});
   assert.equal(tank(beam.state,'B').alive,true);
   assert.equal(tank(beam.state,'D').alive,false);
-  const setupMine=(config={},positions)=>({...setup(config,positions),mines:[{id:'mine',owner:'A',x:105,y:80,armedAt:1,ownerCleared:true}]});
+  const setupMine=(config={},positions)=>({...setup(config,positions),mines:[{id:'mine',owner:'A',x:105,y:80,armedAt:1,ownerCleared:true,triggeredAt:null,detonateAt:null}]});
   const off=roundGame.step(setupMine(),{});
   assert.equal(off.state.mines.length,1);
-  assert(!off.events.some(e=>e.type==='mine-burst'));
+  assert(!off.events.some(e=>e.type==='mine-trigger'));
   const on=roundGame.step(setupMine({friendlyFire:true}),{});
-  assert(on.events.some(e=>e.type==='mine-burst'));
+  assert(on.events.some(e=>e.type==='mine-trigger'));
   const foe=roundGame.step(setupMine({},[60,90,120]),{});
-  assert(foe.events.some(e=>e.type==='mine-burst'));
+  assert(foe.events.some(e=>e.type==='mine-trigger'));
 });
 
 test('surviving teammates become invulnerable simultaneously and win after standard settlement',()=>{

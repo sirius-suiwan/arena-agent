@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {makePolicy} from '../bots/gpt-dots/policy.js';
 import {game} from '../games/tank-trouble/adapter/index.js';
+import {classicProfile} from '../games/tank-trouble/engine/profile.js';
 
 const A={id:'A',x:60,y:60,angle:0,alive:true,weapon:null};
 const B={id:'B',x:165,y:60,angle:Math.PI,alive:true,weapon:null};
 const observation=(overrides={})=>({tick:42,round:1,roundTick:42,phase:'playing',
   width:256,height:256,playerId:'A',walls:[],tanks:[A,B],bullets:[],pickups:[],mines:[],shellLimit:10,
-  shellSpeed:5.2,...overrides});
+  profile:classicProfile(25),shellSpeed:144/25,...overrides});
 
 test('GPT-dots takes an unobstructed shot and obeys laser press semantics',()=>{
   assert.deepEqual(makePolicy()(observation()),{throttle:0,turn:0,fire:true});
@@ -49,7 +50,7 @@ test('GPT-dots engine observation stream stays deterministic and legal with eigh
 });
 
 test('GPT-dots process speaks JSONL, answers the exact host tick and announces its registry name',()=>{
-  const m=[{type:'start',protocol:1,game:'tank-trouble',playerId:'A',rulesVersion:'5'},
+  const m=[{type:'start',protocol:1,game:'tank-trouble',playerId:'A',rulesVersion:game.version},
     {type:'observe',tick:123,observation:observation()}];
   const p=spawnSync(process.execPath,['bots/gpt-dots/bot.js'],{
     input:m.map(JSON.stringify).join('\n')+'\n',encoding:'utf8',timeout:2000});
@@ -75,9 +76,10 @@ test('GPT-dots rounds a wall tip and collects the crate that previously kept it 
   assert.equal(s.pickups.some(p=>p.id==='corner'),false);
 });
 
-test('GPT-dots advances for a reachable crate while the primary cannon is cooling down',()=>{
+test('GPT-dots advances for a reachable crate at its ordinary shell cap',()=>{
   const state=observation({
-    tanks:[{...A,x:32,y:32,cooldown:18},{...B,x:165,y:32}],
+    tanks:[{...A,x:32,y:32},{...B,x:165,y:32}],
+    bullets:Array.from({length:10},(_,i)=>({id:'live'+i,owner:'A',kind:'shell',x:230,y:230,vx:0,vy:1,ttl:60})),
     pickups:[{id:'crate',x:96,y:32,type:'mine'}]
   });
   assert.deepEqual(makePolicy()(state),{throttle:1,turn:0,fire:false});
@@ -85,7 +87,7 @@ test('GPT-dots advances for a reachable crate while the primary cannon is coolin
 
 test('GPT-dots still takes a short clean shot before advancing on a crate',()=>{
   const state=observation({
-    tanks:[{...A,x:32,y:32,cooldown:1},{...B,x:90,y:32}],
+    tanks:[{...A,x:32,y:32},{...B,x:64,y:32}],
     pickups:[{id:'crate',x:96,y:32,type:'gatling'}]
   });
   assert.deepEqual(makePolicy()(state),{throttle:0,turn:0,fire:true});
@@ -115,4 +117,10 @@ test('GPT-dots anticipates the boundary before the rectangle has started shrinki
     pickups:[{id:'loot',x:12,y:96,type:'laser'}]
   });
   assert.equal(makePolicy()(obs).throttle,1);
+});
+
+test('bot returns a safe neutral action without its declared simulation profile',()=>{
+  for(const profile of [undefined,{},{...classicProfile(25),forwardSpeed:0}]) {
+    assert.deepEqual(makePolicy()(observation({profile})),{throttle:0,turn:0,fire:false});
+  }
 });

@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {initV5,initV6,stepV4,stepV6} from './classic.js';
-import {gameV6 as game,gameV5} from '../adapter/index.js';
+import {init,step} from './classic.js';
+import {gameForRate} from '../adapter/index.js';
 
 const players=['A','B'];
-const make=(config={})=>initV6({seed:37,config:{pickups:false,...config},players});
+const game=gameForRate(60);
+const make=(config={})=>init({seed:37,config:{pickups:false,...config},players},60);
 const put=(state,id,point)=>({...state,tanks:state.tanks.map(t=>t.id===id?{...t,...point}:t)});
 const fire={throttle:0,turn:0,fire:true};
 const shell=(id,owner,x,y,vx)=>({id,owner,kind:'shell',x,y,vx,vy:0,ttl:60,ownerArmed:true});
 const near=(a,b)=>assert(Math.abs(a-b)<1e-9,`${a} ≈ ${b}`);
 
-test('v6 safe rectangle covers the map at start and preserves its aspect ratio while shrinking linearly',()=>{
+test('safe rectangle covers the map at start and preserves its aspect ratio while shrinking linearly',()=>{
   const state=make(),{zone}=state;
   assert.equal(zone.startTick,2400);
   assert.equal(zone.endTick,3300);
@@ -22,14 +23,14 @@ test('v6 safe rectangle covers the map at start and preserves its aspect ratio w
     assert(Math.abs(x-zone.x)<=zone.halfWidth+1e-9);
     assert(Math.abs(y-zone.y)<=zone.halfHeight+1e-9);
   }
-  const before=stepV6({...state,tick:2398},{}).state;
-  const start=stepV6(before,{}).state;
+  const before=step({...state,tick:2398},{}).state;
+  const start=step(before,{}).state;
   assert.deepEqual(before.zone,start.zone);
-  const halfway=stepV6({...start,tick:2849},{}).state;
+  const halfway=step({...start,tick:2849},{}).state;
   near(halfway.zone.halfWidth,(zone.initialHalfWidth+zone.finalHalfWidth)/2);
   near(halfway.zone.halfHeight,(zone.initialHalfHeight+zone.finalHalfHeight)/2);
   near(halfway.zone.halfWidth/halfway.zone.halfHeight,state.width/state.height);
-  assert.equal(stepV6({...start,tick:3299},{}).state.zone.halfHeight,zone.finalHalfHeight);
+  assert.equal(step({...start,tick:3299},{}).state.zone.halfHeight,zone.finalHalfHeight);
 });
 
 test('timing controls are independent and round timeout extends unless explicitly set',()=>{
@@ -44,7 +45,6 @@ test('timing controls are independent and round timeout extends unless explicitl
   assert.equal(game.matchTickLimit({maxTicks:36000}),100_000);
   for(const value of [-1,121,0.5,'40',null]) assert.throws(()=>make({shrinkAfterSeconds:value}),/shrinkAfterSeconds/);
   for(const value of [0,121,0.5,'15',null]) assert.throws(()=>make({shrinkDurationSeconds:value}),/shrinkDurationSeconds/);
-  assert.throws(()=>initV5({seed:1,config:{shrinkAfterSeconds:40},players}),/unknown config key/);
 });
 
 test('outside exposure is consecutive, with exact edge re-entry safe',()=>{
@@ -53,13 +53,13 @@ test('outside exposure is consecutive, with exact edge re-entry safe',()=>{
   state=put(state,'A',{x:x+finalHalfWidth+2,y});
   state=put(state,'B',{x,y});
   state={...state,walls:[],tick:endTick,zone:{...state.zone,outsideTicks:{A:118,B:0}}};
-  const outside=stepV6(state,{}).state;
+  const outside=step(state,{}).state;
   assert.equal(outside.zone.outsideTicks.A,119);
   assert.equal(outside.tanks[0].alive,true);
   assert.equal(state.zone.outsideTicks.A,118);
-  const reentered=stepV6(put(outside,'A',{x:x+finalHalfWidth,y}),{}).state;
+  const reentered=step(put(outside,'A',{x:x+finalHalfWidth,y}),{}).state;
   assert.equal(reentered.zone.outsideTicks.A,0);
-  const loss=stepV6(outside,{});
+  const loss=step(outside,{});
   assert.deepEqual(loss.events.map(e=>e.type),['zone-eliminated','last-tank-pending']);
   assert.equal(loss.events[0].tankId,'A');
   assert.equal(loss.events[0].ownerId,undefined);
@@ -69,7 +69,7 @@ test('outside exposure is consecutive, with exact edge re-entry safe',()=>{
 
 test('two simultaneous environmental deaths still award nobody',()=>{
   const state=make({shrinkAfterSeconds:0});
-  const loss=stepV6({...state,tick:state.zone.endTick,zone:{...state.zone,outsideTicks:{A:119,B:119}}},{});
+  const loss=step({...state,tick:state.zone.endTick,zone:{...state.zone,outsideTicks:{A:119,B:119}}},{});
   assert.deepEqual(loss.result,{winner:null,reason:'double-knockout'});
   assert.deepEqual(loss.events.filter(e=>e.type==='zone-eliminated').map(e=>e.tankId),players);
   assert(!loss.events.some(e=>e.type==='destroyed'));
@@ -78,15 +78,15 @@ test('two simultaneous environmental deaths still award nobody',()=>{
 test('survivor is protected from stray shots, reflected laser, mine triggers and zone until scoring',()=>{
   let state=make({shrinkAfterSeconds:0,shrinkDurationSeconds:1});
   state=put(put(state,'A',{x:60,y:80,angle:0}),'B',{x:100,y:80});
-  const pending=stepV6({...state,walls:[],bullets:[shell('first','A',83,80,6)]},{});
+  const pending=step({...state,walls:[],bullets:[shell('first','A',83,80,6)]},{});
   assert.equal(pending.state.tanks[0].invulnerable,true);
   assert.equal(pending.state.tanks[1].invulnerable,false);
   assert.equal(pending.state.tanks[1].alive,false);
   const locked=put(pending.state,'A',{weapon:'laser',weaponAmmo:1});
-  const later=stepV6({...locked,tick:100,
+  const later=step({...locked,tick:100,
     walls:[{x1:90,y1:40,x2:90,y2:125}],
     bullets:[shell('later','B',43,80,6)],
-    mines:[{id:'m1',owner:'B',x:62,y:80,armedAt:1,ownerCleared:true}],
+    mines:[{id:'m1',owner:'B',x:62,y:80,armedAt:1,ownerCleared:true,detonateAt:null,triggeredAt:null}],
     zone:{...locked.zone,outsideTicks:{A:119,B:0}}},{A:fire});
   assert.equal(later.state.tanks[0].alive,true);
   assert.equal(later.state.zone.outsideTicks.A,0);
@@ -94,14 +94,14 @@ test('survivor is protected from stray shots, reflected laser, mine triggers and
   assert(later.events.some(e=>e.type==='weapon-fired'&&e.weapon==='laser'));
   assert(!later.events.some(e=>['hit','destroyed','mine-burst','zone-eliminated'].includes(e.type)));
   let finished=later;
-  while(!finished.result) finished=stepV6(finished.state,{});
+  while(!finished.result) finished=step(finished.state,{});
   assert.deepEqual(finished.result,{winner:'A',reason:'last-tank'});
 });
 
 test('simultaneous projectile and zone deaths are resolved before granting immunity',()=>{
   let state=make({shrinkAfterSeconds:0,shrinkDurationSeconds:1});
   state=put(put(state,'A',{x:60,y:80}),'B',{x:100,y:80});
-  const draw=stepV6({...state,walls:[],tick:60,bullets:[shell('impact','A',83,80,6)],
+  const draw=step({...state,walls:[],tick:60,bullets:[shell('impact','A',83,80,6)],
     zone:{...state.zone,outsideTicks:{A:119,B:0}}},{});
   assert.deepEqual(draw.result,{winner:null,reason:'double-knockout'});
   assert(draw.events.some(e=>e.type==='destroyed'&&e.tankId==='B'));
@@ -127,18 +127,4 @@ test('series resets the zone for a fresh round and keeps observations detached',
   assert.equal(state.zone.halfWidth,state.zone.initialHalfWidth);
   assert.deepEqual(state.zone.outsideTicks,{A:0,B:0});
   assert(state.tanks.every(t=>!t.invulnerable));
-});
-
-test('retained v5 adapter and classic step still have their original shape',()=>{
-  const input={seed:32,config:{pickups:false},players};
-  const old=initV5(input);
-  assert.equal(Object.hasOwn(old,'zone'),false);
-  const series=gameV5.init(input);
-  assert.equal(gameV5.version,'5');
-  const observation=gameV5.observe(series,'A');
-  assert.equal(Object.hasOwn(observation,'zone'),false);
-  assert.equal(Object.hasOwn(observation.tanks[0],'invulnerable'),false);
-  const actions={A:fire},direct=stepV4(old,actions);
-  assert.deepEqual(gameV5.step(series,actions).events,direct.events);
-  assert.deepEqual(gameV5.step(series,actions).state.tanks,direct.state.tanks);
 });

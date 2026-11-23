@@ -12,8 +12,8 @@ const squadLetter = (id) => 'ABCD'[Number(id) - 1] ?? id;
 const squadColors = Object.freeze({ '1': '#84365c', '2': '#166558', '3': '#315b99', '4': '#825417' });
 const graphite = { hull: '#6b7385', turret: '#959dae', track: '#484e5b', outline: '#383e4b' };
 const weapons = {
-  'death-ray': '死光', laser: '激光', 'laser-sight': '激光', gatling: '加特林', frag: '破片弹', mine: '地雷',
-  missile: '追踪导弹', remote: '遥控导弹', shell: '炮弹', shrapnel: '破片', shield: '护盾', rapid: '快速装填',
+  'death-ray': '死光', laser: '激光', gatling: '加特林', frag: '破片弹', mine: '地雷',
+  missile: '追踪导弹', remote: '遥控导弹', shell: '炮弹', shrapnel: '破片',
 };
 
 function team(index, mode, id) {
@@ -27,6 +27,11 @@ function teamForOwner(state, mode, id) {
 
 function pointIsValid(item) {
   return Number.isFinite(item?.x) && Number.isFinite(item?.y);
+}
+
+export function supportsTankReplay(manifest) {
+  return manifest.format === 1 && [25, 30, 60].includes(manifest.tickRate)
+    && manifest.rulesVersion === `8-${manifest.tickRate}`;
 }
 
 export function validateTankFrame(state) {
@@ -98,9 +103,9 @@ function stageTankGlyph(ctx, color) {
 }
 
 const weaponInks = {
-  'death-ray': '#af3952', laser: '#9d396d', 'laser-sight': '#9d396d',
-  gatling: '#9b6118', rapid: '#9b6118', mine: '#564879', frag: '#258170',
-  shield: '#2578a1', missile: '#34668c', remote: '#796239',
+  'death-ray': '#af3952', laser: '#9d396d',
+  gatling: '#9b6118', mine: '#564879', frag: '#258170',
+  missile: '#34668c', remote: '#796239',
 };
 
 function weaponGlyph(ctx, kind) {
@@ -112,14 +117,14 @@ function weaponGlyph(ctx, kind) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.beginPath();
-  if (kind === 'laser' || kind === 'laser-sight') {
+  if (kind === 'laser') {
     ctx.moveTo(-4.5, 4.2); ctx.lineTo(-1.2, -2.6); ctx.lineTo(1.5, 2); ctx.lineTo(4.3, -4);
     ctx.stroke();
   } else if (kind === 'death-ray') {
     ctx.moveTo(-4.1, 4.1); ctx.lineTo(4.1, -4.1);
     ctx.moveTo(0.6, -4.1); ctx.lineTo(4.1, -4.1); ctx.lineTo(4.1, -0.6);
     ctx.stroke();
-  } else if (kind === 'gatling' || kind === 'rapid') {
+  } else if (kind === 'gatling') {
     for (const y of [-3.3, 0, 3.3]) {
       ctx.moveTo(-4, y); ctx.lineTo(4, y);
     }
@@ -145,9 +150,6 @@ function weaponGlyph(ctx, kind) {
     ctx.moveTo(-2, -1); ctx.quadraticCurveTo(0, -3, 2, -1);
     ctx.moveTo(-4, -2.5); ctx.quadraticCurveTo(0, -6, 4, -2.5);
     ctx.stroke();
-  } else if (kind === 'shield') {
-    ctx.moveTo(-3.6, -3.3); ctx.lineTo(3.6, -3.3); ctx.lineTo(2.8, 1.6);
-    ctx.lineTo(0, 4.1); ctx.lineTo(-2.8, 1.6); ctx.closePath(); ctx.stroke();
   } else {
     ctx.arc(0, 0, 2.2, 0, Math.PI * 2); ctx.fill();
   }
@@ -161,11 +163,10 @@ function drawCrate(ctx, pickup, crateScale) {
   ctx.restore();
 }
 
-export function equippedTankWeapon(tank, state) {
+export function equippedTankWeapon(tank) {
   if (!tank?.alive) return null;
   if (typeof tank.weapon === 'string' && Object.hasOwn(weapons, tank.weapon)) return tank.weapon;
-  if (tank.shield === true) return 'shield';
-  return tank.rapidUntil > state.tick ? 'rapid' : null;
+  return null;
 }
 
 export function tankWeaponLabel(weapon) {
@@ -178,8 +179,7 @@ function pickupHint(event) {
     return name ? `已装备${name}，不能再拾取` : '已有道具，不能再拾取';
   }
   const name = tankWeaponLabel(event.pickupType) || '道具';
-  if (['shield', 'rapid'].includes(event.pickupType)) return `获得${name}`;
-  const hold = event.activation == null ? ['gatling', 'death-ray'].includes(event.pickupType) : event.activation === 'hold';
+  const hold = event.activation === 'hold';
   if (event.releaseRequired) return hold ? `${name} · 松开后按住开火` : `${name} · 松开后再按开火`;
   if (event.pickupType === 'remote') return `${name} · 发射后用转向键操控`;
   if (event.pickupType === 'frag') return `${name} · 按开火发射，再按引爆`;
@@ -230,15 +230,12 @@ function drawEffects(ctx, state, effects, mode) {
     ctx.save();
     ctx.globalAlpha = alpha;
     const tint = teamForOwner(state, mode, event.ownerId ?? event.tankId);
-    if ((continuous || (event.type === 'weapon-fired' && event.weapon === 'death-ray'))
+    if (continuous
         && [event.x, event.y, event.endX, event.endY].every(Number.isFinite)) {
       ctx.beginPath(); ctx.moveTo(event.x, event.y); ctx.lineTo(event.endX, event.endY);
       ctx.lineWidth = 4.2; ctx.strokeStyle = tint.outline; ctx.stroke();
       ctx.lineWidth = 2.5; ctx.strokeStyle = tint.hull; ctx.stroke();
       ctx.lineWidth = 0.9; ctx.strokeStyle = tint.turret; ctx.stroke();
-    } else if (event.type === 'weapon-fired' && event.weapon === 'laser' && drawPath(ctx, event.path)) {
-      ctx.strokeStyle = tint.outline; ctx.lineWidth = 3.6; ctx.stroke();
-      ctx.strokeStyle = tint.turret; ctx.lineWidth = 1.9; ctx.stroke();
     } else if (['mine-burst', 'frag-burst', 'destroyed', 'zone-eliminated'].includes(event.type)) {
       const point = pointIsValid(event) ? event : state.tanks.find((tank) => tank.id === event.tankId);
       if (pointIsValid(point)) {
@@ -303,24 +300,24 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
   ctx.fillRect(0, 0, state.width, state.height);
 
   // Replay drawing uses the tuning captured in each frame, not the current JSON.
-  // Keep historical games visually unchanged when no visual profile was stored.
+  // Built-in visual defaults guard against missing or invalid configuration.
   const configured = state.profile?.render;
   const positive = (key, fallback) => {
     const value = configured?.[key];
     return Number.isFinite(value) && value > 0 ? value : fallback;
   };
   const alpha = configured?.zoneOutsideAlpha;
-  const outsideAlpha = Number.isFinite(alpha) && alpha >= 0 && alpha <= 1 ? alpha : 0.13;
+  const outsideAlpha = Number.isFinite(alpha) && alpha >= 0 && alpha <= 1 ? alpha : 0.22;
   const tankScale = positive('tankScale', 1);
   const crateScale = positive('crateScale', 1);
   const missileScale = positive('missileScale', 1);
-  const shellRadius = positive('shellRadius', 3.1);
+  const shellRadius = positive('shellRadius', 3);
   const gatlingRadius = positive('gatlingRadius', 2.1);
   const shrapnelRadius = positive('shrapnelRadius', 2.1);
   drawZone(ctx, state, scale, ratio, outsideAlpha);
 
   // Static exterior walls match the interior gray; the thin black rim sits at the outer edge.
-  const wallWidth = Math.max(positive('wallWidth', 5.3), 1.7 * ratio / scale);
+  const wallWidth = Math.max(positive('wallWidth', 5.2), 1.7 * ratio / scale);
   ctx.strokeStyle = '#4c4c4c';
   ctx.lineWidth = wallWidth;
   ctx.lineCap = 'square';
@@ -346,7 +343,7 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
     if (!pointIsValid(mine)) continue;
     ctx.beginPath();
     ctx.ellipse(mine.x, mine.y, 6.5, 4.5, 0, 0, Math.PI * 2);
-    const color = teamForOwner(state, mode, mine.ownerId ?? mine.owner);
+    const color = teamForOwner(state, mode, mine.owner);
     ctx.fillStyle = color.hull; ctx.fill();
     ctx.strokeStyle = color.outline; ctx.lineWidth = 1.2; ctx.stroke();
     ctx.fillStyle = Number.isFinite(mine.detonateAt) ? '#f5ad4b'
@@ -399,7 +396,7 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
     if (!pointIsValid(bullet)) continue;
     const size = bullet.kind === 'frag' ? 4.1 : bullet.kind === 'gatling' ? gatlingRadius
       : bullet.kind === 'shrapnel' ? shrapnelRadius : shellRadius;
-    const owner = bullet.ownerId ?? bullet.owner;
+    const owner = bullet.owner;
     const color = teamForOwner(state, mode, owner);
     const squad = teams[owner];
     const outline = Object.hasOwn(squadColors, squad) ? squadColors[squad] : color.outline;
@@ -472,10 +469,9 @@ export function formatTankEvent(event, displayPlayer = (id) => id) {
   const type = event.type || '事件';
   const kind = eventLabels[type] ?? type;
   const hit = type === 'hit' || type === 'destroyed';
-  const actor = event.playerId ?? event.player ?? event.shooter ?? event.ownerId ?? event.owner
-    ?? (hit ? null : event.tankId);
-  const target = event.targetId ?? event.target ?? (hit ? event.tankId : null);
-  const shell = event.bulletId ?? event.shellId ?? event.shell;
+  const actor = event.playerId ?? event.ownerId ?? (hit ? null : event.tankId);
+  const target = hit ? event.tankId : null;
+  const shell = event.bulletId;
   const position = Number.isFinite(event.x) && Number.isFinite(event.y)
     ? `(${event.x.toFixed(1)}, ${event.y.toFixed(1)})` : null;
   const weapon = event.pickupType ?? event.weapon ?? (Object.hasOwn(weapons, event.kind) ? event.kind : null);
@@ -483,6 +479,6 @@ export function formatTankEvent(event, displayPlayer = (id) => id) {
     actor == null ? null : `选手 ${displayPlayer(actor)}`, target == null ? null : `目标 ${displayPlayer(target)}`,
     shell == null ? null : `弹丸 ${shell}`, weapon == null ? null : weapons[weapon] ?? weapon,
     event.winnerTeam != null ? `队伍 ${squadLetter(event.winnerTeam)} 获胜` : event.winner == null ? null : `选手 ${displayPlayer(event.winner)} 获胜`,
-    event.absorbed ? '护盾吸收' : null, position];
+    position];
   return labels.filter(Boolean).join(' · ');
 }
