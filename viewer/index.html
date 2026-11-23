@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Arena Agent · 本地竞技场</title>
+  <link rel="stylesheet" href="/viewer/style.css">
+  <script type="module" src="/viewer/app.js"></script>
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <div><p class="eyebrow">ARENA AGENT / LOCAL SIMULATION</p><h1>本地竞技场</h1></div>
+      <span id="mode-label" class="pill">实时观战</span>
+    </header>
+    <section class="controls" aria-label="对局操作">
+      <form id="match-form">
+        <label for="seed">随机种子</label>
+        <input id="seed" type="number" min="0" max="4294967295" value="12" required>
+        <button type="submit" name="mode" value="bots">Bot 对战</button>
+        <button type="submit" name="mode" value="human" class="primary">人机对战</button>
+      </form>
+      <div class="file-actions">
+        <button type="button" id="back-live" hidden>返回实时</button>
+        <label class="file-label">打开 JSONL 回放
+          <input type="file" id="replay-file" accept=".jsonl,application/x-ndjson,text/plain">
+        </label>
+      </div>
+    </section>
+    <p id="status" class="status" role="status" aria-live="polite">等待开局，或打开已有的回放。</p>
+    <p id="error" class="error" role="alert" hidden></p>
+    <div class="match-layout">
+      <section class="board" aria-labelledby="battle-title">
+        <div class="section-header"><h2 id="battle-title">战场</h2><span id="frame-label">TICK 0</span></div>
+        <div id="canvas-wrap" class="canvas-wrap">
+          <canvas id="battle" aria-label="坦克迷宫战场">战场画面需要浏览器支持 Canvas。</canvas>
+          <p id="empty" class="empty">对局开始后，这里会显示地图和弹道。</p>
+        </div>
+        <p id="human-help" class="hint" hidden>键盘控制：<kbd>W</kbd><kbd>S</kbd> 进退，<kbd>A</kbd><kbd>D</kbd> 转向，<kbd>Space</kbd> 开火。方向键也可使用。</p>
+        <div id="timeline-panel" class="timeline" hidden>
+          <label for="timeline">回放时间轴</label>
+          <input id="timeline" type="range" min="0" max="0" value="0" aria-label="按帧查找回放">
+          <div class="transport">
+            <button id="prev" type="button">上一帧</button>
+            <button id="play" type="button">播放</button>
+            <button id="next" type="button">下一帧</button>
+          </div>
+        </div>
+      </section>
+      <section class="events" aria-labelledby="events-title">
+        <div class="section-header"><h2 id="events-title">对局事件</h2><span id="event-count">0 条</span></div>
+        <p id="event-hint" class="hint">事件由裁判生成。</p>
+        <ol id="event-list" aria-label="对局事件列表"></ol>
+        <details id="action-details">
+          <summary>本帧采纳的选手动作</summary>
+          <pre id="frame-actions">开局帧无选手动作。</pre>
+        </details>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
