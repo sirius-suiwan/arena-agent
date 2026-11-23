@@ -8,7 +8,7 @@
 | --- | --- |
 | `core/` | 通用裁判：固定 tick、选手和动作截止 |
 | `protocol/` | bot、游戏及界面各自的接入契约 |
-| `runners/`、`bots/examples/` | 进程管理和选手示例 |
+| `runners/`、`bots/` | 进程管理和选手示例 |
 | `games/` | 每款游戏独立维护规则、验证、物理与画法 |
 | `replay/`、`runs/` | 录制和验证代码；生成的数据不入库 |
 | `viewer/`、`apps/cli/` | 浏览器界面与本地命令入口 |
@@ -20,8 +20,7 @@
 
 ```sh
 npm test
-node apps/cli/arena.js run --seed 42 --bot-b bots/examples/scout.py
-node apps/cli/arena.js run --seed 42 --bot-a laika --bot-b scout
+node apps/cli/arena.js run --seed 42 --bot-a laika --bot-b gpt-dots
 node apps/cli/arena.js serve
 ```
 
@@ -38,18 +37,18 @@ node apps/cli/arena.js run --seed 42 --rounds 10
 
 ## 接入 bot 或游戏
 
-- [Bot JSONL 协议](protocol/bot/README.md)：每局一个常驻进程。支持受信任的本地 `.py`、`.js` 或 `.mjs` 脚本。示例在 `bots/examples/`，可通过 `--bot-a` 和 `--bot-b` 替换。**本地进程不是安全沙箱。**
-- [Bot JSON 注册](bots/README.md#注册到对战菜单)：放入脚本和 `bots/<目录>/bot.json` 即可在菜单选座或在 CLI 用注册 ID 对战。内置 Laika（复刻）、巡回炮台和斥候也用这套注册方式。
+- [Bot JSONL 协议](protocol/bot/README.md)：每局一个常驻进程。支持受信任的本地 `.py`、`.js` 或 `.mjs` 脚本。内置 GPT-dots 和 Laika，可通过 `--bot-a` 和 `--bot-b` 替换。**本地进程不是安全沙箱。**
+- [Bot JSON 注册](bots/README.md#注册到对战菜单)：放入脚本和 `bots/<目录>/bot.json` 即可在菜单选座或在 CLI 用注册 ID 对战。内置 Laika（复刻）和 GPT-dots 也用这套注册方式。
 - [游戏适配器契约](protocol/game/README.md)：游戏决定 tick 频率及动作语义，宿主不解释物理。现有 [坦克规则](games/tank-trouble/RULES.md)；测试包含不同动作结构、不同 tick 频率的小型第二游戏。
 - [本机界面协议](protocol/viewer/README.md)：画面与输入只是裁判的客户端。未来的《疯狂小人战斗》尚未接入。
 
-写 bot 的 Agent 请从 [bots/README.md](bots/README.md) 开始，再看每款游戏目录的规则文件。坦克使用 v7 规则，支持 2–8 席。新局默认 12×9 格，每个坦克可同时发出 10 枚普通弹，默认速度 5.2 像素/tick；历史 v1–v6 回放仍能校验。用 `--shell-speed 6` 调整新局普通弹速度，不改变旧回放。
+写 bot 的 Agent 请从 [bots/README.md](bots/README.md) 开始，再看每款游戏目录的规则文件。坦克使用 v8 原版参数档，支持 2–8 席。默认 25 tick/秒，也可选 30 或 60；三档共享按秒计算的规则。历史 v1–v7 的旧回放仍按对应规则重算。
 
 「对局设置」可选择先到 3 分或打满 1–20 局、地图宽高和开放／经典／密集三档迷宫。组队在「自定义对局」里分配 A–D 队，至少两队；友伤默认关闭，自伤仍有效。自由对战不在坦克旁标席位，组队时只标队伍字母。CLI 例：
 
 ```sh
-node apps/cli/arena.js run --bot-a laika --bot-b gpt-dots --bot-c scout --bot-d turret \
-  --round-limit 5 --cols 12 --rows 9 --maze-complexity dense \
+node apps/cli/arena.js run --bot-a laika --bot-b gpt-dots --bot-c laika --bot-d gpt-dots \
+  --simulation-rate 60 --round-limit 5 --cols 12 --rows 9 --maze-complexity dense \
   --teams '{"A":"1","B":"2","C":"1","D":"2"}' --friendly-fire off
 ```
 
@@ -59,4 +58,6 @@ node apps/cli/arena.js run --bot-a laika --bot-b gpt-dots --bot-c scout --bot-d 
 
 开局前可在「对局详情」给当前席位指定显示名，留空默认用注册名、bot 握手名字或席位 ID。实战和回放按选手统一坦克与其弹体配色；回放会自动用小圆圈跟随最终造成击毁的弹体；普通弹体不标记，实时对局不提示。展开「对局详情」仍可点「击杀标记」跳到命中帧。
 
-实战和回放左侧显示当前局数与赛制，右侧是累计击杀（自伤不加），底部是各席位的名字、比分、普通弹空槽和特殊装备。超过四个席位时比分卡换行。v4–v5 弹药栏显示 10 格；回放旧规则仍显示原上限。普通弹命中或消失时释放一格，开火仍受冷却和武器状态限制。
+实战和回放左侧显示当前局数与赛制，右侧是累计击杀（自伤不加），底部是各席位的名字、比分、普通弹空槽和特殊装备。超过四个席位时比分卡换行。新版保留每辆坦克 10 个普通弹槽；回放仍显示记录对应上限。普通弹命中或消失时释放一格，开火仍受按键状态和武器规则限制。
+
+调试数值见 [classic-profile.json](games/tank-trouble/classic-profile.json)。改完重启并开新局；录制的帧会保留当时的显示参数。改过物理参数后若要校验此前的 v8 录像，请使用录像生成时的 JSON 版本。

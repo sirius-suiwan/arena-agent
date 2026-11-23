@@ -5,7 +5,7 @@ import { matchMode, keyboardAction, keySeat, pointerAction, humanControls, human
 
 const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
-  'battle', 'mode-label', 'match-form', 'seed', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
+  'battle', 'mode-label', 'match-form', 'seed', 'simulation-rate', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'match-id', 'match-id-value', 'match-id-copy',
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
@@ -29,10 +29,11 @@ let starting = false;
 const teamIds = ['1', '2', '3', '4'];
 const teamLetter = (id) => 'ABCD'[teamIds.indexOf(id)] ?? id;
 const matchOptions = [
+  { id: 'simulation-rate', key: 'simulationRate', values: [25, 30, 60], initial: 25, label: '模拟频率' },
   { id: 'round-limit', key: 'roundLimit', min: 0, max: 20, initial: 0, label: '总局数' },
   { id: 'maze-cols', key: 'cols', min: 4, max: 16, initial: 12, label: '地图列数' },
   { id: 'maze-rows', key: 'rows', min: 4, max: 12, initial: 9, label: '地图行数' },
-  { id: 'maze-complexity', key: 'mazeComplexity', values: ['open', 'classic', 'dense'], initial: 'classic' },
+  { id: 'maze-complexity', key: 'mazeComplexity', values: ['open', 'classic', 'dense'], initial: 'classic', label: '迷宫复杂度' },
   { id: 'friendly-fire', key: 'friendlyFire', initial: false },
   { id: 'shrink-after', key: 'shrinkAfterSeconds', min: 0, max: 120, initial: 40, label: '缩圈开始时间' },
   { id: 'shrink-duration', key: 'shrinkDurationSeconds', min: 1, max: 120, initial: 15, label: '缩圈持续时间' },
@@ -51,7 +52,12 @@ let inputEpoch = 0;
 let scoreKey = '';
 let hudRows = [];
 let fieldRatio = '';
-const WEAPON_FEEDBACK_TICKS = 60;
+const EFFECT_BASE_TICK_RATE = 60;
+const EFFECT_MAX_AGE_SECONDS = 1;
+
+function recordedTickRate(value) {
+  return Number.isFinite(value) && value > 0 ? value : EFFECT_BASE_TICK_RATE;
+}
 const MAX_SEAT_NAME_LENGTH = 24;
 const heldKeys = new Set();
 const inputChains = new Map();
@@ -202,13 +208,15 @@ function nearestEventIndex(events, index, limit) {
   return Math.max(0, Math.min(lo - Math.floor(limit / 2), events.length - limit));
 }
 
-function effectsAt(frames, index) {
+function effectsAt(frames, index, manifestRate) {
   const effects = [];
   const now = tickOf(frames[index]);
   const round = frames[index].state?.round;
-  for (let i = index; i >= 0 && now - tickOf(frames[i]) < WEAPON_FEEDBACK_TICKS; i--) {
+  const rate = recordedTickRate(manifestRate);
+  for (let i = index; i >= 0 && now - tickOf(frames[i]) < EFFECT_MAX_AGE_SECONDS * rate; i--) {
     if (frames[i].state?.round !== round) break;
-    const age = now - tickOf(frames[i]);
+    // Visual effects use the legacy 60 Hz scale, independently of simulation rate.
+    const age = (now - tickOf(frames[i])) * EFFECT_BASE_TICK_RATE / rate;
     for (const event of frames[i].events) {
       if (age < 10 || event.type === 'pickup' || event.type === 'pickup-blocked') effects.push({ event, age });
     }
@@ -328,7 +336,8 @@ function renderScoreboard(match, state, renderer, kills = {}) {
     row.equip.hidden = !weapon;
     if (weapon) {
       const quantity = Number.isSafeInteger(tank?.weaponAmmo) && tank.weaponAmmo > 0 ? ` ×${tank.weaponAmmo}`
-        : equipped === 'frag' && tank?.fragId ? ' · 可引爆' : '';
+        : equipped === 'frag' && tank?.fragId ? ' · 可引爆'
+        : equipped === 'remote' && tank?.fragId ? ' · 转向操控' : '';
       setText(row.weaponText, `${weapon}${quantity}`);
       row.equip.title = `已装备${weapon}`;
       if (row.equipment !== equipped) renderer?.weaponIcon?.(row.weaponIcon, equipped);
@@ -362,7 +371,7 @@ function renderScoreboard(match, state, renderer, kills = {}) {
 }
 
 function elapsedLabel(tick, nominalRate) {
-  const rate = Number.isFinite(nominalRate) && nominalRate > 0 ? nominalRate : 60;
+  const rate = recordedTickRate(nominalRate);
   const seconds = Math.floor(tick / rate);
   const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
   const ss = String(seconds % 60).padStart(2, '0');
@@ -405,7 +414,7 @@ function zoneLabel(state, tickRate) {
   const zone = state?.zone;
   const tick = state?.roundTick;
   if (!zone || ![tick, zone.startTick, zone.endTick].every(Number.isFinite)) return '';
-  const rate = Number.isFinite(tickRate) && tickRate > 0 ? tickRate : 60;
+  const rate = recordedTickRate(tickRate);
   const seconds = (ticks) => Math.ceil(ticks / rate);
   if (tick < zone.startTick) return `缩圈倒计时 ${seconds(zone.startTick - tick)} 秒`;
   if (tick < zone.endTick) return `正在缩圈 · ${seconds(zone.endTick - tick)} 秒`;
@@ -423,7 +432,7 @@ function render() {
   const help = !replay && matchActive && humanHelp(live.manifest);
   el['mode-label'].textContent = replay ? '离线回放' : mode?.label ?? '实时观战';
   const frame = hasFrames ? tickOf(record) : 0;
-  el['frame-label'].textContent = `TICK ${frame}`;
+  el['frame-label'].textContent = `TICK ${frame}${match.manifest?.tickRate ? ` · ${match.manifest.tickRate} tick/s` : ''}`;
   el['time-label'].textContent = elapsedLabel(frame, match.manifest?.tickRate);
   el.menu.hidden = !menuVisible;
   el.stage.hidden = menuVisible;
@@ -479,7 +488,7 @@ function render() {
     renderer.draw(el.battle, record.state, {
       mode: match.manifest?.mode,
       teams: teamsFor(match.manifest, record.state),
-      effects: effectsAt(match.frames, current),
+      effects: effectsAt(match.frames, current, match.manifest?.tickRate),
       lethalRings: replay ? lethalProjectileRings(replay.lethalIndex, record, current) : [],
     });
   } else if (!menuVisible) {
@@ -531,8 +540,7 @@ function play() {
   if (frameIndex === replay.frames.length - 1) seek(0);
   selectedKill = null;
   const startTick = tickOf(replay.frames[frameIndex]);
-  const rate = Number(replay.manifest.tickRate);
-  const tickRate = Number.isFinite(rate) && rate > 0 ? rate : 60;
+  const tickRate = recordedTickRate(replay.manifest.tickRate);
   playback = { request: 0, startMs: performance.now() };
   const nextFrame = (now) => {
     if (!playback || !replay) return;
@@ -566,7 +574,8 @@ function reduceLive(record) {
     if (tickOf(record) <= tickOf(live.frames.at(-1))) return;
     // Keep a small recent history so transient effects render the same way as replay.
     appendTick(live, record);
-    if (live.frames.length > WEAPON_FEEDBACK_TICKS) live.frames.shift();
+    const keep = Math.ceil(EFFECT_MAX_AGE_SECONDS * recordedTickRate(live.manifest.tickRate));
+    if (live.frames.length > keep) live.frames.shift();
     updatePointer();
     if (live.events.length > 100) live.events = live.events.slice(-100);
   } else if (record.type === 'end' || record.type === 'error') {
@@ -750,7 +759,7 @@ async function loadBotCatalog() {
       status.textContent = '没有已注册的机器人，本地多人仍可开局。';
       return;
     }
-    const preferred = botCatalog.has('turret') ? 'turret' : botCatalog.keys().next().value;
+    const firstBot = botCatalog.keys().next().value;
     for (const seat of ['A', 'B', 'C']) {
       const select = el[`seat-bot-${seat}`];
       const options = document.createDocumentFragment();
@@ -767,7 +776,8 @@ async function loadBotCatalog() {
         options.append(option);
       }
       select.replaceChildren(options);
-      select.value = seat === 'C' ? '' : preferred;
+      const preferred = seat === 'B' ? 'laika' : 'gpt-dots';
+      select.value = seat === 'C' ? '' : botCatalog.has(preferred) ? preferred : firstBot;
       select.disabled = false;
     }
     status.hidden = true;
@@ -818,10 +828,10 @@ el['match-form'].addEventListener('submit', async (event) => {
   const overrides = {};
   for (const option of matchOptions) {
     const element = el[option.id];
-    const value = typeof option.initial === 'boolean' ? Boolean(element.checked) : option.values ? element.value
-      : element.value ? Number(element.value) : NaN;
+    const value = typeof option.initial === 'boolean' ? Boolean(element.checked)
+      : typeof option.initial === 'number' ? (element.value ? Number(element.value) : NaN) : element.value;
     if (!validOption(value, option)) {
-      return setError(option.values ? '请选择有效的迷宫复杂度。'
+      return setError(option.values ? `请选择有效的${option.label}。`
         : `${option.label}必须是 ${option.min}–${option.max} 的整数。`);
     }
     if (value !== (option.serverDefault ?? option.initial) || (option.edited && option.serverDefault === undefined)) {

@@ -65,6 +65,13 @@
           <label class="shrink-setting">地图行数
             <input id="maze-rows" form="match-form" type="number" min="4" max="12" step="1" value="9" required>
           </label>
+          <label class="shrink-setting">模拟频率
+            <select id="simulation-rate" aria-describedby="simulation-rate-help">
+              <option value="25" selected>25 tick/s</option>
+              <option value="30">30 tick/s</option>
+              <option value="60">60 tick/s</option>
+            </select>
+          </label>
           <label class="shrink-setting">迷宫复杂度
             <select id="maze-complexity">
               <option value="open">开阔</option>
@@ -82,6 +89,7 @@
             <input id="shrink-duration" form="match-form" type="number" min="1" max="120" step="1" value="15" required> 秒
           </label>
         </div>
+        <p class="hint" id="simulation-rate-help">模拟频率是每秒规则更新次数，不是画面帧率。</p>
         <p class="hint">总局数填 0 按现行积分规则；队伍模式在自定义对局中开启。</p>
       </details>
       <button type="button" id="continue-match" hidden>返回对局</button>
