@@ -9,80 +9,76 @@ import {loadBotRegistry} from '../apps/cli/bot-registry.js';
 import {game} from '../games/tank-trouble/adapter/index.js';
 import {jumpGame} from './fixtures/jump-game.js';
 
-test('privileged seats read and cannot mutate the previous accepted batch; all seats act concurrently',async()=>{
+test('insight sees validated same-tick ordinary and human actions, and never other privileged actions',async()=>{
   const records=[];
-  const joined=new Set();
-  const ordinary=(id, action)=>({async act(msg,budget){
+  const ordinaryStarts=new Set();
+  const insightStarts=new Set();
+  const ordinaryTicks={};
+  const seat=(id,fn)=>({act(msg,budget){return fn(msg,budget,id);}});
+  const ordinary=(id, action)=>seat(id,async(msg,budget)=>{
+    assert.equal(msg.observation.height,0);
     assert.equal(Object.hasOwn(msg,'opponentActions'),false);
     assert.equal(Object.hasOwn(msg,'opponentActionsTick'),false);
-    assert.equal(budget,1000);
-    if (id==='A') {
-      // D and E must start concurrently, before this ordinary submission settles.
-      await Promise.resolve();
-      assert.ok(joined.has('D'+msg.tick)&&joined.has('E'+msg.tick));
-    }
-    return action[msg.tick];
-  }});
-  const insight=(id)=>({act(msg,budget){
-    assert.equal(budget,1000);
-    joined.add(id+msg.tick);
-    assert.equal(msg.observation.height,msg.tick===1&&id==='D'?1:0);
-    assert.equal(msg.opponentActionsTick,msg.tick===0?null:0);
-    if (msg.tick===0) assert.deepEqual(msg.opponentActions,{});
-    else {
-      const expected={A:{jump:true},B:{jump:false},C:{jump:false},
-        ...(id==='D'?{E:{jump:false}}:{D:{jump:true}})};
-      assert.deepEqual(msg.opponentActions,expected);
-      msg.opponentActions.A.jump=false;
-    }
-    assert.equal(Object.hasOwn(msg.opponentActions,id),false);
-    return {value:{jump:msg.tick===0&&id==='D'}};
-  }});
+    assert.ok(budget>0&&budget<=600);
+    ordinaryStarts.add(id);
+    await Promise.resolve();
+    assert.deepEqual([...ordinaryStarts],['A','B','C']);
+    ordinaryTicks[id]=msg.tick;
+    return action;
+  });
+  const insight=(id)=>seat(id,async(msg,budget)=>{
+    assert.equal(msg.observation.height,0);
+    assert.equal(msg.opponentActionsTick,msg.tick);
+    assert.equal(ordinaryTicks.A,msg.tick);
+    assert.equal(ordinaryTicks.B,msg.tick);
+    assert.equal(ordinaryTicks.C,msg.tick);
+    assert.ok(budget>0&&budget<=1000);
+    assert.deepEqual(msg.opponentActions,{A:{jump:true},B:{jump:false},C:{jump:false}});
+    msg.opponentActions.A.jump=false;
+    insightStarts.add(id);
+    await Promise.resolve();
+    assert.deepEqual([...insightStarts],['D','E']);
+    return {value:{jump:false}};
+  });
   await runMatch({
-    game:jumpGame,seed:1,maxTicks:2,timeoutMs:1000,
-    seats:{E:insight('E'),D:insight('D'),
-      C:ordinary('C',[{error:'timeout'},{value:{jump:true}}]),
-      B:ordinary('B',[{value:{bad:true}},{value:{jump:true}}]),
-      A:ordinary('A',[{value:{jump:true}},{value:{jump:false}}])},
+    game:jumpGame,seed:1,maxTicks:1,timeoutMs:1000,
+    seats:{E:insight('E'),D:insight('D'),C:ordinary('C',{error:'timeout'}),B:ordinary('B',{value:{bad:true}}),
+      A:ordinary('A',{value:{jump:true}})},
     humanControls:{A:'arrows'},inputInsightSeats:['E','D'],
     record:row=>records.push(row)
   });
-  assert.deepEqual(records[0].manifest.inputInsight,{seats:['D','E'],contract:'accepted-opponent-actions',timing:'previous-tick'});
+  assert.deepEqual(records[0].manifest.inputInsight,{seats:['D','E'],contract:'accepted-opponent-actions',timing:'same-tick-after-ordinary'});
   assert.deepEqual(records[0].readiness,{A:'ready',B:'ready',C:'ready',D:'ready',E:'ready'});
   assert.deepEqual(records[1].input.C,{submitted:null,accepted:{jump:false},fallback:'timeout'});
   assert.deepEqual(records[1].input.B,{submitted:{bad:true},accepted:{jump:false},fallback:'invalid_action'});
-  assert.deepEqual(records[1].state.heights,{A:1,B:0,C:0,D:1,E:0});
-  assert.deepEqual(records[2].state.heights,{A:0,B:1,C:1,D:0,E:0});
-  assert.equal(records[1].input.A.accepted.jump,true);
+  assert.deepEqual(records[1].state.heights,{A:1,B:0,C:0,D:0,E:0});
   assert.ok(Object.values(records[1].input).every(entry=>!Object.hasOwn(entry,'opponentActions')));
 });
 
-test('all-privileged starts empty and reads others only next tick; stop completes concurrent work',async()=>{
-  const a={act({tick,opponentActions,opponentActionsTick}){
-    assert.equal(opponentActionsTick,tick===0?null:tick-1);
-    assert.deepEqual(opponentActions,tick===0?{}:{B:{jump:false}});
-    return {value:{jump:true}};
+test('all-privileged brief is empty, phases share remaining deadline, and stop finishes the in-flight tick',async()=>{
+  const empty={act({opponentActions,opponentActionsTick,tick}){
+    assert.equal(opponentActionsTick,tick);assert.deepEqual(opponentActions,{});return {value:{jump:false}};
   }};
-  const b={act({tick,opponentActions,opponentActionsTick}){
-    assert.equal(opponentActionsTick,tick===0?null:tick-1);
-    assert.deepEqual(opponentActions,tick===0?{}:{A:{jump:true}});
-    return {value:{jump:false}};
-  }};
-  await runMatch({game:jumpGame,seats:{A:a,B:b},seed:1,maxTicks:2,
+  await runMatch({game:jumpGame,seats:{A:empty,B:empty},seed:1,maxTicks:1,
     timeoutMs:1000,inputInsightSeats:['B','A'],record:()=>{}});
   const controller=new AbortController();
   const seen=[];
+  let ordinaryBudget,insightBudget;
   const result=await runMatch({
     game:jumpGame,seed:1,maxTicks:10,timeoutMs:250,signal:controller.signal,inputInsightSeats:['B'],
     seats:{
-      A:{async act(_msg,budget){assert.equal(budget,250);controller.abort();return {value:{jump:true}};}},
+      A:{async act(_msg,budget){ordinaryBudget=budget;controller.abort();return {value:{jump:true}};}},
       B:{act(msg,budget){
-        assert.equal(budget,250);assert.equal(msg.opponentActionsTick,null);assert.deepEqual(msg.opponentActions,{});
+        insightBudget=budget;
+        assert.equal(msg.opponentActionsTick,msg.tick);
+        assert.deepEqual(msg.opponentActions,{A:{jump:true}});
         return {value:{jump:false}};
       }}
     },
     record:row=>seen.push(row)
   });
+  assert.ok(ordinaryBudget>0&&ordinaryBudget<150);
+  assert.ok(insightBudget>0&&insightBudget<250);
   assert.deepEqual(seen.map(row=>row.type),['start','tick','end']);
   assert.deepEqual(result,{winner:null,reason:'stopped'});
 });
@@ -93,7 +89,7 @@ const script=`
     const msg=JSON.parse(line);
     if(msg.type==='start') console.log(JSON.stringify({type:'ready',protocol:1,name:'Laika'}));
     if(msg.type==='observe') console.log(JSON.stringify({
-      type:'action',tick:msg.tick,action:{throttle:0,turn:0,fire:!!msg.opponentActions}
+      type:'action',tick:msg.tick,action:{throttle:0,turn:0,fire:Object.hasOwn(msg,'opponentActions')||Object.hasOwn(msg,'opponentActionsTick')}
     }));
   });
 `;
@@ -129,7 +125,7 @@ async function fetchManifest(t, registryFolder, paths, options={}) {
 test('only registered builtin Laika or its actual default entry receives the privilege',async t=>{
   const genuine=await fetchManifest(t,'laika',{B:'laika'});
   assert.deepEqual(genuine.inputInsight.seats,['B']);
-  assert.equal(genuine.botVersions.B.policy,'laika-insight/1');
+  assert.equal(genuine.botVersions.B.policy,'laika-insight/2');
   assert.equal(Object.hasOwn(genuine.botVersions.A,'policy'),false);
 
   const fake=await fetchManifest(t,'fake',{B:'laika'});

@@ -8,14 +8,14 @@ const moving={...neutral,throttle:1};
 const shooting={...neutral,fire:true};
 const tank=(id,x,y,angle,props={})=>({id,x,y,angle,alive:true,weapon:null,...props});
 function observe(commands,B,overrides={}) {
-  return {type:'observe',tick:17,opponentActions:commands,opponentActionsTick:16,observation:{tick:17,roundTick:8,phase:'playing',
+  return {type:'observe',tick:17,opponentActions:commands,opponentActionsTick:17,observation:{tick:17,roundTick:8,phase:'playing',
     playerId:'A',tanks:[tank('A',64,64,0),B],walls:[],bullets:[],profile:classicProfile(25),...overrides}};
 }
 function wrap(action=neutral) {
   return withLaikaInsight({act:async()=>({value:action,error:null})});
 }
 
-test('continued previous-tick movement can expose a short clear firing line',async()=>{
+test('accepted same-tick movement can expose a short clear firing line',async()=>{
   const b=tank('B',124,82,-Math.PI/2);
   const seat=wrap();
   assert.deepEqual((await seat.act(observe({B:neutral},b))).value,neutral);
@@ -24,7 +24,7 @@ test('continued previous-tick movement can expose a short clear firing line',asy
   assert.deepEqual((await seat.act(observe({B:moving},b,{teams:{A:'1',B:'1'},friendlyFire:true}))).value,neutral);
 });
 
-test('the same base shot can be released when continued movement would leave the firing line',async()=>{
+test('the same base shot can be released when accepted movement leaves the firing line',async()=>{
   const b=tank('B',132,76,Math.PI/2);
   const seat=wrap(shooting);
   assert.deepEqual((await seat.act(observe({B:neutral},b))).value,shooting);
@@ -34,22 +34,43 @@ test('the same base shot can be released when continued movement would leave the
   assert.deepEqual((await seat.act(observe({B:moving},b,{tanks:[held,b]}))).value,shooting);
 });
 
-test('old fire bits do not authorize a new predicted shot or force a dodge',async()=>{
-  const b=tank('B',118,75,Math.PI,{weapon:'laser'});
-  const a=tank('A',64,64,Math.PI/2);
-  const seat=wrap(moving);
-  assert.deepEqual((await seat.act(observe({B:neutral},b,{tanks:[a,b]}))).value,moving);
-  assert.deepEqual((await seat.act(observe({B:shooting},b,{tanks:[a,b]}))).value,moving);
+test('fresh enemy fire triggers a safe dodge, but held fire, an ally or a wall does not',async()=>{
+  const a=tank('A',64,64,Math.PI/2), seat=wrap(moving);
+  for(const b of [tank('B',118,77,Math.PI,{weapon:'laser'}),tank('B',105,80,Math.PI)]) {
+    const layout={tanks:[a,b]};
+    assert.deepEqual((await seat.act(observe({B:neutral},b,layout))).value,moving);
+    assert.deepEqual((await seat.act(observe({B:shooting},b,layout))).value,neutral);
+    assert.deepEqual((await seat.act(observe({B:shooting},b,{tanks:[a,{...b,fireHeld:true}]}))).value,moving);
+    const teams={A:'1',B:'1'};
+    assert.deepEqual((await seat.act(observe({B:shooting},b,{...layout,teams,friendlyFire:false}))).value,moving);
+    assert.deepEqual((await seat.act(observe({B:shooting},b,{...layout,teams,friendlyFire:true}))).value,neutral);
+    assert.deepEqual((await seat.act(observe({B:shooting},b,{...layout,
+      walls:[{x1:84,y1:0,x2:84,y2:128}]}))).value,moving);
+  }
 });
 
-test('the overlay ignores same-tick input, stale history, and previous-round input',async()=>{
+test('takes very short clear shots only when safe, fresh, and below the shell cap',async()=>{
+  const b=tank('B',100,64,0), seat=wrap();
+  assert.deepEqual((await seat.act(observe({B:neutral},b))).value,shooting);
+  const a=tank('A',64,64,0);
+  assert.deepEqual((await seat.act(observe({B:neutral},b,{tanks:[{...a,fireHeld:true},b]}))).value,neutral);
+  const {shellLimit}=classicProfile(25);
+  const bullets=Array.from({length:shellLimit},()=>({kind:'shell',owner:'A',x:240,y:240,vx:1,vy:0}));
+  assert.deepEqual((await seat.act(observe({B:neutral},b,{bullets}))).value,neutral);
+  const incoming={kind:'shell',owner:'B',x:85,y:64,vx:-5,vy:0};
+  assert.deepEqual((await seat.act(observe({B:neutral},b,{bullets:[incoming]}))).value,neutral);
+  assert.deepEqual((await seat.act(observe({},b))).value,neutral);
+});
+
+test('the overlay honors tick zero but refuses delayed, missing, or inactive inputs',async()=>{
   const b=tank('B',124,82,-Math.PI/2), msg=observe({B:moving},b), seat=wrap();
-  for(const opponentActionsTick of [null,15,17,18]) {
+  for(const opponentActionsTick of [null,15,16,18,undefined]) {
     assert.deepEqual((await seat.act({...msg,opponentActionsTick})).value,neutral);
   }
-  assert.deepEqual((await seat.act({...msg,tick:0,opponentActionsTick:null})).value,neutral);
-  for(const override of [{roundTick:0},{phase:'intermission'},{phase:'finished'}]) {
-    assert.deepEqual((await seat.act({...msg,observation:{...msg.observation,...override}})).value,neutral);
+  assert.deepEqual((await seat.act({...msg,tick:0,opponentActionsTick:0,
+    observation:{...msg.observation,tick:0,roundTick:0}})).value,shooting);
+  for(const phase of ['intermission','finished']) {
+    assert.deepEqual((await seat.act({...msg,observation:{...msg.observation,phase}})).value,neutral);
   }
 });
 
@@ -73,4 +94,31 @@ test('ordinary bot call receives untouched common tick and no read-input metadat
   assert.equal(await seat.act(original,50),originalResponse);
   seat.close();
   assert.ok(opened&&closed);
+});
+
+function wallCase(tick,overrides={}) {
+  const b=tank('B',230,230,0);
+  return {...observe({B:neutral},b),tick,opponentActionsTick:tick,
+    observation:{...observe({B:neutral},b).observation,tick,roundTick:tick,round:1,
+      walls:[{x1:64,y1:0,x2:64,y2:128}],tanks:[tank('A',76.25,96,Math.PI),b],...overrides}};
+}
+
+test('recover with legal reverse after repeated real wall blocks, then resume after progress',async()=>{
+  const seat=wrap(moving);
+  for(let tick=0;tick<3;tick++) assert.deepEqual((await seat.act(wallCase(tick))).value,moving);
+  assert.deepEqual((await seat.act(wallCase(3))).value,{...neutral,throttle:-1});
+  const b=tank('B',230,230,0), clear=tank('A',84.5,96,Math.PI);
+  assert.deepEqual((await seat.act(wallCase(4,{tanks:[clear,b]}))).value,moving);
+});
+
+test('idle, solitary wall contact, round changes and live nearby hazards do not trigger recovery',async()=>{
+  const idle=wrap();
+  for(let tick=0;tick<7;tick++) assert.deepEqual((await idle.act(wallCase(tick))).value,neutral);
+  const seat=wrap(moving), b=tank('B',230,230,0), clear=tank('A',92,96,Math.PI);
+  assert.deepEqual((await seat.act(wallCase(0))).value,moving);
+  assert.deepEqual((await seat.act(wallCase(1,{tanks:[clear,b]}))).value,moving);
+  for(let tick=2;tick<5;tick++) assert.deepEqual((await seat.act(wallCase(tick))).value,moving);
+  const bullet={kind:'shell',owner:'B',x:93,y:96,vx:-3,vy:0};
+  assert.deepEqual((await seat.act(wallCase(5,{bullets:[bullet]}))).value,moving);
+  assert.deepEqual((await seat.act(wallCase(6,{round:2,roundTick:0}))).value,moving);
 });
