@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {game,gameV4,classicRoundGameV5 as roundGame} from '../adapter/index.js';
+import {gameV5 as game,gameV4,classicRoundGameV5 as roundGame} from '../adapter/index.js';
 
 const eight=Array.from({length:8},(_,i)=>String.fromCharCode(65+i));
 const input={seed:'eight-seats',players:eight,config:{cols:4,rows:4}};

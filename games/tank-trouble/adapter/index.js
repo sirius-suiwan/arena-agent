@@ -73,4 +73,18 @@ export const classicRoundGameV5 = Object.freeze({
   init: classic.initV5
 });
 
-export const game = withClassicSeries(classicRoundGameV5);
+export const gameV5 = withClassicSeries(classicRoundGameV5);
+
+export const classicRoundGameV6 = Object.freeze({
+  ...classicRoundGameV5,
+  version: '6',
+  init: classic.initV6,
+  step: classic.stepV6,
+  matchTickLimit: classic.matchTickLimitV6,
+  observe(state,playerId) {
+    return {...classicRoundGameV5.observe(state,playerId),
+      zone:{...state.zone,outsideTicks:{...state.zone.outsideTicks}}};
+  }
+});
+
+export const game = withClassicSeries(classicRoundGameV6);

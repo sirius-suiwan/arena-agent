@@ -1,4 +1,4 @@
-# 坦克动荡：游戏规则与 Bot 速查（v5）
+# 坦克动荡：游戏规则与 Bot 速查（v6）
 
 1. 两到八辆坦克在随机迷宫对战，普通弹可反弹、可打死自己；一发命中即击毁。每辆坦克最多同时有十枚普通弹，7.5 个游戏秒后消失。普通弹速度默认每 tick 5.2 像素，可以在开局配置；特殊武器不变。
 2. 只剩一辆坦克时还要撑过 3 秒，期间场上弹丸和地雷仍会伤人。活到最后才加一分；同归于尽不加分。每小局更换迷宫，默认先拿三分者获胜。
@@ -6,9 +6,11 @@
 4. 碰到道具箱就会装备；手上已有武器时不能再拿，接触时会提示。默认地图是 12×9 格。具体武器的充能、发射、引爆和命中顺序见下方。
 5. `tick` 是整场计数，`roundTick` 每小局重置；弹丸、地雷、道具的实体 ID 只在各小局内唯一。复盘请用小局号和 ID 一起追踪。
 
+6. 每小局默认第 40 秒开始收缩矩形安全区，持续 15 秒，两项都可调整。留在区外满 2 秒会被淘汰，回到区内会重置计时。最后一辆存活的坦克在 3 秒结算期内无敌。
+
 下方列的是本项目的准确参数，不代表 4399 原版所有数值都已考证。
 
-The old 4399 maze game is the reference, not the Flash runtime or assets. This is an independent, deterministic reconstruction. The original [4399 entry](https://www.4399.com/flash/137953.htm) confirms solo/dual/triple play and the expanded arsenal; the [4399 test-version play guide](https://a.4399.cn/gg/39315180_263349.html) describes bounce, self-kills, randomized maps and crates, and a delay before scoring the last survivor. The [historical Chinese community description](https://www.newton.com.tw/wiki/%E5%9D%A6%E5%85%8B%E5%8B%95%E7%9B%AA2) gives five live ordinary shells, approximate 7–8-second shell life, and several familiar weapon effects. An [archived 2013 weapons guide](https://tanktrouble-archive.fandom.com/wiki/Weapons) describes the separate reflective Laser and its preview. Those sources do not establish exact engine constants. The parameters below define this arena, not claims about original Flash code. For earlier arena logs, see [v1 rules](RULES-v1.md), [v2 rules](RULES-v2.md), [v3 rules](RULES-v3.md) and [v4 rules](RULES-v4.md).
+The old 4399 maze game is the reference, not the Flash runtime or assets. This is an independent, deterministic reconstruction. The original [4399 entry](https://www.4399.com/flash/137953.htm) confirms solo/dual/triple play and the expanded arsenal; the [4399 test-version play guide](https://a.4399.cn/gg/39315180_263349.html) describes bounce, self-kills, randomized maps and crates, and a delay before scoring the last survivor. The [historical Chinese community description](https://www.newton.com.tw/wiki/%E5%9D%A6%E5%85%8B%E5%8B%95%E7%9B%AA2) gives five live ordinary shells, approximate 7–8-second shell life, and several familiar weapon effects. An [archived 2013 weapons guide](https://tanktrouble-archive.fandom.com/wiki/Weapons) describes the separate reflective Laser and its preview. Those sources do not establish exact engine constants. The parameters below define this arena, not claims about original Flash code. For earlier arena logs, see [v1 rules](RULES-v1.md), [v2 rules](RULES-v2.md), [v3 rules](RULES-v3.md) [v4 rules](RULES-v4.md), and [v5 rules](RULES-v5.md).
 
 ## Reading the observation and issuing actions
 
@@ -21,7 +23,15 @@ The old 4399 maze game is the reference, not the Flash runtime or assets. This i
 
 - Two tanks start in seeded opposite corners; three start in distinct seeded corners, as before. For four through eight tanks, choose distinct seeded grid-cell centers, maximizing the distance to the closest previously chosen center at each selection; each tank faces a seeded open exit. This allows even small arenas without overlapping bodies. Each round generates a connected maze with seeded loop openings. Default size is 12×9 cells (768×576 px); custom dimensions remain 4–16 columns and 4–12 rows. Cells are 64 px square, walls are axis-aligned line segments. No wall destruction.
 - Movement order: rotate 0.06 rad/tick, then move up to 2.2 px/tick in that direction. Tank collision radius is 12 px. Wall penetration cancels travel but not rotation. Overlapping candidate tank positions cancel both moves, repeating conflict checks after rewinds. In four- through eight-seat matches, each conflict pass checks the same proposed positions before rewinding any conflicts, rather than giving one seat priority. A tank cannot kill by pushing in this reconstruction.
-- A surviving tank may keep acting for 180 ticks (3 simulation seconds) after becoming the sole survivor. Existing projectiles and mines stay live. If no tanks remain before scoring, no one scores; if the lone tank survives through its settlement tick, it wins. More than one survivor at `maxTicks` draws. No new crates spawn during settlement, but the surviving tank may collect crates already on the map until the round ends. No respawn inside a round.
+- A surviving tank may keep acting for 180 ticks (3 simulation seconds) after becoming the sole survivor. Existing projectiles and mines stay live, but become harmless to the sole survivor. If every tank is destroyed by effects of the same tick, no one scores; otherwise the lone tank wins at its settlement tick. More than one survivor at `maxTicks` draws. No new crates spawn during settlement, but the surviving tank may collect crates already on the map until the round ends. No respawn inside a round.
+
+## Shrinking safe zone (v6)
+
+- `shrinkAfterSeconds` is a whole number from 0 to 120, default 40; `shrinkDurationSeconds` is a whole number from 1 to 120, default 15. Each round restarts the clock. The rectangular safe zone always keeps the arena's aspect ratio and initially covers the board. Its edges move inward linearly during the configured duration, then hold in place (shorter final half-span: 24 px). Its fixed center is the center of the nearest cell to the geometric arena midpoint, choosing the upper/left cell if there is a tie.
+- Observation/state `zone` is `{x,y,halfWidth,halfHeight,initialHalfWidth,initialHalfHeight,finalHalfWidth,finalHalfHeight,startTick,endTick,graceTicks,outsideTicks}`. Start and end are **round-relative** ticks. `outsideTicks` maps seat IDs to consecutive outside ticks. Forecast any half-extent at round tick `t` by interpolating from its initial to final extent using `clamp((t-startTick)/(endTick-startTick),0,1)`.
+- A tank whose center stays strictly outside any edge for 120 consecutive ticks (2 game seconds) is eliminated. Re-entry, including exact edge contact, resets the counter. Shots and mines resolve before the zone; zone eliminations are simultaneous and emit `zone-eliminated` with `tankId,x,y`, not a kill credited to a player. Walls, crates, and shells are not altered by the zone.
+- After all damage and zone eliminations are resolved for a tick, if exactly one tank remains, its observed `invulnerable` flag becomes true. During the existing 180-tick settlement, shots and beams pass through it, it cannot trigger mines, and zone exposure is reset and ignored. If nobody survives the initial tick, there is still no winner.
+- Unless set explicitly, the round timeout is the greater of 60 seconds and the configured start plus duration plus 5 seconds. The separate host match tick limit can still end a series.
 
 ## Shells and weapons
 
@@ -35,7 +45,7 @@ The old 4399 maze game is the reference, not the Flash runtime or assets. This i
 - Shrapnel first moves the following tick; it bounces, travels at 5 px/tick, and lasts 60 advances. It can hit the tank that created it. Special-weapon ammunition does not count against the regular ten-shell cap.
 - Within each tick: move tanks, fire weapons, trace projectile movement, trigger mines, create burst fragments, then resolve impacts and round status, then collect/spawn crates when applicable. A fired weapon or projectile survives a same-tick owner death. Hits are gathered against the same pre-damage tank state, so simultaneous deaths are possible. Same-time tank hit ties are resolved in stable seat order. Logs contain shot, bounce, hit, destruction, expiry, crate, and weapon/burst events with stable within-round IDs.
 
-Config bounds are in [config-v5.json](schema/config-v5.json); the [action schema](schema/action-v5.json) describes only the game payload, not its transport envelope. RC missile, homing missile, exact original maze distribution and tuning, Flash UI input behavior, and collision-based kills are not implemented. For deterministic re-simulation, use the same implementation, runtime, config, player order, seed, and accepted action stream.
+Config bounds are in [config-v6.json](schema/config-v6.json); the [action schema](schema/action-v6.json) describes only the game payload, not its transport envelope. RC missile, homing missile, exact original maze distribution and tuning, Flash UI input behavior, and collision-based kills are not implemented. For deterministic re-simulation, use the same implementation, runtime, config, player order, seed, and accepted action stream.
 
 ## Match wrapper and replay
 

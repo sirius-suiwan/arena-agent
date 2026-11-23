@@ -1,14 +1,14 @@
 import {parseArgs} from 'node:util';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {game,gameV1,gameV2,gameV3,gameV4} from '../../games/tank-trouble/adapter/index.js';
+import {game,gameV1,gameV2,gameV3,gameV4,gameV5} from '../../games/tank-trouble/adapter/index.js';
 import {recorder,verifyReplay} from '../../replay/index.js';
 import {makeMatch,seatIds} from './match-options.js';
 import {loadBotRegistry} from './bot-registry.js';
 import {serve} from './serve.js';
 
 const root = fileURLToPath(new URL('../../',import.meta.url));
-const registry = Object.freeze(Object.fromEntries([game,gameV1,gameV2,gameV3,gameV4].map(g=>[g.id+'@'+g.version,g])));
+const registry = Object.freeze(Object.fromEntries([game,gameV1,gameV2,gameV3,gameV4,gameV5].map(g=>[g.id+'@'+g.version,g])));
 const [command,...args] = process.argv.slice(2);
 const seatFlags=prefix=>Object.fromEntries(seatIds.map(id=>[prefix+id.toLowerCase(),{type:'string'}]));
 
@@ -24,11 +24,18 @@ try {
     args,allowPositionals:true,options:{
       seed:{type:'string'}, 'max-ticks':{type:'string'}, 'timeout-ms':{type:'string'},
       ...seatFlags('bot-'),...seatFlags('name-'),'score-to-win':{type:'string'},port:{type:'string'},
-      rounds:{type:'string'},out:{type:'string'},cols:{type:'string'},rows:{type:'string'},'shell-speed':{type:'string'}
+      rounds:{type:'string'},out:{type:'string'},cols:{type:'string'},rows:{type:'string'},'shell-speed':{type:'string'},
+      'shrink-after':{type:'string'},'shrink-duration':{type:'string'}
     }
   });
   const config=Object.fromEntries([['cols',values.cols],['rows',values.rows],['scoreToWin',values['score-to-win']]]
     .filter(([,value])=>value!==undefined).map(([key,value])=>[key,integer(value)]));
+  for (const [flag,key,min] of [['shrink-after','shrinkAfterSeconds',0],['shrink-duration','shrinkDurationSeconds',1]]) {
+    if (values[flag]===undefined) continue;
+    const value=integer(values[flag]);
+    if (value<min || value>120) throw new Error(`--${flag} must be ${min}–120 seconds`);
+    config[key]=value;
+  }
   if (values['shell-speed']!==undefined) {
     const speed=Number(values['shell-speed']);
     if (!Number.isFinite(speed) || speed<3 || speed>9) throw new Error('shell speed must be 3–9 px/tick');
@@ -65,7 +72,7 @@ try {
     if (positionals.length) throw new Error('serve does not accept positional arguments');
     await serve({game,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
   } else if (!command || command === 'help') {
-    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl> | serve');
+    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl> | serve\nrun and serve: --shrink-after <0–120> --shrink-duration <1–120> (seconds)');
   } else {
     throw new Error(`unknown command: ${command}`);
   }

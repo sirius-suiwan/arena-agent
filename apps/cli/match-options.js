@@ -34,7 +34,7 @@ export function parseCustomSeats(roster,registry) {
   return {ids:seatIds.filter(id=>Object.hasOwn(roster,id)),paths,humanControls};
 }
 
-export async function makeMatch({game,root,base,seed,config={},maxTicks=game.defaultMatchTicks??3600,timeoutMs=50,mode='bots',realtime=false,paths={},registry=new Map(),human={},playerNames={},recorder,onRecord,roster}) {
+export async function makeMatch({game,root,base,seed,config={},maxTicks=game.matchTickLimit?.(config)??game.defaultMatchTicks??3600,timeoutMs=50,mode='bots',realtime=false,paths={},registry=new Map(),human={},playerNames={},recorder,onRecord,roster}) {
   const custom=mode==='custom'?parseCustomSeats(roster,registry):null;
   if (custom) paths=custom.paths;
   const ids=custom?.ids ?? playersForMode(mode,paths);

@@ -33,7 +33,9 @@ function seedValue(input) {
 export const DEFAULT_CONFIG = Object.freeze({ cols: 8, rows: 6, maxTicks: 3600, pickupInterval: 360, pickups: true });
 export const DEFAULT_CONFIG_V3 = Object.freeze({ ...DEFAULT_CONFIG, cols:12, rows:9 });
 export const DEFAULT_CONFIG_V4 = Object.freeze({ ...DEFAULT_CONFIG_V3, shellSpeed:5.2 });
+export const DEFAULT_CONFIG_V6 = Object.freeze({ ...DEFAULT_CONFIG_V4, shrinkAfterSeconds:40, shrinkDurationSeconds:15 });
 const CRATE_HALF_SIZE=8, PICKUP_PADDING=2;
+const ZONE_GRACE=2*TICK_RATE, ZONE_FINAL_MIN_HALF_SPAN=24;
 
 function normalizedConfig(input, defaults) {
   if (input === undefined) return { ...defaults };
@@ -46,6 +48,16 @@ function normalizedConfig(input, defaults) {
   if (typeof c.pickups !== 'boolean') throw new TypeError('pickups must be a boolean');
   if (Object.hasOwn(defaults,'shellSpeed') && (!Number.isFinite(c.shellSpeed)||c.shellSpeed<3||c.shellSpeed>9)) {
     throw new RangeError('shellSpeed must be a finite number between 3 and 9 px/tick');
+  }
+  if (Object.hasOwn(defaults,'shrinkAfterSeconds')) {
+    for (const [key,lo] of [['shrinkAfterSeconds',0],['shrinkDurationSeconds',1]]) {
+      if (!Number.isInteger(c[key])||c[key]<lo||c[key]>120) {
+        throw new RangeError(key+' must be an integer in ['+lo+', 120]');
+      }
+    }
+    if (!Object.hasOwn(input,'maxTicks')) {
+      c.maxTicks=Math.max(c.maxTicks,(c.shrinkAfterSeconds+c.shrinkDurationSeconds+5)*TICK_RATE);
+    }
   }
   return c;
 }
@@ -154,6 +166,27 @@ export const init = (input) => initRound(input, false, DEFAULT_CONFIG);
 export const initV3 = (input) => initRound(input, true, DEFAULT_CONFIG_V3);
 export const initV4 = (input) => initRound(input, true, DEFAULT_CONFIG_V4);
 export const initV5 = (input) => initRound(input, true, DEFAULT_CONFIG_V4, 8);
+export function matchTickLimitV6({scoreToWin:_scoreToWin,...config}={}) {
+  const {maxTicks}=normalizedConfig(config,DEFAULT_CONFIG_V6);
+  return Math.min(100_000,Math.max(8400,3*(maxTicks+TICK_RATE)));
+}
+export function initV6(input) {
+  const state=initRound(input,true,DEFAULT_CONFIG_V6,8);
+  const {width,height}=state;
+  // The middle cell is reachable; for even dimensions choose the upper/left
+  // tied cell so the center never lies on a maze wall.
+  const x=(Math.floor((state.config.cols-1)/2)+0.5)*CELL;
+  const y=(Math.floor((state.config.rows-1)/2)+0.5)*CELL;
+  const initialScale=Math.max(Math.max(x,width-x)/width,Math.max(y,height-y)/height);
+  const finalScale=ZONE_FINAL_MIN_HALF_SPAN/Math.min(width,height);
+  const initialHalfWidth=width*initialScale, initialHalfHeight=height*initialScale;
+  const startTick=state.config.shrinkAfterSeconds*TICK_RATE;
+  const zone={x,y,halfWidth:initialHalfWidth,halfHeight:initialHalfHeight,initialHalfWidth,initialHalfHeight,
+    finalHalfWidth:width*finalScale,finalHalfHeight:height*finalScale,
+    startTick,endTick:startTick+state.config.shrinkDurationSeconds*TICK_RATE,graceTicks:ZONE_GRACE,
+    outsideTicks:Object.fromEntries(state.tanks.map(t=>[t.id,0]))};
+  return {...state,zone,tanks:state.tanks.map(t=>({...t,invulnerable:false}))};
+}
 
 function distanceToWallSquared(x, y, w) {
   return (x-between(x,w.x1,w.x2))**2 + (y-between(y,w.y1,w.y2))**2;
@@ -216,6 +249,8 @@ function bounceVelocity(b, normals) {
 
 // Ray path is a point sweep against wall segments, sharing the same corner
 // priority as shells. It can encounter its owner after the first reflection.
+const vulnerable=(s,t)=>t.alive && (!s.zone||!t.invulnerable);
+
 function traceLaser(s,tank,range,withTanks) {
   let {x,y}=tank;
   const dir={vx:Math.cos(tank.angle),vy:Math.sin(tank.angle)};
@@ -225,7 +260,7 @@ function traceLaser(s,tank,range,withTanks) {
     const wall=wallHit(x,y,dx,dy,s.walls,0);
     let target=null;
     if (withTanks) for (const t of s.tanks) {
-      if (!t.alive || (segment===0&&t.id===tank.id)) continue;
+      if (!vulnerable(s,t) || (segment===0&&t.id===tank.id)) continue;
       const f=circleHit(x,y,dx,dy,t.x,t.y,TANK_RADIUS);
       if (f!==null && (!target||f<target.f-EPS)) target={id:t.id,f};
     }
@@ -338,7 +373,7 @@ function fireShells(s, actions, events, impacts, deferred, shellSpeed, shellLimi
       const b={id:'b'+s.nextBullet++,owner:t.id,kind:'death-ray'};
       events.push({type:'weapon-fired',tankId:t.id,weapon:t.weapon,bulletId:b.id,x:t.x,y:t.y,endX,endY});
       for (const enemy of s.tanks) {
-        if (!enemy.alive||enemy.id===t.id) continue;
+        if (!vulnerable(s,enemy)||enemy.id===t.id) continue;
         const f=circleHit(t.x,t.y,dx*range,dy*range,enemy.x,enemy.y,TANK_RADIUS);
         if (f!==null) impacts.push({bullet:b,tankId:enemy.id,x:t.x+dx*range*f,y:t.y+dy*range*f});
       }
@@ -410,7 +445,7 @@ function advanceShell(b, s, events, impacts, deferred) {
     const wall=wallHit(b.x,b.y,dx,dy,s.walls);
     let target = null;
     for (const t of s.tanks) {
-      if (!t.alive || (t.id===b.owner && !b.ownerArmed)) continue;
+      if (!vulnerable(s,t) || (t.id===b.owner && !b.ownerArmed)) continue;
       const radius=TANK_RADIUS+BULLET_RADIUS;
       const overlapping=(b.x-t.x)**2+(b.y-t.y)**2<radius**2-EPS;
       const f=overlapping?0:circleHit(b.x,b.y,dx,dy,t.x,t.y,radius);
@@ -498,14 +533,35 @@ function advanceMines(s,events,deferred) {
     const owner=s.tanks.find(t=>t.id===m.owner);
     if (!owner.alive||Math.hypot(owner.x-m.x,owner.y-m.y)>TANK_RADIUS+8) m.ownerCleared=true;
     if (s.tick<m.armedAt) return true;
-    const victim=s.tanks.find(t=>t.alive&&(t.id!==m.owner||m.ownerCleared)&&Math.hypot(t.x-m.x,t.y-m.y)<=TANK_RADIUS+6);
+    const victim=s.tanks.find(t=>vulnerable(s,t)&&(t.id!==m.owner||m.ownerCleared)&&Math.hypot(t.x-m.x,t.y-m.y)<=TANK_RADIUS+6);
     if (!victim) return true;
     burst(m,s,events,'mine-burst',0,deferred);
     return false;
   });
 }
 
-function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=MAX_SHELLS) {
+function advanceZone(s, events) {
+  const zone=s.zone;
+  if (s.tick<zone.startTick) return;
+  const fraction=between((s.tick-zone.startTick)/(zone.endTick-zone.startTick),0,1);
+  const lerp=(a,b)=>fraction===1?b:a+(b-a)*fraction;
+  const halfWidth=lerp(zone.initialHalfWidth,zone.finalHalfWidth);
+  const halfHeight=lerp(zone.initialHalfHeight,zone.finalHalfHeight);
+  const outsideTicks={...zone.outsideTicks};
+  for (const tank of s.tanks) {
+    if (!tank.alive) continue;
+    const outside=!tank.invulnerable && (Math.abs(tank.x-zone.x)>halfWidth || Math.abs(tank.y-zone.y)>halfHeight);
+    const exposure=outside?outsideTicks[tank.id]+1:0;
+    outsideTicks[tank.id]=exposure;
+    if (exposure>=zone.graceTicks) {
+      tank.alive=false;
+      events.push({type:'zone-eliminated',tankId:tank.id,x:tank.x,y:tank.y});
+    }
+  }
+  s.zone={...zone,halfWidth,halfHeight,outsideTicks};
+}
+
+function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=MAX_SHELLS, withZone=false) {
   if (state.result) return {state,events:[],result:state.result};
   const s={...state,tick:state.tick+1,bullets:state.bullets.map(b=>({...b})),pickups:[...state.pickups],
     mines:state.mines.map(m=>({...m}))};
@@ -524,9 +580,17 @@ function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=M
       events.push({type:'destroyed',tankId:t.id,bulletId:b.id,ownerId:b.owner,kind:b.kind});
     }
   }
+  if (withZone) advanceZone(s,events);
   const alive=s.tanks.filter(t=>t.alive);
   if (alive.length===0) s.result={winner:null,reason:s.tanks.length===2?'double-knockout':'mutual-knockout'};
   else if (alive.length===1) {
+    if (withZone) {
+      const survivor=alive[0];
+      survivor.invulnerable=true;
+      if (s.zone.outsideTicks[survivor.id]!==0) {
+        s.zone={...s.zone,outsideTicks:{...s.zone.outsideTicks,[survivor.id]:0}};
+      }
+    }
     if (s.settleUntil===null) {
       s.settleUntil=s.tick+SETTLE;
       events.push({type:'last-tank-pending',tankId:alive[0].id,settleUntil:s.settleUntil});
@@ -551,3 +615,4 @@ function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=M
 export const step = (state, actions) => stepRound(state, actions, false);
 export const stepV3 = (state, actions) => stepRound(state, actions, true);
 export const stepV4 = (state, actions) => stepRound(state, actions, true, state.config.shellSpeed, MAX_SHELLS_V4);
+export const stepV6 = (state, actions) => stepRound(state, actions, true, state.config.shellSpeed, MAX_SHELLS_V4, true);
