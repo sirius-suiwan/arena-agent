@@ -8,7 +8,7 @@ import {runMatch} from '../core/match.js';
 import {recorder,verifyReplay} from '../replay/index.js';
 import {makeMatch} from '../apps/cli/match-options.js';
 import {LocalBot} from '../runners/local-process/index.js';
-import {game} from '../games/tank-trouble/adapter/index.js';
+import {game,gameV1} from '../games/tank-trouble/adapter/index.js';
 import {jumpGame} from './fixtures/jump-game.js';
 
 const root = fileURLToPath(new URL('../',import.meta.url));
@@ -55,6 +55,16 @@ test('runs independent JS and Python bots and replays a tank match',async t=>{
   assert.deepEqual(await verifyReplay(join(match.directory,'match.jsonl'),{[game.id]:game}),{ticks:ticks.length,result});
   await writeFile(join(match.directory,'truncated.jsonl'),dump.slice(0,-1).map(JSON.stringify).join('\n'));
   await assert.rejects(verifyReplay(join(match.directory,'truncated.jsonl'),{[game.id]:game}), /missing end/);
+});
+
+test('prior v1 logs select the frozen rules even when v2 is present',async t=>{
+  const base=await folder(t);
+  const match=await makeMatch({game:gameV1,root,base,seed:42,maxTicks:12,timeoutMs:1000,recorder});
+  const result=await match.run();
+  const registry={['tank-trouble@1']:gameV1,['tank-trouble@2']:game};
+  const file=join(match.directory,'match.jsonl');
+  assert.deepEqual((await verifyReplay(file,registry)).result,result);
+  await assert.rejects(verifyReplay(file,{'tank-trouble':game}), /unknown rules version/);
 });
 
 test('local transport discards stale tick replies and bounds action timeout',async()=>{

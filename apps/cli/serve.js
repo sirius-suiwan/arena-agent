@@ -2,7 +2,7 @@ import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {recorder} from '../../replay/index.js';
-import {makeMatch} from './match-options.js';
+import {humansForMode,makeMatch} from './match-options.js';
 
 const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8'};
 const json = (res,status,data) => { res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data)); };
@@ -21,7 +21,8 @@ async function requestBody(req) {
 export async function serve({game,root,base,port}) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid port');
   const clients = new Set();
-  let active=false, mode, first, latest, terminal, held=game.neutralAction(), fireQueued=false;
+  let active=false, mode, first, latest, terminal, epoch=0;
+  let inputs=new Map();
   const send = (res,event) => {
     if (!event || res.destroyed) return;
     if (res.writableLength > 256*1024) {res.destroy();return;}
@@ -33,11 +34,12 @@ export async function serve({game,root,base,port}) {
     if (event.type==='end' || event.type==='error') terminal=event;
     for (const res of clients) send(res,event);
   };
-  const human = {act:() => {
-    const value = {...held,fire:held.fire || fireQueued};
-    fireQueued=false;
+  const human = id => ({act:() => {
+    const input=inputs.get(id);
+    const value={...input.held,fire:input.held.fire || input.fireQueued};
+    input.fireQueued=false;
     return {value};
-  }};
+  }});
   const server = createServer(async (req,res) => {
     const host = req.headers.host;
     if (!['127.0.0.1:'+port,'localhost:'+port].includes(host) ||
@@ -54,19 +56,23 @@ export async function serve({game,root,base,port}) {
         return;
       }
       if (req.method==='POST' && path==='/api/input') {
-        if (!active || mode!=='human') return json(res,409,{error:'no human match'});
-        const value = game.validateAction(await requestBody(req));
-        if (value.fire && !held.fire) fireQueued=true;
-        held=value;
+        const requestEpoch=epoch;
+        const {playerId='A',...action}=await requestBody(req);
+        if (!active || epoch!==requestEpoch || !inputs.has(playerId)) return json(res,409,{error:'no human seat'});
+        const value=game.validateAction(action);
+        const input=inputs.get(playerId);
+        if (value.fire && !input.held.fire) input.fireQueued=true;
+        input.held=value;
         return json(res,200,{ok:true});
       }
       if (req.method==='POST' && path==='/api/match') {
         const data = await requestBody(req);
         if (active) return json(res,409,{error:'match already in progress'});
-        if (!['bots','human'].includes(data?.mode) || !Number.isSafeInteger(data.seed)) return json(res,400,{error:'invalid match options'});
-        active=true;mode=data.mode;first=latest=terminal=undefined;held=game.neutralAction();fireQueued=false;
+        if (!['bots','human','local2','local3'].includes(data?.mode) || !Number.isSafeInteger(data.seed)) return json(res,400,{error:'invalid match options'});
+        active=true;mode=data.mode;epoch++;first=latest=terminal=undefined;
+        inputs=new Map(humansForMode(mode).map(id=>[id,{held:game.neutralAction(),fireQueued:false}]));
         try {
-          const match=await makeMatch({game,root,base,seed:data.seed,mode,realtime:true,human,recorder,onRecord:publish});
+          const match=await makeMatch({game,root,base,seed:data.seed,mode,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
           json(res,202,{ok:true,matchId:match.directory.split(/[\\/]/).at(-1)});
           void match.run().catch(error=>publish({type:'error',message:error.message})).finally(()=>{active=false;});
         } catch(error) {

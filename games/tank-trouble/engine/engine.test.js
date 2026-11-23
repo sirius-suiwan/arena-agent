@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { game } from '../adapter/index.js';
+import { gameV1 as game } from '../adapter/index.js';
 
 const initial = (seed=44,config) => game.init({seed,config,players:['a','b']});
 const act = (throttle=0,turn=0,fire=false)=>({throttle,turn,fire});

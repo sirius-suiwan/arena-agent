@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tank Trouble v2 match config",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "cols": {"type": "integer", "minimum": 4, "maximum": 16, "default": 8},
+    "rows": {"type": "integer", "minimum": 4, "maximum": 12, "default": 6},
+    "maxTicks": {"type": "integer", "minimum": 1, "maximum": 36000, "default": 3600},
+    "pickupInterval": {"type": "integer", "minimum": 1, "maximum": 3600, "default": 360},
+    "pickups": {"type": "boolean", "default": true}
+  }
+}

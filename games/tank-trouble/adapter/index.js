@@ -1,4 +1,6 @@
 import { init, step, TICK_RATE } from '../engine/engine.js';
+import * as classic from '../engine/classic.js';
+import {withClassicSeries} from '../series/index.js';
 
 function validateAction(action) {
   if (!action || typeof action !== 'object' || Array.isArray(action) ||
@@ -11,7 +13,7 @@ function validateAction(action) {
   return {throttle:action.throttle,turn:action.turn,fire:action.fire};
 }
 
-export const game = Object.freeze({
+export const gameV1 = Object.freeze({
   id: 'tank-trouble',
   version: '1',
   tickRate: TICK_RATE,
@@ -26,3 +28,17 @@ export const game = Object.freeze({
   neutralAction() { return {throttle:0,turn:0,fire:false}; },
   step
 });
+
+export const classicRoundGame = Object.freeze({
+  ...gameV1,
+  version: '2',
+  init: classic.init,
+  observe(state, playerId) {
+    const obs=gameV1.observe(state,playerId);
+    return {...obs,tanks:obs.tanks.map(t=>({...t,aimGuide:t.aimGuide?.map(point=>({...point}))??null})),
+      mines:state.mines.map(m=>({...m})),settleUntil:state.settleUntil};
+  },
+  step: classic.step
+});
+
+export const game = withClassicSeries(classicRoundGame);

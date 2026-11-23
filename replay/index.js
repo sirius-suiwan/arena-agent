@@ -31,7 +31,7 @@ export async function verifyReplay(path,registry) {
       if (!manifest) {
         check(record.type === 'start' && record.manifest?.format === 1,'missing or unsupported start');
         manifest = record.manifest;
-        game = registry[manifest.game];
+        game = registry[manifest.game + '@' + manifest.rulesVersion] ?? registry[manifest.game];
         check(game?.version === manifest.rulesVersion && game.tickRate === manifest.tickRate,'unknown rules version');
         state = game.init(manifest);
         check(stateHash(state) === record.hash && stateHash(record.state) === record.hash,'start state differs');
