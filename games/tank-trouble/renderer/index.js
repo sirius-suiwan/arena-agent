@@ -232,30 +232,20 @@ function drawEffects(ctx, state, effects, mode) {
   }
 }
 
-function drawKillHighlight(ctx, state, mode, highlight) {
-  if (!highlight) return;
-  const color = teamForOwner(state, mode, highlight.ownerId);
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  if (drawPath(ctx, highlight.points)) {
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 5.4; ctx.stroke();
-    ctx.strokeStyle = color.outline; ctx.lineWidth = 2.8;
-    ctx.setLineDash([5.5, 3.5]); ctx.stroke(); ctx.setLineDash([]);
+function drawLethalRings(ctx, state, mode, rings) {
+  for (const ring of rings) {
+    if (!pointIsValid(ring)) continue;
+    const color = teamForOwner(state, mode, ring.ownerId);
+    ctx.save();
+    ctx.beginPath(); ctx.arc(ring.x, ring.y, 6.8, 0, Math.PI * 2);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.8; ctx.stroke();
+    ctx.strokeStyle = color.outline; ctx.lineWidth = 1.4; ctx.stroke();
+    ctx.restore();
   }
-  const hit = highlight.hit;
-  if (pointIsValid(hit)) {
-    ctx.beginPath(); ctx.arc(hit.x, hit.y, 9, 0, Math.PI * 2);
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 4.6; ctx.stroke();
-    ctx.strokeStyle = color.outline; ctx.lineWidth = 2.2; ctx.stroke();
-    ctx.beginPath(); ctx.arc(hit.x, hit.y, 2.4, 0, Math.PI * 2);
-    ctx.fillStyle = color.hull; ctx.fill();
-  }
-  ctx.restore();
 }
 
 /** Draw a read-only projection of an authoritative tank state; no art files from the original are used. */
-export function drawTankFrame(canvas, state, { mode, effects = [], highlight = null } = {}) {
+export function drawTankFrame(canvas, state, { mode, effects = [], lethalRings = [] } = {}) {
   const { ctx, width, height, ratio } = fitCanvas(canvas);
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -330,7 +320,7 @@ export function drawTankFrame(canvas, state, { mode, effects = [], highlight = n
   ctx.rect(0, 0, state.width, state.height);
   ctx.clip();
   drawEffects(ctx, state, effects, mode);
-  drawKillHighlight(ctx, state, mode, highlight);
+  drawLethalRings(ctx, state, mode, lethalRings);
   drawPickupFeedback(ctx, state, effects);
   ctx.restore();
 }

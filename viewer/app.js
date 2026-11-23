@@ -1,5 +1,5 @@
 import { renderers } from './renderers.js';
-import { killHighlight } from './replay-highlight.js';
+import { indexLethalProjectiles, lethalProjectileRings } from './replay-highlight.js';
 import { matchMode, keyboardAction, keySeat, pointerAction } from './input.js';
 
 const byId = (id) => document.getElementById(id);
@@ -163,10 +163,9 @@ function renderKillMarkers() {
   const status = el['kill-status'];
   status.hidden = !selectedKill;
   if (selectedKill) {
-    const { highlight } = selectedKill;
-    status.textContent = highlight
-      ? (highlight.selfHit ? '高亮：反弹或自伤导致击毁。' : '高亮：造成击毁的弹道。')
-      : '该回放缺少弹道数据，只定位到击毁时刻。';
+    const event = selectedKill.row.event;
+    status.textContent = event.ownerId != null && event.ownerId === (event.tankId ?? event.targetId)
+      ? '这次击毁是自伤。' : '已跳到击毁时刻。';
   }
 }
 
@@ -362,7 +361,7 @@ function render() {
     renderer.draw(el.battle, record.state, {
       mode: match.manifest?.mode,
       effects: effectsAt(match.frames, current),
-      highlight: replay && selectedKill?.row.index === current ? selectedKill.highlight : null,
+      lethalRings: replay ? lethalProjectileRings(replay.lethalIndex, record, current) : [],
     });
   } else if (!menuVisible) {
     el.battle.getContext('2d')?.clearRect(0, 0, el.battle.width, el.battle.height);
@@ -398,7 +397,7 @@ function liveStatus() {
 function seek(index, killRow = null) {
   if (!replay) return;
   frameIndex = Math.max(0, Math.min(replay.frames.length - 1, index));
-  selectedKill = killRow ? { row: killRow, highlight: killHighlight(replay.frames, frameIndex, killRow.event) } : null;
+  selectedKill = killRow ? { row: killRow } : null;
   queueDraw(true);
 }
 
@@ -656,6 +655,7 @@ el['replay-file'].addEventListener('change', async () => {
   try {
     const candidate = await readReplay(file, () => importId === importSequence);
     if (!candidate || importId !== importSequence) return;
+    candidate.lethalIndex = indexLethalProjectiles(candidate.frames);
     replay = candidate;
     selectedKill = null;
     replayStarted = false;
