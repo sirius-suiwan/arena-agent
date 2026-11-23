@@ -5,7 +5,7 @@ import { matchMode, keyboardAction, keySeat, pointerAction, humanControls, human
 
 const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
-  'battle', 'mode-label', 'match-form', 'seed', 'match-seed', 'simulation-rate', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
+  'battle', 'mode-label', 'match-form', 'seed', 'match-seed', 'match-insight', 'simulation-rate', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'match-id', 'match-id-value', 'match-id-copy',
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
@@ -436,6 +436,10 @@ function render() {
   const currentSeed = match.manifest?.seed;
   el['match-seed'].hidden = !Number.isSafeInteger(currentSeed);
   setText(el['match-seed'], Number.isSafeInteger(currentSeed) ? `种子 ${currentSeed}` : '');
+  const insightSeats = match.manifest?.inputInsight?.seats;
+  const privileged = Array.isArray(insightSeats) ? insightSeats.filter((id) => typeof id === 'string' && /^[A-H]$/.test(id)).slice(0, 8) : [];
+  el['match-insight'].hidden = privileged.length === 0;
+  setText(el['match-insight'], privileged.length ? `读指令：${privileged.join('、')}` : '');
   el.menu.hidden = !menuVisible;
   el.stage.hidden = menuVisible;
   renderMatchId(match.manifest);

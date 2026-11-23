@@ -64,11 +64,15 @@ function matchDetails(manifest,readiness,state) {
   const info=pick(manifest,['matchId','game','rulesVersion','tickRate','seed','mode','realtime','timeoutMs','maxTicks']);
   const players=manifest.players.map(id=>({
     seat:id,name:text(manifest.playerNames?.[id]??id),
-    ...pick(manifest.botVersions?.[id],['id','kind','sha256','packageSha256']),
+    ...pick(manifest.botVersions?.[id],['id','kind','sha256','packageSha256','policy']),
     readiness:text(readiness?.[id]??null)
   }));
   const layout=pick(state,['width','height','shellLimit','targetScore','roundLimit']);
   return {...info,config:shortConfig(manifest.config),
+    ...(Array.isArray(manifest.inputInsight?.seats)?{inputInsight:{
+      seats:manifest.inputInsight.seats.filter(id=>manifest.players.includes(id)).slice(0,8),
+      ...pick(manifest.inputInsight,['contract','timing','policy'])
+    }}:{}),
     ...(state?.config?{effectiveConfig:shortConfig(state.config)}:{}),
     ...(Object.keys(layout).length?{layout}:{}),players};
 }

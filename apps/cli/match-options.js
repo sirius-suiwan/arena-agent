@@ -1,8 +1,9 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
+import {readFile,realpath} from 'node:fs/promises';
 import {basename,extname,join,resolve} from 'node:path';
 import {runMatch} from '../../core/match.js';
 import {LocalBot} from '../../runners/local-process/index.js';
+import {LAIKA_INSIGHT_POLICY,withLaikaInsight} from '../../games/tank-trouble/bots/laika-insight.js';
 
 export const seatIds = Object.freeze([...'ABCDEFGH']);
 export const controls = Object.freeze(['arrows','esdf','mouse']);
@@ -48,14 +49,19 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks=game.mat
       return {id,human:true,version:{kind:'human'}};
     }
     const fallback=id==='B'?'laika':'gpt-dots';
-    const registered=registry.get(paths[id] ?? fallback);
+    const choice=paths[id] ?? fallback;
+    const registered=registry.get(choice);
     if (registered && names[id]===undefined) names[id]=registered.name;
     const path = registered?.path ?? resolve(paths[id] ?? join(root,'bots',fallback,'bot.js'));
     const ext = extname(path);
     if (!['.py','.js','.mjs'].includes(ext)) throw new Error('bot extension must be .py, .js or .mjs');
     const sha256 = registered?.sha256 ?? createHash('sha256').update(await readFile(path)).digest('hex');
-    return {id,path,command:ext === '.py' ? 'python3' : process.execPath,version:{
-      file:basename(path),sha256,...(registered?{id:registered.id,packageSha256:registered.packageSha256}:{})
+    const insight=game.id==='tank-trouble' && choice==='laika' &&
+      (registered?.id==='laika' || !registered&&paths[id]===undefined&&fallback==='laika') &&
+      await realpath(path)===join(await realpath(root),'bots','laika','bot.js');
+    return {id,path,insight,command:ext === '.py' ? 'python3' : process.execPath,version:{
+      file:basename(path),sha256,...(registered?{id:registered.id,packageSha256:registered.packageSha256}:{}),
+      ...(insight?{policy:LAIKA_INSIGHT_POLICY}:{})
     }};
   }));
   const matchId = randomUUID();
@@ -65,10 +71,15 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks=game.mat
     const seats = {};
     try {
       for (const plan of plans) {
-        seats[plan.id] = plan.human ? human[plan.id] : new LocalBot(plan.command,[plan.path]);
+        if (plan.human) seats[plan.id]=human[plan.id];
+        else {
+          const bot=new LocalBot(plan.command,[plan.path]);
+          seats[plan.id]=plan.insight?withLaikaInsight(bot):bot;
+        }
       }
       return await runMatch({
         game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,signal,playerNames:names,humanControls,record:message => recording.write(message),
+        inputInsightSeats:plans.filter(p=>p.insight).map(p=>p.id),
         botVersions:Object.fromEntries(plans.map(p=>[p.id,p.version]))
       });
     } finally {

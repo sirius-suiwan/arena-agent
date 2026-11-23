@@ -8,14 +8,27 @@ import {canonical,MATCH_FORMAT,MAX_MATCH_TICKS} from '../protocol/game/match-for
 export const stateHash = state => createHash('sha256').update(canonical(state)).digest('hex');
 export const playerIds = seats => Object.keys(seats).sort();
 
-export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3600,timeoutMs=50,realtime=false,record,botVersions={},matchId,signal,playerNames={},humanControls}) {
+function accept(game,submission) {
+  const {value,error} = submission ?? {};
+  let accepted = game.neutralAction(), fallback = error ?? null;
+  if (!fallback) {
+    try { accepted = game.validateAction(value); } catch { fallback = 'invalid_action'; }
+  }
+  return {submitted:value ?? null,accepted,fallback};
+}
+
+export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3600,timeoutMs=50,realtime=false,record,botVersions={},matchId,signal,playerNames={},humanControls,inputInsightSeats=[]}) {
   const players = playerIds(seats);
   if (!Number.isSafeInteger(seed) || !Number.isSafeInteger(maxTicks) || maxTicks < 1 ||
       maxTicks > MAX_MATCH_TICKS || !Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error('invalid match limits');
+  if (!Array.isArray(inputInsightSeats)||inputInsightSeats.some(id=>!players.includes(id))) throw new Error('invalid input insight seats');
+  const insightSet=new Set(inputInsightSeats);
+  const insight=players.filter(id=>insightSet.has(id));
   const manifest = {
     format:MATCH_FORMAT, protocol:1, game:game.id, rulesVersion:game.version, tickRate:game.tickRate,
     mode, realtime, timeoutMs, seed, config, players, maxTicks, botVersions,
-    ...(matchId?{matchId}:{}), ...(humanControls?{humanControls}:{})
+    ...(matchId?{matchId}:{}), ...(humanControls?{humanControls}:{}),
+    ...(insight.length?{inputInsight:{seats:insight,contract:'accepted-opponent-actions',timing:'previous-tick'}}:{})
   };
   try {
     let state = game.init({seed,config,players});
@@ -29,6 +42,7 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
     await record({type:'start',manifest,state,hash:stateHash(state),readiness:Object.fromEntries(players.map((id,i)=>[id,starts[i]?.error ?? 'ready']))});
     const period = 1000 / game.tickRate;
     let deadline = performance.now() + period;
+    let previousActions=null;
     for (let tick = 0; tick < maxTicks; tick++) {
       if (signal?.aborted) {
         const result={winner:null,reason:'stopped'};
@@ -38,27 +52,31 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
       const began = performance.now();
       if (realtime && began - deadline > 4 * period) deadline = began + period;
       const observed = players.map(playerId => game.observe(state, playerId));
+      const messages=players.map((id,i)=>{
+        const message={type:'observe',tick,observation:observed[i]};
+        if (insightSet.has(id)) {
+          message.opponentActionsTick=previousActions===null?null:tick-1;
+          message.opponentActions=previousActions===null?{}:structuredClone(Object.fromEntries(
+            Object.entries(previousActions).filter(([opponent])=>opponent!==id)
+          ));
+        }
+        return message;
+      });
+      // Every seat sees the same pre-step state and receives the same budget.
       const budget = realtime ? Math.max(1, Math.min(timeoutMs, deadline - performance.now())) : timeoutMs;
-      const submissions = await Promise.all(players.map((id,i) => seats[id].act({
-        type:'observe',tick,observation:observed[i]
-      },budget)));
+      const submissions = await Promise.all(players.map((id,i)=>seats[id].act(messages[i],budget)));
       if (realtime) {
         const remaining = deadline - performance.now();
         if (remaining > 0) await delay(Math.ceil(remaining));
         deadline += period;
       }
-      const input = Object.fromEntries(players.map((id,i) => {
-        const {value,error} = submissions[i] ?? {};
-        let accepted = game.neutralAction(), fallback = error ?? null;
-        if (!fallback) {
-          try { accepted = game.validateAction(value); } catch { fallback = 'invalid_action'; }
-        }
-        return [id,{submitted:value ?? null,accepted,fallback}];
-      }));
+      const input = Object.fromEntries(players.map((id,i)=>[id,accept(game,submissions[i])]));
       const actions = Object.fromEntries(players.map(id => [id,input[id].accepted]));
+      const acceptedSnapshot=insight.length?structuredClone(actions):null;
       const next = game.step(state,actions);
       if (next.state.tick !== tick + 1) throw new Error('game must advance exactly one tick');
       state = next.state;
+      previousActions=acceptedSnapshot;
       await record({type:'tick',tick,state,hash:stateHash(state),input,events:next.events});
       if (next.result) {
         await record({type:'end',result:next.result});
