@@ -17,56 +17,13 @@
     </header>
 
     <section id="menu" class="game-menu" aria-labelledby="game-title">
-      <svg class="menu-art" viewBox="0 0 540 260" aria-hidden="true">
-        <defs>
-          <clipPath id="maze-halo"><ellipse cx="277" cy="111" rx="152" ry="102"/></clipPath>
-          <linearGradient id="terrain-ink" x2="0" y2="1">
-            <stop stop-color="#181818"/><stop offset="1" stop-color="#6b6b6b"/>
-          </linearGradient>
-        </defs>
-        <g clip-path="url(#maze-halo)" fill="none" stroke="#ccc" stroke-width="1.5">
-          <path d="M120 22h52v22h22v22h43V27h31v20h25v28h27v23h35V41h36v22h32
-            M137 43v22h28v20h43v20h27v25h-39v45h-24v18h-40
-            M145 108h28v29h-27v25h34v-20h29
-            M216 12V48h-21V20M249 13v56h-23v20h32v26h24v28h-26v48h-54
-            M281 24h54v24h-26v19h27v17h29v31h39v-27h35
-            M383 21v30m-35 68h-44v27h31v23h-29v21h-43v44
-            M365 135h38v22h22m-48-41v61h-24v28m-40 9v-22h70v-23h52
-            M113 87h21v25m96 97h-40v-24h-46v-20m104-36v21h-16v26
-            M295 89h-18v22m-30 62h31v-20h41m-33 18v24m115-62V97h23
-            M407 186v26h-58v22M168 5v44h-24m242 16h-47v41h-27"/>
-        </g>
-        <path d="M38 221l47-14 23-19 44-9 30-22 78-12 83 13 46 27 45 8 59 23-52 8-47-4-51 12-81-9-80 5-59-12-57 9z" fill="url(#terrain-ink)"/>
-        <ellipse cx="265" cy="179" rx="120" ry="12" fill="#131313" opacity=".42"/>
-        <g stroke="#222" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M148 117l113-25 96 11 44 27-12 37-63 24-104-11-79-37z" fill="#575757"/>
-          <path d="M175 105l145-34 71 41 1 22-73 24-135-27z" fill="#b8b8b8"/>
-          <path d="M175 106l145-34 68 39-88 19z" fill="#e2e2e2"/>
-          <path d="M296 132l94-21 5 22-80 25z" fill="#868686"/>
-          <path d="M143 123q-12 9-9 22l17 24 89 28q16 1 25-11l20-31q5-13-8-18l-88-24q-11-4-20 1z" fill="#3d3d3d"/>
-          <path d="M147 130l25-8q6-2 11 0l87 23q6 2 4 7l-17 29q-5 7-13 7l-87-27-17-21q-2-5 7-10z" fill="#929292"/>
-          <path d="M151 135l23-7 89 22-17 29-83-25z" fill="#242424" stroke="none"/>
-          <g fill="#c4c4c4" stroke-width="2.7">
-            <ellipse cx="167" cy="142" rx="8" ry="10" transform="rotate(-25 167 142)"/>
-            <ellipse cx="185" cy="147" rx="8" ry="10" transform="rotate(-25 185 147)"/>
-            <ellipse cx="204" cy="152" rx="9" ry="11" transform="rotate(-25 204 152)"/>
-            <ellipse cx="224" cy="158" rx="10" ry="12" transform="rotate(-25 224 158)"/>
-            <ellipse cx="245" cy="164" rx="11" ry="13" transform="rotate(-25 245 164)"/>
-          </g>
-          <path d="M211 96q0-20 19-32l41-6q28 5 42 22l-19 28-36 10z" fill="#e9e9e9"/>
-          <path d="M211 95l47 22 36-10 19-27-33 10-34-4z" fill="#a5a5a5"/>
-          <path d="M280 75l128-44 15 16-128 50q-13 3-15-9z" fill="#dddddd"/>
-          <path d="M288 91l131-49 5 6-129 49z" fill="#888" stroke="none"/>
-          <path d="M405 31l16-7q11 0 15 12t-4 18l-17 6q-9-2-12-13t2-16z" fill="#777"/>
-          <ellipse cx="426" cy="39" rx="6.5" ry="10" transform="rotate(-18 426 39)" fill="#252525" stroke="none"/>
-        </g>
-      </svg>
+      <h1 id="game-title">坦克动荡 <span>2</span></h1>
       <form id="match-form" class="classic-menu" aria-label="开局">
         <button type="submit" name="mode" value="human">单人玩家 <small>电脑对战</small></button>
         <button type="submit" name="mode" value="local2">双人对战</button>
         <button type="submit" name="mode" value="local3">三人对战</button>
+        <button type="submit" id="bot-start" name="mode" value="bots">Bot 对战</button>
       </form>
-      <h1 id="game-title">坦克动荡 2</h1>
       <button type="button" id="continue-match" hidden>返回对局</button>
     </section>
 
@@ -97,7 +54,6 @@
           <span id="round-label">第 1 局</span>
           <span id="time-label">对局时间 00:00</span>
           <span id="frame-label">TICK 0</span>
-          <button type="submit" id="bot-start" name="mode" form="match-form" value="bots">Bot 对战</button>
           <label for="seed">随机种子
             <input id="seed" form="match-form" type="number" min="0" max="4294967295" value="12" required>
           </label>

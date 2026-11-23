@@ -5,7 +5,7 @@ const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
   'battle', 'mode-label', 'match-form', 'seed', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
-  'pause', 'details', 'menu', 'stage', 'return-menu', 'continue-match', 'bot-start',
+  'pause', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
   'scoreboard', 'round-label', 'round-notice', 'canvas-wrap',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
 ].map((id) => [id, byId(id)]));
@@ -227,7 +227,7 @@ function render() {
   el['back-live'].hidden = !replay;
   el['timeline-panel'].hidden = !replay;
   for (const button of el['match-form'].querySelectorAll('button')) button.disabled = starting || matchActive;
-  el.seed.disabled = el['bot-start'].disabled = starting || matchActive;
+  el.seed.disabled = starting || matchActive;
   if (replay) {
     el.timeline.max = String(Math.max(0, match.frames.length - 1));
     el.timeline.value = String(frameIndex);
