@@ -31,6 +31,8 @@ node apps/cli/arena.js verify runs/tank-trouble/<match-id>/match.jsonl
 node apps/cli/arena.js run --seed 42 --rounds 10
 ```
 
+实时对局中的「暂停」等裁判完成当前 tick 后停住，按「继续」从下一 tick 恢复；回放的暂停只控制播放。「对局详情」默认折叠，可展开计时、事件、动作与回放时间轴。
+
 实际对局存于 `runs/<game-id>/<match-id>/`。其中 `manifest.json` 标记版本、种子、选手、运行参数；`match.jsonl` 包含初始状态、每 tick 的观测、提交动作、采纳动作、回退、事件、状态和 SHA-256；`result.json` 记录结果。浏览器直接显示保存的帧；CLI 校验使用原规则版本与采纳动作重算，不启动 bot。完整帧日志适合复盘，连续批量跑赛要留意磁盘用量。
 
 ## 接入 bot 或游戏

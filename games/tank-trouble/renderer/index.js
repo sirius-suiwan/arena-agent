@@ -25,7 +25,7 @@ export function validateTankFrame(state) {
 }
 
 function layout(width, height, state) {
-  const padding = Math.min(width, height) * 0.046;
+  const padding = Math.min(width, height) * 0.023;
   const scale = Math.min((width - 2 * padding) / state.width, (height - 2 * padding) / state.height);
   return { scale, x: (width - state.width * scale) / 2, y: (height - state.height * scale) / 2 };
 }
