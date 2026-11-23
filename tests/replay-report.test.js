@@ -8,6 +8,7 @@ const manifest={game:'tank-trouble',rulesVersion:'8-25',tickRate:25,seed:12,maxT
     B:{kind:'human'},D:{id:'laika',packageSha256:'012345'}},
   playerNames:{A:'GPT-dots',B:'Local',D:'Laika'}};
 const state={round:1,width:768,height:576,shellLimit:10,config:{cols:12,rows:9},walls:[{huge:'skip'}],
+  profile:{crateMinSeconds:10,crateMaxSeconds:16,crateLimit:3},
   phase:'playing',zone:{x:384,y:288,halfWidth:192,halfHeight:150,outsideTicks:{A:0}},
   tanks:[{id:'A',x:11.12345,y:33,angle:0,alive:true,weapon:'laser',weaponAmmo:1}]};
 const neutral={throttle:0,turn:0,fire:false};
@@ -35,6 +36,7 @@ test('report counts authoritative seat telemetry and includes only shareable ide
   assert.equal(report.match.matchId,'sample-1');
   assert.equal(report.match.layout.shellLimit,10);
   assert.equal(report.match.effectiveConfig.rows,9);
+  assert.deepEqual(report.match.pickupTiming,{crateMinSeconds:10,crateMaxSeconds:16,crateLimit:3});
   assert.deepEqual(report.match.players[0],{seat:'A',name:'GPT-dots',id:'gpt-dots',sha256:'abcdef',readiness:'ready'});
   assert.equal(report.seats.D.fallbacks,2);
   assert.equal(report.seats.D.longestFallbackStreak,2);

@@ -13,7 +13,7 @@ test('chooses true rate-specific profiles and equal wall-time movement and turni
   const seed=44;
   for(const g of variants){
     const hz=g.tickRate;
-    assert.equal(g.version,'8-'+hz);
+    assert.equal(g.version,'9-'+hz);
     const base=g.init({seed,players,config:{pickups:false}});
     assert.equal(base.config.maxTicks,60*hz);
     assert.equal(base.shellLimit,10);
@@ -60,23 +60,27 @@ test('config scales round, team settlement, intermission and series upper limits
   }
 });
 
-test('first Classic crate attempt is age 350..549 source frames at every rate',()=>{
+test('roster-scaled crate attempts are reproducible and use game seconds at every rate',()=>{
   for(const g of variants){
     const hz=g.tickRate;
-    const state=g.init({seed:44,players});
-    assert.equal(state.nextPickupAt,g.init({seed:44,players}).nextPickupAt);
-    assert(state.nextPickupAt>=Math.ceil(350*hz/25));
-    assert(state.nextPickupAt<=Math.ceil(549*hz/25));
-    const before=step({...state,tick:state.nextPickupAt-2},{}).state;
-    assert.equal(before.pickups.length,0);
-    const attempt=step(before,{});
-    assert.equal(attempt.state.pickups.length,1);
-    const item=attempt.events.find(e=>e.type==='pickup-spawn');
-    assert(PICKUP_TYPES.includes(item.pickupType));
-    const cells=state.config.cols*state.config.rows;
-    const delay=attempt.state.nextPickupAt-attempt.state.tick;
-    assert(delay>=Math.ceil(Math.ceil(350+2000/cells)*hz/25));
-    assert(delay<=Math.ceil(Math.ceil(549+2000/cells)*hz/25));
+    let lastMin=Infinity,lastMax=Infinity,lastCap=0;
+    for(let count=2;count<=8;count++){
+      const input={seed:44,players:[...'ABCDEFGH'].slice(0,count)};
+      const state=g.init(input);
+      const {crateLimit,crateMinSeconds,crateMaxSeconds}=state.profile;
+      assert(crateMinSeconds<lastMin && crateMaxSeconds<lastMax && crateLimit>=lastCap);
+      [lastMin,lastMax,lastCap]=[crateMinSeconds,crateMaxSeconds,crateLimit];
+      assert.equal(state.nextPickupAt,g.init(input).nextPickupAt);
+      assert(state.nextPickupAt>=crateMinSeconds*hz && state.nextPickupAt<=crateMaxSeconds*hz);
+      const before=step({...state,tick:state.nextPickupAt-2},{}).state;
+      assert.equal(before.pickups.length,0);
+      const attempt=step(before,{});
+      assert.equal(attempt.state.pickups.length,1);
+      const item=attempt.events.find(e=>e.type==='pickup-spawn');
+      assert(PICKUP_TYPES.includes(item.pickupType));
+      const delay=attempt.state.nextPickupAt-attempt.state.tick;
+      assert(delay>=crateMinSeconds*hz && delay<=crateMaxSeconds*hz);
+    }
   }
 });
 
@@ -92,9 +96,9 @@ test('honors exact pickup interval and shell speed overrides, reschedules at cap
     items.push(...r.events.filter(e=>e.type==='pickup-spawn'));
     assert.equal(state.nextPickupAt,state.tick+1);
   }
-  assert.equal(items.length,3);
+  assert.equal(items.length,state.profile.crateLimit);
   assert(items.every(e=>e.pickupType==='laser'));
-  assert.equal(state.pickups.length,3);
+  assert.equal(state.pickups.length,2);
   const active=g.init({seed:17,players,config:{pickupInterval:1}});
   const survivor={...active,tanks:active.tanks.map(t=>({...t,alive:t.id==='A'}))};
   const after=step(survivor,{});

@@ -21,7 +21,7 @@ function observe(state,playerId) {
     tick,playerId,width,height,
     walls:walls.map(w=>({...w})),
     tanks:tanks.map(t=>({...t,aimGuide:t.aimGuide?.map(point=>({...point}))??null})),
-    bullets:bullets.map(b=>({...b})),
+    bullets:bullets.map(b=>({...b,...(b.path?{path:b.path.map(point=>({...point}))}:{})})),
     pickups:pickups.map(p=>({...p})),
     result:result?{...result}:null,
     mines:mines.map(m=>({...m})),
@@ -40,7 +40,7 @@ function makeClassic(tickRate) {
   const profile=classicProfile(tickRate);
   const round=Object.freeze({
     id:'tank-trouble',
-    version:'8-'+tickRate,
+    version:'9-'+tickRate,
     tickRate,
     init:input=>classic.init(input,tickRate),
     observe,

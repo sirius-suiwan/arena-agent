@@ -1,4 +1,6 @@
 // Independent Tank Trouble tactic for the privileged Laika seat. Does not change the base bot.
+import {traceLaser} from '../engine/laser-geometry.js';
+
 export const LAIKA_INSIGHT_POLICY='laika-insight/3';
 
 const TANK_RADIUS=12, SHELL_RADIUS=3;
@@ -60,6 +62,36 @@ function directHit(from,to,limit,radius,walls,blockers) {
     t.id!==from.id&&t.id!==to.id&&!t.invulnerable&&segmentDistance2(t,from,end)<extent**2);
 }
 
+function laserPath(obs,start,range) {
+  if(![obs.width,obs.height,obs.profile.laserSpeed,obs.profile.laserMaxSegment,range]
+    .every(n=>Number.isFinite(n)&&n>0)||!Number.isFinite(obs.profile.laserBendPerTick)||
+    !Number.isFinite(start.heading)) return null;
+  return traceLaser(obs,start,range).path;
+}
+
+// First intersection along a chord; compare the target to any tank capable
+// of absorbing the laser. Invulnerability and friendly-fire eligibility
+// are established by the callers.
+function chordEntry(a,b,t,radius) {
+  const dx=b.x-a.x,dy=b.y-a.y,px=t.x-a.x,py=t.y-a.y;
+  const len2=dx*dx+dy*dy,distance2=px*px+py*py;
+  if(distance2<radius**2-EPS) return 0;
+  if(len2<=EPS) return Infinity;
+  const dot=px*dx+py*dy,disc=dot*dot-len2*(distance2-radius**2);
+  if(disc<=0) return Infinity;
+  const f=(dot-Math.sqrt(disc))/len2;
+  return f>=0&&f<=1?f:Infinity;
+}
+
+function laserHits(path,t,blockers) {
+  for(let i=1;i<path.length;i++) {
+    const a=path[i-1],b=path[i],touch=chordEntry(a,b,t,TANK_RADIUS);
+    if(blockers.some(o=>chordEntry(a,b,o,TANK_RADIUS)<touch)) return false;
+    if(touch<Infinity) return true;
+  }
+  return false;
+}
+
 function safeToChangeAim(obs,t,p) {
   const zone=obs.zone;
   const outside=q=>zone?Math.max(0,Math.abs(q.x-zone.x)-zone.halfWidth,Math.abs(q.y-zone.y)-zone.halfHeight):0;
@@ -99,10 +131,16 @@ function insight(message,base) {
     const from=predicted.get(t.id);
     const isLaser=t.weapon==='laser';
     if(!isLaser&&(t.weapon||!ordinaryAmmo(t))) return [];
-    return [{from,limit:isLaser?p.laserSpeed:p.shellSpeed*p.tickRate*0.22,radius:isLaser?0:SHELL_RADIUS,
-      blockers:obs.friendlyFire?blockers:blockers.filter(other=>!teamMate(obs,t,other))}];
+    const eligible=blockers.filter(other=>!other.invulnerable&&
+      (obs.friendlyFire||!teamMate(obs,t,other)));
+    if(isLaser) {
+      const path=laserPath(obs,{...from,heading:from.angle},p.laserSpeed);
+      return path?[{path,blockers:eligible.filter(o=>o.id!==me.id&&o.id!==t.id)}]:[];
+    }
+    return [{from,limit:p.shellSpeed*p.tickRate*0.22,blockers:eligible}];
   });
-  const risk=point=>threats.reduce((n,s)=>n+Number(directHit(s.from,point,s.limit,s.radius,obs.walls,s.blockers)),0);
+  const risk=point=>threats.reduce((n,s)=>n+Number(s.path?laserHits(s.path,point,s.blockers):
+    directHit(s.from,point,s.limit,SHELL_RADIUS,obs.walls,s.blockers)),0);
   const danger=risk(mine);
   if(danger) {
     const choices=[];
@@ -156,9 +194,15 @@ function safeToRecover(obs,me,p) {
     if(!Number.isFinite(speed)) return closest<30**2;
     const horizon=Math.min(b.ttl??Infinity,Math.max(1,obs.profile.tickRate*0.085));
     const radius=TANK_RADIUS+(b.kind==='laser'?0:SHELL_RADIUS)+2;
-    if(closest>(speed*horizon+radius)**2) return false;
+    const range=(b.kind==='laser'?obs.profile.laserSpeed:speed)*horizon;
+    if(closest>(range+radius)**2) return false;
+    if(b.kind==='laser') {
+      const path=laserPath(obs,b,range);
+      return !path||path.some((end,i)=>i>0&&Math.min(segmentDistance2(me,path[i-1],end),
+        segmentDistance2(p,path[i-1],end))<radius**2);
+    }
     const to={x:b.x+b.vx*horizon,y:b.y+b.vy*horizon};
-    if(blockedByWall(b,to,obs.walls,b.kind==='laser'?0:SHELL_RADIUS)) return true;
+    if(blockedByWall(b,to,obs.walls,SHELL_RADIUS)) return true;
     if(b.owner===me.id&&!b.ownerArmed) return false;
     return Math.min(segmentDistance2(me,b,to),segmentDistance2(p,b,to))<radius**2;
   });

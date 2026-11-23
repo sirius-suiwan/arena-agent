@@ -2,9 +2,10 @@ import tuning from '../../games/tank-trouble/classic-profile.json' with {type:'j
 
 const integer=(min,max)=>value=>Number.isInteger(value)&&value>=min&&value<=max;
 const mapModes=Object.freeze(['auto','manual']);
-const autoMapSizes=Object.freeze(Object.fromEntries([
-  [12,9],[12,10],[13,10],[14,10],[14,11],[15,11],[16,12]
-].map(([cols,rows],index)=>[index+2,Object.freeze({cols,rows})])));
+const rosterTable=select=>Object.freeze(Object.fromEntries(Object.entries(tuning.roster).map(([count,entry])=>[count,select(entry)])));
+const autoMapSizes=rosterTable(({cols,rows})=>Object.freeze({cols,rows}));
+const autoMazeDensities=rosterTable(({mazeComplexity})=>mazeComplexity);
+const autoPickupProfiles=rosterTable(({pickups})=>Object.freeze({...pickups}));
 const hasDimensions=config=>Object.hasOwn(config,'cols')||Object.hasOwn(config,'rows');
 const sizeMode=config=>config.mapSizeMode===undefined?(hasDimensions(config)?'manual':'auto'):config.mapSizeMode;
 const settings={
@@ -15,13 +16,13 @@ const settings={
   cols:{value:12,valid:integer(4,16)},
   rows:{value:9,valid:integer(4,12)},
   mapSizeMode:{valid:value=>mapModes.includes(value)},
-  mazeComplexity:{value:'classic',valid:value=>['open','classic','dense'].includes(value)},
+  mazeComplexity:{value:'auto',valid:value=>['auto',...Object.keys(tuning.mazeLoopChance)].includes(value)},
   friendlyFire:{value:false,valid:value=>typeof value==='boolean'}
 };
 
 export function tankOptions(config={}) {
   const options=Object.fromEntries(Object.entries(settings).map(([key,spec])=>[key,config[key]??spec.value]));
-  return {...options,mapSizeMode:sizeMode(config),autoMapSizes};
+  return {...options,mapSizeMode:sizeMode(config),autoMapSizes,autoMazeDensities,autoPickupProfiles};
 }
 
 export function applyTankOptions(config,overrides) {
@@ -48,4 +49,12 @@ export function resolveTankMapSize(config,seatCount) {
     cols:Object.hasOwn(config,'cols')?config.cols:settings.cols.value,
     rows:Object.hasOwn(config,'rows')?config.rows:settings.rows.value
   };
+}
+
+export function resolveTankRosterOptions(config,seatCount) {
+  if (!Number.isInteger(seatCount)||!Object.hasOwn(autoMazeDensities,seatCount)) throw new Error('choose 2–8 seats');
+  const selected=resolveTankMapSize(config,seatCount);
+  const maze=selected.mazeComplexity??'auto';
+  if (!settings.mazeComplexity.valid(maze)) throw new Error('invalid mazeComplexity');
+  return {...selected,mazeComplexity:maze==='auto'?autoMazeDensities[seatCount]:maze};
 }

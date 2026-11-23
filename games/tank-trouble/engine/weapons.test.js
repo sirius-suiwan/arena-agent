@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {init,step} from './classic.js';
+import {gameForRate} from '../adapter/index.js';
 
 function fixture(rate=25) {
-  const s=init({seed:'weapon-v8',players:['A','B','C'],config:{cols:16,rows:12,
+  const s=init({seed:'weapons',players:['A','B','C'],config:{cols:16,rows:12,
     shrinkAfterSeconds:120,pickups:false}},rate);
   s.walls=[];
   Object.assign(s.tanks[0],{x:70,y:100,angle:0});
@@ -36,65 +37,134 @@ test('ordinary shells are edge-triggered, 144 px/s, ten seconds and capped at te
   }
 });
 
-test('held gatling uses 20 rounds with 30 Hz cadence kept cumulative',()=>{
+test('held Gatling fires 20 deterministic three-pellet bursts at the cumulative 30 Hz cadence',()=>{
   const s=fixture(30);
   equip(s,'gatling',20);
   let r=step(s,{A:action(true)}),shotTimes=[];
   assert.equal(r.events[0].type,'weapon-charge');
   for(let i=1;i<90;i++){
     r=step(r.state,{A:action(true)});
-    for(const e of r.events) if(e.type==='shot') {
-      shotTimes.push(r.state.tick);
+    const shots=r.events.filter(e=>e.type==='shot');
+    if(!shots.length) continue;
+    shotTimes.push(r.state.tick);
+    assert.equal(shots.length,3);
+    const angles=shots.map(e=>Math.atan2(e.vy,e.vx));
+    assert.ok(angles[0]<-Math.PI/30&&Math.abs(angles[1])<Math.PI/30&&angles[2]>Math.PI/30);
+    for(const e of shots) {
       assert.ok(Math.abs(Math.hypot(e.vx,e.vy)-176/30)<1e-12);
-      assert.ok(Math.abs(Math.atan2(e.vy,e.vx))<=5.5*Math.PI/180);
+      assert.ok(Math.abs(Math.atan2(e.vy,e.vx))<=18*Math.PI/180);
     }
   }
   assert.equal(shotTimes[0],12);
   assert.equal(shotTimes.length,20);
   assert.equal(shotTimes.at(-1),Math.ceil(12+19*3.6));
   assert.equal(r.state.tanks[0].weaponAmmo,0);
-  assert.equal(r.state.bullets[0].ttl,150-(90-12+1));
+  assert.ok(r.state.bullets.every(b=>b.ttl<54));
   assert.equal(r.state.tanks[0].spinDownUntil,undefined);
   assert.ok(r.state.tanks[0].weapon==='gatling');
   assert.equal(doN(r.state,60).state.tanks[0].weapon,null);
+});
+
+test('Gatling pellets and fragments use their own narrower hit radii',()=>{
+  const s=fixture();
+  Object.assign(s.tanks[1],{x:100,y:114});
+  const shell=kind=>({id:'b1',owner:'A',x:80,y:100,vx:25,vy:0,ttl:5,kind,ownerArmed:false});
+  assert.equal(s.profile.gatlingRadius,1.35);
+  assert.equal(s.profile.fragmentRadius,2.1);
+  assert.equal(step({...s,bullets:[shell('gatling')]},{}).state.tanks[1].alive,true);
+  assert.equal(step({...s,bullets:[shell('shell')]},{}).state.tanks[1].alive,false);
+  Object.assign(s.tanks[1],{y:114.5});
+  assert.equal(step({...s,bullets:[shell('shrapnel')]},{}).state.tanks[1].alive,true);
 });
 
 test('releasing gatling cancels an incomplete burst and requires spin-down before normal fire',()=>{
   const s=fixture(25);
   equip(s,'gatling',20);
   let r=doN(s,10,{A:action(true)});
-  assert.equal(r.state.bullets.length,1);
+  assert.equal(r.state.bullets.length,3);
   r=step(r.state,{A:action(false)});
   assert.equal(r.state.tanks[0].weaponAmmo,0);
   assert.equal(r.state.tanks[0].spinDownUntil,56);
   r=doN(r.state,44,{A:action(true)});
   assert.equal(r.state.tanks[0].weapon,'gatling');
-  assert.equal(r.state.bullets.length,1);
+  assert.equal(r.state.bullets.length,0);
   r=step(r.state,{A:action(true)});
   assert.equal(r.state.tanks[0].weapon,null);
   r=step(step(r.state,{}).state,{A:action(true)});
   assert.ok(r.state.bullets.some(b=>b.kind==='shell'));
 });
 
-test('laser moves and lasts 0.32s with fractional final advance; may bounce back into owner',()=>{
+const curvePoint=(distance,wallDepth=20)=>({
+  x:70+wallDepth+2240/Math.PI*Math.sin(Math.PI*(distance-wallDepth)/2240),
+  y:100+2240/Math.PI*(1-Math.cos(Math.PI*(distance-wallDepth)/2240))
+});
+
+test('laser curves through internal walls for 0.32s at each rate including fractional final advance',()=>{
   for(const hz of [25,30,60]) {
     const s=fixture(hz);
+    s.walls=[{x1:90,y1:32,x2:90,y2:500}];
     equip(s,'laser');
+    const guide=step(s,{}).state.tanks[0].aimGuide;
+    assert.ok(guide.at(-1).x>90&&guide.at(-1).y>100);
     let r=step(s,{A:action(true)});
-    assert.equal(r.state.bullets[0].kind,'laser');
-    assert.ok(Math.abs(r.state.bullets[0].x-(70+2240/hz))<1e-9);
+    const b=r.state.bullets[0], expected=curvePoint(2240/hz);
+    assert.equal(b.kind,'laser');
+    assert.equal(b.curved,true);
+    assert.ok(Math.abs(b.x-expected.x)<1e-8);
+    assert.ok(Math.abs(b.y-expected.y)<1e-8);
+    assert.deepEqual(r.events.find(e=>e.type==='laser-path').path,b.path);
+    assert.ok(!r.events.some(e=>e.type==='bounce'));
+    const observed=gameForRate(hz).observe(r.state,'A');
+    observed.bullets[0].path[0].x=999;
+    assert.equal(b.path[0].x,70);
     assert.equal(r.events.find(e=>e.type==='weapon-fired').moving,true);
     r=doN(r.state,Math.ceil(0.32*hz)-1);
     const expired=r.events.find(e=>e.type==='shell-expired');
-    assert.ok(Math.abs(expired.x-(70+2240*0.32))<1e-8);
+    const endpoint=curvePoint(2240*0.32);
+    assert.equal(expired.reason,'ttl');
+    assert.ok(Math.abs(expired.x-endpoint.x)<1e-8);
+    assert.ok(Math.abs(expired.y-endpoint.y)<1e-8);
     assert.equal(r.state.bullets.length,0);
   }
-  const ricochet=fixture(25);
-  ricochet.walls=[{x1:100,y1:64,x2:100,y2:160}];
-  equip(ricochet,'laser');
-  const r=step(ricochet,{A:action(true)});
-  assert.equal(r.state.tanks[0].alive,false);
-  assert.ok(r.events.some(e=>e.type==='bounce'));
+});
+
+test('laser only starts to curve after piercing a wall',()=>{
+  const s=fixture(60);
+  s.walls=[{x1:140,y1:64,x2:140,y2:170}];
+  equip(s,'laser');
+  let r=step(s,{A:action(true)});
+  assert.equal(r.state.bullets[0].curved,false);
+  assert.equal(r.state.bullets[0].y,100);
+  r=step(r.state,{});
+  const path=r.events.find(e=>e.type==='laser-path').path;
+  assert.ok(path.some(p=>Math.abs(p.x-140)<1e-12&&p.y===100));
+  assert.equal(r.state.bullets[0].curved,true);
+  assert.ok(r.state.bullets[0].y>100);
+});
+
+test('laser segments hit the curved target behind a wall and stop at the arena perimeter',()=>{
+  const s=fixture(25);
+  s.walls=[{x1:100,y1:64,x2:100,y2:170}];
+  Object.assign(s.tanks[1],curvePoint(220,30));
+  equip(s,'laser');
+  let r=step(s,{A:action(true)});
+  assert.equal(r.state.tanks[0].alive,true);
+  assert.equal(r.state.tanks[1].alive,true);
+  r=doN(r.state,2);
+  const hit=r.events.find(e=>e.type==='hit'), trace=r.events.find(e=>e.type==='laser-path');
+  assert.equal(hit.tankId,'B');
+  assert.equal(hit.bulletId,trace.bulletId);
+  assert.deepEqual(trace.path.at(-1),{x:hit.x,y:hit.y});
+  assert.equal(r.state.tanks[1].alive,false);
+  assert.equal(r.state.bullets.length,0);
+  const boundary=fixture(25);
+  equip(boundary,'laser');
+  boundary.tanks[0].x=boundary.width-40;
+  const end=step(boundary,{A:action(true)});
+  const terminal=end.events.find(e=>e.type==='shell-expired');
+  assert.equal(terminal.reason,'boundary');
+  assert.equal(terminal.x,boundary.width);
+  assert.equal(end.state.bullets.length,0);
 });
 
 test('Death Ray autocompletes charge through walls and remains active for 1.2 seconds',()=>{
@@ -133,7 +203,7 @@ test('frag detonates on a new press into 40 fragments that cannot bounce',()=>{
   assert.equal(r.events.some(e=>e.type==='bounce'),false);
 });
 
-test('mine arms for 0.8s, visibly triggers, and waits its separate 0.24s fuse',()=>{
+test('mine arms for 0.8s, visibly triggers, and waits its separate 0.32s fuse',()=>{
   const s=fixture(25);
   equip(s,'mine',3);
   let r=step(s,{A:action(true)});
@@ -144,23 +214,23 @@ test('mine arms for 0.8s, visibly triggers, and waits its separate 0.24s fuse',(
   assert.equal(r.state.mines[0].triggeredAt,null);
   r=step(r.state,{});
   assert.equal(r.events[0].type,'mine-trigger');
-  assert.equal(r.state.mines[0].detonateAt,27);
-  r=doN(r.state,5);
+  assert.equal(r.state.mines[0].detonateAt,29);
+  r=doN(r.state,7);
   assert.equal(r.state.mines.length,1);
   r=step(r.state,{});
   assert.equal(r.events.filter(e=>e.type==='shot'&&e.sourceId==='m1').length,40);
   assert.equal(r.state.mines.length,0);
 });
 
-test('homing starts after two seconds; remote turns independently and suppresses hull movement',()=>{
+test('homing starts after 1.2 seconds and ignores the shooter; remote turns independently',()=>{
   const homing=fixture(25);
   equip(homing,'missile');
   let r=step(homing,{A:action(true)});
-  r=doN(r.state,49);
+  r=doN(r.state,29);
   assert.equal(r.state.bullets[0].targetId,null);
   assert.equal(r.state.bullets[0].vy,0);
   r=step(r.state,{});
-  assert.equal(r.state.bullets[0].targetId,'A');
+  assert.equal(r.state.bullets[0].targetId,'C');
   assert.ok(r.state.bullets[0].vy!==0);
   const remote=fixture(25);
   equip(remote,'remote');

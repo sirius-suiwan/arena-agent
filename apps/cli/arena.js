@@ -90,7 +90,7 @@ try {
     if (positionals.length) throw new Error('serve does not accept positional arguments');
     await serve({game:selectedGame,selectGame:gameForRate,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
   } else if (!command || command === 'help') {
-    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl.gz> | report <match.jsonl.gz> [--tick <n>] | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <open|classic|dense> --friendly-fire <on|off>\nrun only: --seed <integer> (random if omitted), --teams \'{"A":"1","B":"2"}\'');
+    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl.gz> | report <match.jsonl.gz> [--tick <n>] | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <auto|open|classic|dense> --friendly-fire <on|off>\nrun only: --seed <integer> (random if omitted), --teams \'{"A":"1","B":"2"}\'');
   } else {
     throw new Error(`unknown command: ${command}`);
   }

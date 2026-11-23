@@ -11,6 +11,16 @@
   "simulationRates": [25, 30, 60],
   "defaultSimulationRate": 25,
   "arenaCellPixels": 64,
+  "mazeLoopChance": { "open": 0.60, "classic": 0.22, "dense": 0 },
+  "roster": {
+    "2": { "cols": 12, "rows": 9, "mazeComplexity": "open", "pickups": { "minSeconds": 12, "maxSeconds": 18, "maxOnField": 2 } },
+    "3": { "cols": 12, "rows": 10, "mazeComplexity": "open", "pickups": { "minSeconds": 10, "maxSeconds": 16, "maxOnField": 3 } },
+    "4": { "cols": 13, "rows": 10, "mazeComplexity": "classic", "pickups": { "minSeconds": 9, "maxSeconds": 14, "maxOnField": 3 } },
+    "5": { "cols": 14, "rows": 10, "mazeComplexity": "classic", "pickups": { "minSeconds": 8, "maxSeconds": 13, "maxOnField": 4 } },
+    "6": { "cols": 14, "rows": 11, "mazeComplexity": "classic", "pickups": { "minSeconds": 7, "maxSeconds": 12, "maxOnField": 5 } },
+    "7": { "cols": 15, "rows": 11, "mazeComplexity": "dense", "pickups": { "minSeconds": 6, "maxSeconds": 11, "maxOnField": 5 } },
+    "8": { "cols": 16, "rows": 12, "mazeComplexity": "dense", "pickups": { "minSeconds": 5, "maxSeconds": 10, "maxOnField": 6 } }
+  },
   "movement": {
     "forwardPixelsPerSourceFrame": 4,
     "reversePixelsPerSourceFrame": 2.5,
@@ -22,18 +32,14 @@
     "arenaLiveShells": 10
   },
   "weapons": {
-    "gatling": { "pixelsPerSourceFrame": 5.5, "lifeSourceFrames": 125, "ammo": 20, "spinSourceFrames": 10, "gapSourceFrames": 3, "spinDownBaseSourceFrames": 35, "spreadDegrees": 5.5 },
-    "laser": { "pixelsPerSourceFrame": 70, "lifeSourceFrames": 8, "guideCells": 4 },
+    "gatling": { "pixelsPerSourceFrame": 5.5, "lifeSourceFrames": 45, "ammo": 20, "spinSourceFrames": 10, "gapSourceFrames": 3, "spinDownBaseSourceFrames": 35, "spreadDegrees": 18, "pelletsPerBurst": 3, "collisionRadius": 1.35 },
+    "laser": { "pixelsPerSourceFrame": 70, "lifeSourceFrames": 8, "guideCells": 4, "bendDegreesPerSecond": 180, "maxSegmentPixels": 12, "trailPoints": 18 },
     "deathRay": { "chargeSourceFrames": 15, "activeSourceFrames": 30 },
-    "missile": { "pixelsPerSourceFrame": 4.5, "lifeSourceFrames": 250, "homingDelaySourceFrames": 50, "remoteDegreesPerSourceFrame": 15 },
-    "mine": { "ammo": 3, "armSourceFrames": 20, "fuseSourceFrames": 6 },
-    "fragment": { "count": 40 }
+    "missile": { "pixelsPerSourceFrame": 4.5, "lifeSourceFrames": 250, "homingDelaySourceFrames": 30, "remoteDegreesPerSourceFrame": 15 },
+    "mine": { "ammo": 3, "armSourceFrames": 20, "fuseSourceFrames": 8 },
+    "fragment": { "count": 40, "collisionRadius": 2.1 }
   },
   "crates": {
-    "maxOnField": 3,
-    "minimumSourceFrames": 350,
-    "randomSourceFrameCount": 200,
-    "subsequentSourceFramesPerReachableCellNumerator": 2000,
     "soloType": "laser",
     "weights": { "death-ray": 1, "gatling": 1, "mine": 1, "frag": 1, "laser": 1, "missile": 1, "remote": 1 }
   },
@@ -49,7 +55,7 @@
     "tankScale": 1,
     "wallWidth": 5.2,
     "shellRadius": 3,
-    "gatlingRadius": 2.1,
+    "gatlingRadius": 1.35,
     "shrapnelRadius": 2.1,
     "missileScale": 1,
     "crateScale": 1,

@@ -1,4 +1,5 @@
 import {CLASSIC_DATA,CLASSIC_FRAME_RATE,classicProfile} from './profile.js';
+import {traceLaser} from './laser-geometry.js';
 
 const CELL = 64, TANK_RADIUS = 12, BULLET_RADIUS = 3;
 const EPS = 1e-7, TAU = 2 * Math.PI;
@@ -29,7 +30,7 @@ function seedValue(input) {
 const defaults = profile => ({cols:12,rows:9,maxTicks:60*profile.tickRate,pickupInterval:360,
   pickups:true,shellSpeed:profile.shellSpeed,shrinkAfterSeconds:40,shrinkDurationSeconds:15,
   mazeComplexity:'classic',friendlyFire:false,teams:undefined,classicSolo:false});
-const LOOP_OPENING_CHANCE=Object.freeze({open:0.60,classic:0.22,dense:0});
+const LOOP_OPENING_CHANCE=Object.freeze({...CLASSIC_DATA.mazeLoopChance});
 const TEAM_IDS=Object.freeze(['1','2','3','4']);
 const CRATE_HALF_SIZE=8, PICKUP_PADDING=2;
 const ZONE_FINAL_MIN_HALF_SPAN=24;
@@ -198,11 +199,13 @@ export function matchTickLimit({scoreToWin:_scoreToWin,roundLimit:_roundLimit,..
   return Math.min(100_000,Math.max(140*tickRate,3*(roundTickLimit(config,tickRate)+tickRate)));
 }
 export function init(input,tickRate) {
-  const profile=classicProfile(tickRate);
-  const state=initWithZone(input,profile);
+  const base=classicProfile(tickRate);
+  const state=initWithZone(input,base);
+  const crate=CLASSIC_DATA.roster[state.tanks.length].pickups;
+  const profile={...base,crateLimit:crate.maxOnField,crateMinSeconds:crate.minSeconds,crateMaxSeconds:crate.maxSeconds};
   const {teams,friendlyFire,shellSpeed}=state.config;
   const rng={value:state.rng};
-  const nextPickupAt=state.config.pickups?classicPickupDelay(state,rng,tickRate,true):null;
+  const nextPickupAt=state.config.pickups?classicPickupDelay({...state,profile},rng):null;
   return {...state,friendlyFire,...(teams?{teams:{...teams}}:{}),
     profile:Object.freeze({...profile,shellSpeed}),rng:rng.value,nextPickupAt};
 }
@@ -268,24 +271,6 @@ function bounceVelocity(b, normals) {
 
 const vulnerable=(s,t,ownerId)=>t.alive && !t.invulnerable &&
   (!s.teams||s.friendlyFire||ownerId===t.id||s.teams[t.id]!==s.teams[ownerId]);
-
-// The preview follows wall reflections but never predicts hits on tanks.
-function laserGuide(s,tank,range) {
-  let {x,y}=tank;
-  const dir={vx:Math.cos(tank.angle),vy:Math.sin(tank.angle)};
-  const path=[{x,y}];
-  for (let segment=0;segment<16 && range>EPS;segment++) {
-    const dx=dir.vx*range,dy=dir.vy*range;
-    const wall=wallHit(x,y,dx,dy,s.walls,0);
-    if (!wall) return [...path,{x:x+dx,y:y+dy}];
-    x+=dx*wall.t;y+=dy*wall.t;
-    path.push({x,y});
-    bounceVelocity(dir,wall.normals);
-    x+=dir.vx*EPS*4;y+=dir.vy*EPS*4;
-    range*=1-wall.t;
-  }
-  return path;
-}
 
 function moveTanks(s, actions, events) {
   const proposed = s.tanks.map(t => {
@@ -373,7 +358,7 @@ function guideClassicMissiles(s,actions) {
       if (owner?.alive&&owner.fragId===b.id) delta=turn*p.remoteTurn;
     } else if ((b.age??0)>=p.missileDelay) {
       let target=null,nearest=Infinity;
-      for (const t of s.tanks) if (vulnerable(s,t,b.owner)) {
+      for (const t of s.tanks) if (t.id!==b.owner&&vulnerable(s,t,b.owner)) {
         const d=(t.x-b.x)**2+(t.y-b.y)**2;
         if(d<nearest) {nearest=d;target=t;}
       }
@@ -450,9 +435,13 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
       if (s.tick+EPS<t.burstTick) continue;
       if (t.weaponAmmo>0) {
         const rng={value:s.rng};
-        const spread=(next(rng)*2-1)*p.gatlingSpread;
+        for(let i=0;i<p.gatlingPellets;i++) {
+          // One deterministic random pellet per cone band avoids collapsing a
+          // burst into three nearly coincident dots.
+          const spread=(2*(i+next(rng))/p.gatlingPellets-1)*p.gatlingSpread;
+          shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle+spread,speed:p.gatlingSpeed,ttl:p.gatlingTtl,kind:'gatling'});
+        }
         s.rng=rng.value;
-        shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle+spread,speed:p.gatlingSpeed,ttl:p.gatlingTtl,kind:'gatling'});
         t.weaponAmmo--;
       } else events.push({type:'shot-blocked',tankId:t.id,reason:'magazine-empty',weapon:'gatling'});
       t.burstTick+=p.gatlingGap;
@@ -462,6 +451,7 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
     if (!pressed) continue;
     if (t.weapon==='laser') {
       const b=shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:p.laserSpeed,ttl:p.laserTtl,kind:'laser'});
+      b.heading=t.angle;b.curved=false;
       events.push({type:'weapon-fired',tankId:t.id,weapon:'laser',bulletId:b.id,x:t.x,y:t.y,
         endX:t.x,endY:t.y,moving:true});
       resetClassicWeapon(t);
@@ -502,7 +492,38 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
   }
 }
 
+function advanceLaser(b,s,events,impacts) {
+  if (b.ttl<=0) return false;
+  const owner=s.tanks.find(t=>t.id===b.owner);
+  const trace=traceLaser(s,b,s.profile.laserSpeed*Math.min(1,b.ttl),(x,y,dx,dy,edge,crossing)=>{
+    if (!b.ownerArmed&&Math.hypot(x-owner.x,y-owner.y)>TANK_RADIUS+EPS) b.ownerArmed=true;
+    let target=null;
+    for (const tank of s.tanks) {
+      if (!vulnerable(s,tank,b.owner)||tank.id===b.owner&&!b.ownerArmed) continue;
+      const f=(x-tank.x)**2+(y-tank.y)**2<TANK_RADIUS**2-EPS?0:circleHit(x,y,dx,dy,tank.x,tank.y,TANK_RADIUS);
+      if (f!==null&&f<=crossing&&(edge>1||f<edge-EPS)&&(!target||f<target.f-EPS)) target={tank,f};
+    }
+    return target;
+  });
+  const {x,y,heading,curved,path,target,atBoundary}=trace;
+  b.x=x;b.y=y;b.heading=heading;b.curved=curved;
+  b.vx=Math.cos(heading)*s.profile.laserSpeed;b.vy=Math.sin(heading)*s.profile.laserSpeed;
+  b.path=[...(b.path??[]),...(b.path?path.slice(1):path)].slice(-s.profile.laserTrailPoints);
+  events.push({type:'laser-path',bulletId:b.id,ownerId:b.owner,path});
+  if (target) {
+    impacts.push({bullet:b,tankId:target.tank.id,x,y});
+    return false;
+  }
+  b.ttl--;
+  if (atBoundary||b.ttl<=0) {
+    events.push({type:'shell-expired',bulletId:b.id,x,y,reason:atBoundary?'boundary':'ttl',kind:b.kind});
+    return false;
+  }
+  return true;
+}
+
 function advanceShell(b, s, events, impacts, deferred) {
+  if(b.kind==='laser') return advanceLaser(b,s,events,impacts);
   function expire(reason) {
     if (b.kind==='frag') {
       burst(b,s,events,'frag-burst',Math.atan2(b.vy,b.vx),deferred);
@@ -517,7 +538,7 @@ function advanceShell(b, s, events, impacts, deferred) {
   }
   if (b.ttl <= 0) return false;
   let remaining = Math.min(1,b.ttl);
-  const radius=b.kind==='laser'?0:BULLET_RADIUS;
+  const radius=b.kind==='gatling'?s.profile.gatlingRadius:b.kind==='shrapnel'?s.profile.fragmentRadius:BULLET_RADIUS;
   // Sweep through the remaining fraction after each bounce; hard cap guarantees
   // bounded work in degenerate geometry.
   for (let i=0;i<8 && remaining>EPS;i++) {
@@ -539,7 +560,7 @@ function advanceShell(b, s, events, impacts, deferred) {
     if (!wall) {
       b.x+=dx; b.y+=dy;
       const owner=s.tanks.find(t=>t.id===b.owner);
-      if (Math.hypot(b.x-owner.x,b.y-owner.y)>TANK_RADIUS+BULLET_RADIUS+EPS) b.ownerArmed=true;
+      if (Math.hypot(b.x-owner.x,b.y-owner.y)>TANK_RADIUS+radius+EPS) b.ownerArmed=true;
       break;
     }
     b.x+=dx*wall.t; b.y+=dy*wall.t;
@@ -558,13 +579,12 @@ function advanceShell(b, s, events, impacts, deferred) {
   return b.ttl>0 || expire('ttl');
 }
 
-function classicPickupDelay(s,rng,tickRate,first) {
+function classicPickupDelay(s,rng) {
   if (s.config.pickupInterval!==undefined) return s.config.pickupInterval;
-  const cells=(s.width/CELL)*(s.height/CELL); // Every cell is reachable.
-  const rules=CLASSIC_DATA.crates;
-  const classicFrames=Math.ceil(rules.minimumSourceFrames+Math.floor(next(rng)*rules.randomSourceFrameCount)+
-    (first?0:rules.subsequentSourceFramesPerReachableCellNumerator/cells));
-  return Math.ceil(classicFrames*tickRate/CLASSIC_FRAME_RATE);
+  const {crateMinSeconds,crateMaxSeconds,tickRate}=s.profile;
+  const min=crateMinSeconds*CLASSIC_FRAME_RATE;
+  const frames=min+Math.floor(next(rng)*((crateMaxSeconds-crateMinSeconds)*CLASSIC_FRAME_RATE+1));
+  return Math.ceil(frames*tickRate/CLASSIC_FRAME_RATE);
 }
 
 function chooseClassicCrate(rng) {
@@ -595,7 +615,7 @@ function awardPickups(s, events, spawn=true) {
     }
   }
   // An attempt at the cap or without a legal position still resets the timer.
-  if (attempt) s.nextPickupAt=s.tick+classicPickupDelay(s,rng,s.profile.tickRate,false);
+  if (attempt) s.nextPickupAt=s.tick+classicPickupDelay(s,rng);
   const blocked=[];
   const blockedPreviously=s.pickupBlocks;
   s.pickups=s.pickups.filter(p=>{
@@ -621,8 +641,9 @@ function awardPickups(s, events, spawn=true) {
     const winner=tied.length===1?tied[0]:tied[Math.floor(next(rng)*tied.length)];
     winner.weapon=p.type;
     winner.weaponAmmo=p.type==='gatling'?s.profile.gatlingAmmo:p.type==='mine'?s.profile.mineAmmo:1;
+    const requiresPress=p.type!=='gatling';
     events.push({type:'pickup',tankId:winner.id,pickupId:p.id,pickupType:p.type,x:p.x,y:p.y,
-      weaponAmmo:winner.weaponAmmo,activation:'press',releaseRequired:winner.fireHeld});
+      weaponAmmo:winner.weaponAmmo,activation:requiresPress?'press':'hold',releaseRequired:requiresPress&&winner.fireHeld});
 
     return false;
   });
@@ -716,10 +737,9 @@ export function step(state, actions) {
     awardPickups(s,events);
     if (s.tick>=s.config.maxTicks) s.result={winner:null,reason:'timeout'};
   }
-  // The guide previews only geometry and stops earlier than a real shot. Freeze
-  // nested geometry because the generic observation copies tank records shallowly.
+  // The guide previews the same curved trajectory without target collisions.
   for (const t of s.tanks) t.aimGuide=t.alive&&t.weapon==='laser'
-    ? Object.freeze(laserGuide(s,t,s.profile.laserGuide).map(p=>Object.freeze(p))) : null;
+    ? Object.freeze(traceLaser(s,{x:t.x,y:t.y,heading:t.angle},s.profile.laserGuide).path.map(p=>Object.freeze(p))) : null;
   if (s.result) {
     s.pickupBlocks=[];
     events.push({type:'ended',...s.result});

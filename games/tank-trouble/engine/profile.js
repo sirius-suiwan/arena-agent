@@ -6,7 +6,7 @@ export const CLASSIC_FRAME_RATE=data.source.framesPerSecond;
 
 export function classicProfile(tickRate) {
   if (!CLASSIC_TICK_RATES.includes(tickRate)) throw new RangeError('Classic tick rate must be 25, 30 or 60 Hz');
-  const {movement,shell,weapons,crates,arena,render}=data;
+  const {movement,shell,weapons,arena,render}=data;
   const timing=frames=>frames*tickRate/CLASSIC_FRAME_RATE;
   const velocity=pixels=>pixels*data.arenaCellPixels*CLASSIC_FRAME_RATE/data.source.cellPixels/tickRate;
   const turning=degrees=>degrees*Math.PI/180*CLASSIC_FRAME_RATE/tickRate;
@@ -21,7 +21,6 @@ export function classicProfile(tickRate) {
     settleTicks:arena.settlementSeconds*tickRate,
     intermissionTicks:arena.intermissionSeconds*tickRate,
     zoneGraceTicks:arena.zoneGraceSeconds*tickRate,
-    crateLimit:crates.maxOnField,
     gatlingSpeed:velocity(weapons.gatling.pixelsPerSourceFrame),
     gatlingTtl:timing(weapons.gatling.lifeSourceFrames),
     gatlingAmmo:weapons.gatling.ammo,
@@ -29,9 +28,14 @@ export function classicProfile(tickRate) {
     gatlingGap:timing(weapons.gatling.gapSourceFrames),
     gatlingSpinDown:timing(weapons.gatling.spinDownBaseSourceFrames),
     gatlingSpread:weapons.gatling.spreadDegrees*Math.PI/180,
+    gatlingPellets:weapons.gatling.pelletsPerBurst,
+    gatlingRadius:weapons.gatling.collisionRadius,
     laserSpeed:velocity(weapons.laser.pixelsPerSourceFrame),
     laserTtl:timing(weapons.laser.lifeSourceFrames),
     laserGuide:weapons.laser.guideCells*data.arenaCellPixels,
+    laserBendPerTick:weapons.laser.bendDegreesPerSecond*Math.PI/180/tickRate,
+    laserMaxSegment:weapons.laser.maxSegmentPixels,
+    laserTrailPoints:weapons.laser.trailPoints,
     deathRayCharge:timing(weapons.deathRay.chargeSourceFrames),
     deathRayActive:timing(weapons.deathRay.activeSourceFrames),
     missileSpeed:velocity(weapons.missile.pixelsPerSourceFrame),
@@ -43,6 +47,7 @@ export function classicProfile(tickRate) {
     mineArm:timing(weapons.mine.armSourceFrames),
     mineFuse:timing(weapons.mine.fuseSourceFrames),
     fragmentCount:weapons.fragment.count,
+    fragmentRadius:weapons.fragment.collisionRadius,
     fragmentSpeed:arena.fragmentPixelsPerSecond/tickRate,
     fragmentTtl:arena.fragmentLifeSeconds*tickRate,
     render:Object.freeze({...render})

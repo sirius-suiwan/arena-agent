@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {applyTankOptions,resolveTankMapSize,tankOptions} from '../apps/cli/tank-options.js';
+import {applyTankOptions,resolveTankMapSize,resolveTankRosterOptions,tankOptions} from '../apps/cli/tank-options.js';
 import {makeMatch} from '../apps/cli/match-options.js';
 import {game} from '../games/tank-trouble/adapter/index.js';
 import {jumpGame} from './fixtures/jump-game.js';
@@ -34,6 +34,17 @@ test('manual and CLI dimensions preserve size while request auto overrides serve
   assert.deepEqual(resolveTankMapSize(applyTankOptions(serve,{mapSizeMode:'auto'}),8),dimensions[8]);
   assert.deepEqual(resolveTankMapSize(applyTankOptions(serve,{mapSizeMode:'manual',rows:5}),8),{cols:6,rows:5});
   assert.deepEqual(resolveTankMapSize(applyTankOptions({mapSizeMode:'auto'},{cols:10,rows:6}),8),{cols:10,rows:6});
+});
+
+test('automatic complexity follows roster even with manual size and explicit choices override it',()=>{
+  const defaults=tankOptions();
+  assert.equal(defaults.mazeComplexity,'auto');
+  assert.deepEqual(Object.values(defaults.autoMazeDensities),['open','open','classic','classic','classic','dense','dense']);
+  assert.deepEqual(defaults.autoPickupProfiles[2],{minSeconds:12,maxSeconds:18,maxOnField:2});
+  assert.deepEqual(defaults.autoPickupProfiles[8],{minSeconds:5,maxSeconds:10,maxOnField:6});
+  assert.deepEqual(resolveTankRosterOptions({cols:6},8),{cols:6,rows:9,mazeComplexity:'dense'});
+  assert.deepEqual(resolveTankRosterOptions({mazeComplexity:'dense'},2),{...dimensions[2],mazeComplexity:'dense'});
+  assert.throws(()=>applyTankOptions({},{mazeComplexity:'constructor'}),/invalid mazeComplexity/);
 });
 
 const botFixture=`
@@ -68,6 +79,8 @@ test('match manifests and engine use occupied seats, not slot letters or registe
     assert.equal(Object.hasOwn(manifest.config,'mapSizeMode'),false);
     assert.equal(state.width,cols*64);
     assert.equal(state.height,rows*64);
+    assert.equal(manifest.config.mazeComplexity,tankOptions().autoMazeDensities[seats.length]);
+    assert.equal(state.profile.crateLimit,tankOptions().autoPickupProfiles[seats.length].maxOnField);
     assert.deepEqual(game.init(manifest),state);
   };
   assertSize(await start({mode:'local3'}),'ABC',dimensions[3]);

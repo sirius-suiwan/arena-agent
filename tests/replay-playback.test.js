@@ -48,3 +48,24 @@ test('playback still rejects incorrect results',()=>{
   replay.push({...tick,events:[recorded,roundEnd]});
   assert.throws(()=>replay.push({type:'end',result:{winner:'A',reason:'tick_limit'}}),/tick 1: result differs/);
 });
+
+test('only laser-path coordinates accept tiny playback rounding, not path shape, IDs or strict verification',()=>{
+  const beam={type:'laser-path',bulletId:'b2',ownerId:'A',path:[{x:120,y:37},{x:122,y:37.25}]};
+  const curved={...jumpGame,step(...args){return {...jumpGame.step(...args),events:[beam]};}};
+  function verify(event,mode) {
+    const replay=createReplayReconstructor(()=>curved,{mode});
+    replay.push(begin);
+    return replay.push({...tick,events:[event]});
+  }
+  const drift={...beam,path:[beam.path[0],{x:122,y:37.25+1e-9}]};
+  assert.deepEqual(verify(drift,'playback').events,[drift]);
+  assert.throws(()=>verify(drift,'strict'),/events differ/);
+  for(const event of [
+    {...drift,ownerId:'B'},
+    {...drift,bulletId:'b3'},
+    {...drift,path:[...beam.path].reverse()},
+    {...drift,path:[beam.path[0]]},
+    {...drift,path:[beam.path[0],{x:122,y:37.26}]},
+    {...drift,path:[beam.path[0],{x:122,y:37.25,extra:true}]}
+  ]) assert.throws(()=>verify(event,'playback'),/events differ/);
+});

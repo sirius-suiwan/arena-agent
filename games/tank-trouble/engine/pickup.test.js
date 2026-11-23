@@ -41,7 +41,7 @@ test('collects a crate on diagonal overlap',()=>{
   assert.equal(current.state.pickups.length,0);
   assert.equal(current.state.tanks[0].weapon,'gatling');
   assert.deepEqual(current.events[0],{type:'pickup',tankId:'amber',pickupId:'p1',pickupType:'gatling',
-    x:114,y:114.5,weaponAmmo:20,activation:'press',releaseRequired:false});
+    x:114,y:114.5,weaponAmmo:20,activation:'hold',releaseRequired:false});
 });
 
 test('an occupied slot reports once per contact, then a used weapon frees its slot for pickup',()=>{

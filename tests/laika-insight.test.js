@@ -9,7 +9,7 @@ const shooting={...neutral,fire:true};
 const tank=(id,x,y,angle,props={})=>({id,x,y,angle,alive:true,weapon:null,...props});
 function observe(commands,B,overrides={}) {
   return {type:'observe',tick:17,opponentActions:commands,opponentActionsTick:17,observation:{tick:17,roundTick:8,phase:'playing',
-    playerId:'A',tanks:[tank('A',64,64,0),B],walls:[],bullets:[],profile:classicProfile(25),...overrides}};
+    width:256,height:256,playerId:'A',tanks:[tank('A',64,64,0),B],walls:[],bullets:[],profile:classicProfile(25),...overrides}};
 }
 function wrap(action=neutral) {
   return withLaikaInsight({act:async()=>({value:action,error:null})});
@@ -34,7 +34,7 @@ test('the same base shot can be released when accepted movement leaves the firin
   assert.deepEqual((await seat.act(observe({B:moving},b,{tanks:[held,b]}))).value,shooting);
 });
 
-test('fresh enemy fire triggers a safe dodge, but held fire, an ally or a wall does not',async()=>{
+test('fresh enemy fire triggers a safe dodge; held fire and protected allies do not',async()=>{
   const a=tank('A',64,64,Math.PI/2), seat=wrap(moving);
   for(const b of [tank('B',118,77,Math.PI,{weapon:'laser'}),tank('B',105,80,Math.PI)]) {
     const layout={tanks:[a,b]};
@@ -45,7 +45,7 @@ test('fresh enemy fire triggers a safe dodge, but held fire, an ally or a wall d
     assert.deepEqual((await seat.act(observe({B:shooting},b,{...layout,teams,friendlyFire:false}))).value,moving);
     assert.deepEqual((await seat.act(observe({B:shooting},b,{...layout,teams,friendlyFire:true}))).value,neutral);
     assert.deepEqual((await seat.act(observe({B:shooting},b,{...layout,
-      walls:[{x1:84,y1:0,x2:84,y2:128}]}))).value,moving);
+      walls:[{x1:84,y1:0,x2:84,y2:128}]}))).value,b.weapon==='laser'?neutral:moving);
   }
 });
 
@@ -130,4 +130,12 @@ test('a passing shell does not keep the bot stuck in a wall',async()=>{
     assert.deepEqual((await seat.act(wallCase(tick,{bullets:[passing]}))).value,moving);
   }
   assert.deepEqual((await seat.act(wallCase(3,{bullets:[passing]}))).value,{...neutral,throttle:-1});
+});
+
+test('an active curved laser can veto a recovery even when its tangent misses',async()=>{
+  const seat=wrap(moving);
+  for(let tick=0;tick<3;tick++) assert.deepEqual((await seat.act(wallCase(tick))).value,moving);
+  const {laserSpeed}=classicProfile(25);
+  const curved={kind:'laser',owner:'B',x:195,y:118,heading:Math.PI,curved:true,vx:-laserSpeed,vy:0,ttl:8};
+  assert.deepEqual((await seat.act(wallCase(3,{bullets:[curved]}))).value,moving);
 });

@@ -31,6 +31,9 @@ const teamLetter = (id) => 'ABCD'[teamIds.indexOf(id)] ?? id;
 const matchOptions = matchOptionDefinitions.map(option => ({ ...option }));
 let setup = readSetup();
 let autoMapSizes = {};
+let autoMazeDensities = {};
+let autoPickupProfiles = {};
+const densityLabel = Object.freeze({ open: '开阔', classic: '经典', dense: '密集' });
 let botCatalog = new Map();
 const seatIds = [...'ABCDEFGH'];
 const customSeats = new Map();
@@ -823,18 +826,22 @@ function applyOption(option) {
 
 function updateMapPreview() {
   const preview = el['map-size-preview'];
-  const auto = el['map-size-mode'].value === 'auto';
-  preview.hidden = !auto;
-  if (!auto) return;
-  const sizeText = count => {
-    const size = autoMapSizes[count];
-    return size ? `${size.cols}×${size.rows}` : null;
+  const autoSize = el['map-size-mode'].value === 'auto';
+  const autoDensity = el['maze-complexity'].value === 'auto';
+  preview.hidden = !autoSize && !autoDensity && !Object.keys(autoPickupProfiles).length;
+  if (preview.hidden) return;
+  const rosterText = count => {
+    const size = autoSize && autoMapSizes[count];
+    const density = autoDensity && densityLabel[autoMazeDensities[count]];
+    const pickups = autoPickupProfiles[count];
+    const pickupText = pickups ? `道具约 ${pickups.minSeconds}–${pickups.maxSeconds} 秒，场上限 ${pickups.maxOnField} 个` : '';
+    return [size ? `${size.cols}×${size.rows}` : '', density || '', pickupText].filter(Boolean).join(' · ');
   };
   const enabled = [...customSeats.values()].filter(({ select }) => select.value !== '').length;
-  const customSize = sizeText(enabled);
-  const preset = [2, 3].flatMap(count => sizeText(count) ? [`${count} 席 ${sizeText(count)}`] : []);
-  preview.textContent = [customSize ? `自定义：${enabled} 席，${customSize}` : '按实际上场人数选择地图',
-    preset.length ? `快捷开局：${preset.join('；')}` : ''].filter(Boolean).join('。');
+  const custom = rosterText(enabled);
+  const presets = [2, 3].flatMap(count => rosterText(count) ? [`${count} 席 ${rosterText(count)}`] : []);
+  preview.textContent = [custom ? `自定义：${enabled} 席，${custom}` : '按实际上场人数自动选择',
+    presets.length ? `快捷开局：${presets.join('；')}` : ''].filter(Boolean).join('。');
 }
 
 for (const option of matchOptions) {
@@ -845,7 +852,7 @@ for (const option of matchOptions) {
       setup.options[option.key] = value;
       saveSetup(setup);
     }
-    if (option.key === 'mapSizeMode') queueDraw();
+    if (['mapSizeMode', 'mazeComplexity'].includes(option.key)) queueDraw();
   });
 }
 for (const seat of ['A', 'B', 'C']) {
@@ -893,6 +900,14 @@ async function loadMatchOptions() {
       if (!Object.hasOwn(setup.options, option.key)) applyOption(option);
     }
     for (let count = 2; count <= 8; count++) {
+      const pickups = defaults?.autoPickupProfiles?.[count];
+      if (Number.isFinite(pickups?.minSeconds) && pickups.minSeconds >= 0 &&
+          Number.isFinite(pickups.maxSeconds) && pickups.maxSeconds >= pickups.minSeconds &&
+          Number.isSafeInteger(pickups.maxOnField) && pickups.maxOnField > 0) {
+        autoPickupProfiles[count] = pickups;
+      }
+      const density = defaults?.autoMazeDensities?.[count];
+      if (Object.hasOwn(densityLabel, density)) autoMazeDensities[count] = density;
       const size = defaults?.autoMapSizes?.[count];
       if (size && ['cols', 'rows'].every(key => validOption(size[key], matchOptions.find(option => option.key === key)))) {
         autoMapSizes[count] = { cols: size.cols, rows: size.rows };
@@ -925,7 +940,7 @@ el['match-form'].addEventListener('submit', async (event) => {
       return setError(option.values ? `请选择有效的${option.label}。`
         : `${option.label}必须是 ${option.min}–${option.max} 的整数。`);
     }
-    if (dimension || value !== (option.serverDefault ?? option.initial) || Object.hasOwn(setup.options, option.key)) {
+    if (dimension || option.key === 'mazeComplexity' || value !== (option.serverDefault ?? option.initial) || Object.hasOwn(setup.options, option.key)) {
       overrides[option.key] = value;
     }
   }

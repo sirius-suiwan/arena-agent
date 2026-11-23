@@ -68,13 +68,15 @@ function matchDetails(manifest,readiness,state) {
     readiness:text(readiness?.[id]??null)
   }));
   const layout=pick(state,['width','height','shellLimit','targetScore','roundLimit']);
+  const pickupTiming=pick(state?.profile,['crateMinSeconds','crateMaxSeconds','crateLimit']);
   return {...info,config:shortConfig(manifest.config),
     ...(Array.isArray(manifest.inputInsight?.seats)?{inputInsight:{
       seats:manifest.inputInsight.seats.filter(id=>manifest.players.includes(id)).slice(0,8),
       ...pick(manifest.inputInsight,['contract','timing','policy'])
     }}:{}),
     ...(state?.config?{effectiveConfig:shortConfig(state.config)}:{}),
-    ...(Object.keys(layout).length?{layout}:{}),players};
+    ...(Object.keys(layout).length?{layout}:{}),
+    ...(Object.keys(pickupTiming).length?{pickupTiming}:{}),players};
 }
 
 function focusSample(record) {

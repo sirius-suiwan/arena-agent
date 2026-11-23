@@ -9,6 +9,14 @@ const same = (a,b) => canonical(a) === canonical(b);
 // Only allow tiny drift in spatial event fields, never in IDs, ticks or scores.
 const SPATIAL_FIELDS = new Set(['x','y','vx','vy','endX','endY']);
 const POSITION_TOLERANCE = 1e-7;
+const nearPosition=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<=POSITION_TOLERANCE;
+function equivalentLaserPath(actual,recorded) {
+  return Array.isArray(actual)&&Array.isArray(recorded)&&actual.length===recorded.length&&actual.every((p,i)=>{
+    const q=recorded[i];
+    return q&&typeof q==='object'&&!Array.isArray(q)&&Object.keys(q).length===2&&
+      Object.hasOwn(q,'x')&&Object.hasOwn(q,'y')&&nearPosition(p.x,q.x)&&nearPosition(p.y,q.y);
+  });
+}
 function equivalentPlaybackEvents(actual,recorded) {
   return Array.isArray(recorded) && actual.length === recorded.length && actual.every((event,i)=>{
     const other=recorded[i];
@@ -17,8 +25,8 @@ function equivalentPlaybackEvents(actual,recorded) {
     return keys.length === Object.keys(other).length && keys.every(key=>{
       if (!Object.hasOwn(other,key)) return false;
       const a=event[key], b=other[key];
-      return same(a,b) || (SPATIAL_FIELDS.has(key) && Number.isFinite(a) && Number.isFinite(b) &&
-        Math.abs(a-b) <= POSITION_TOLERANCE);
+      return same(a,b) || (SPATIAL_FIELDS.has(key)&&nearPosition(a,b)) ||
+        (event.type==='laser-path'&&key==='path'&&equivalentLaserPath(a,b));
     });
   });
 }

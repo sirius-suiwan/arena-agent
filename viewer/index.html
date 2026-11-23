@@ -79,9 +79,10 @@
             </select>
           </label>
           <label class="shrink-setting">迷宫复杂度
-            <select id="maze-complexity">
+            <select id="maze-complexity" aria-describedby="map-size-preview">
+              <option value="auto" selected>自动</option>
               <option value="open">开阔</option>
-              <option value="classic" selected>经典</option>
+              <option value="classic">经典</option>
               <option value="dense">密集</option>
             </select>
           </label>

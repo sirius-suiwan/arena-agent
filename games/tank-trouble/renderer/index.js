@@ -216,8 +216,29 @@ function drawPath(ctx, path) {
   return true;
 }
 
+function drawLaserTrail(ctx, path, tint, outline = tint.outline) {
+  if (!drawPath(ctx, path)) return false;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = outline;
+  ctx.lineWidth = 3.3;
+  ctx.stroke();
+  ctx.strokeStyle = tint.turret;
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.restore();
+  return true;
+}
+
 function drawEffects(ctx, state, effects, mode) {
   for (const { event, age } of effects) {
+    if (event.type === 'laser-path') {
+      if (age === 0 && !state.bullets.some(bullet => bullet.id === event.bulletId)) {
+        drawLaserTrail(ctx, event.path, teamForOwner(state, mode, event.ownerId));
+      }
+      continue;
+    }
     const continuous = event.continuous === true || event.type === 'death-ray-beam';
     if (continuous && age !== 0) continue;
     const alpha = continuous ? 1 : Math.max(0, 1 - age / 10);
@@ -307,7 +328,7 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
   const crateScale = positive('crateScale', 1);
   const missileScale = positive('missileScale', 1);
   const shellRadius = positive('shellRadius', 3);
-  const gatlingRadius = positive('gatlingRadius', 2.1);
+  const gatlingRadius = positive('gatlingRadius', 1.35);
   const shrapnelRadius = positive('shrapnelRadius', 2.1);
   drawZone(ctx, state, scale, ratio, outsideAlpha);
 
@@ -395,6 +416,7 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
     const color = teamForOwner(state, mode, owner);
     const squad = teams[owner];
     const outline = Object.hasOwn(squadColors, squad) ? squadColors[squad] : color.outline;
+    if (bullet.kind === 'laser' && drawLaserTrail(ctx, bullet.path, color, outline)) continue;
     const speed = Math.hypot(bullet.vx, bullet.vy);
     ctx.beginPath();
     if (['laser', 'missile', 'remote'].includes(bullet.kind) && Number.isFinite(speed) && speed > 0) {
@@ -419,9 +441,10 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
       }
       ctx.restore();
     } else {
-      ctx.arc(bullet.x, bullet.y, Math.max(size, ratio / scale), 0, Math.PI * 2);
+      const tiny = bullet.kind === 'gatling';
+      ctx.arc(bullet.x, bullet.y, Math.max(size, (tiny ? 0.7 : 1) * ratio / scale), 0, Math.PI * 2);
       ctx.fillStyle = color.hull; ctx.fill();
-      ctx.strokeStyle = outline; ctx.lineWidth = Math.max(0.82, ratio * 0.6 / scale); ctx.stroke();
+      ctx.strokeStyle = outline; ctx.lineWidth = tiny ? 0.55 : Math.max(0.82, ratio * 0.6 / scale); ctx.stroke();
     }
   }
   drawEffects(ctx, state, effects, mode);
@@ -457,7 +480,7 @@ const eventLabels = {
   'wall-stop': '撞墙', 'tank-stop': '坦克碰撞', destroyed: '击毁', ended: '对局结束',
   timeout: '动作超时', 'weapon-fired': '使用武器', 'frag-burst': '破片炸开',
   'weapon-charge': '武器蓄力', 'last-tank-pending': '等待炮火结算', 'mine-placed': '埋设地雷', 'mine-burst': '地雷爆炸', 'round-start': '开局',
-  'round-end': '本局结束', 'death-ray-beam': '死光光束', 'mine-trigger': '地雷触发', 'zone-eliminated': '安全区外淘汰',
+  'round-end': '本局结束', 'death-ray-beam': '死光光束', 'laser-path': '激光轨迹', 'mine-trigger': '地雷触发', 'zone-eliminated': '安全区外淘汰',
 };
 
 export function formatTankEvent(event, displayPlayer = (id) => id) {
