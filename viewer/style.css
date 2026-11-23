@@ -61,16 +61,16 @@ button.match-id {
   font-size: 11px; text-align: left; color: var(--muted); background: transparent;
 }
 .match-id code { font: 11px ui-monospace, monospace; overflow-wrap: anywhere; color: var(--ink); }
-.match-id:not([hidden]) + .pause-button { margin-left: 0; }
-.pause-button {
-  margin-left: auto;
+.match-controls { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.match-id:not([hidden]) + .match-controls { margin-left: 0; }
+.match-primary {
   min-width: 61px;
   background: #333;
   border-color: #333;
   color: #fff;
   font-weight: 700;
 }
-.pause-button:hover:not(:disabled) { background: #454545; }
+.match-primary:hover:not(:disabled) { background: #454545; }
 :focus-visible, .file-label:focus-within { outline: 2px solid #215b80; outline-offset: 2px; }
 /* The menu above retains its layout. A visible match fits its native aspect with no decorative surround. */
 body:has(#stage:not([hidden])) { background: #fff; }
@@ -90,7 +90,6 @@ canvas#battle.pointer-control { cursor: crosshair; touch-action: none; }
   border: 1px solid #6c6c6c; background: #f8f8f8f2; padding: 6px 11px;
   font-size: 13px; font-weight: 700; pointer-events: none;
 }
-.round-notice.is-paused { inset: 0; height: fit-content; background: #252525ee; color: #fff; }
 .score-panel, .scoreboard { justify-content: center; }
 .score-panel { min-height: 24px; }
 .scoreboard { gap: clamp(13px, 6vw, 70px); }

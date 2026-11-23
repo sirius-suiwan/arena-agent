@@ -7,14 +7,14 @@ const el = Object.fromEntries([
   'battle', 'mode-label', 'match-form', 'seed', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'match-id', 'match-id-value', 'match-id-copy',
-  'pause', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
+  'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
   'scoreboard', 'round-label', 'round-notice', 'canvas-wrap',
   'kill-panel', 'kill-markers', 'kill-status',
   'seat-name-A', 'seat-name-B', 'seat-name-C',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
 ].map((id) => [id, byId(id)]));
 
-const blank = () => ({ manifest: null, frames: [], events: [], totalEvents: 0, result: null, done: false, paused: false });
+const blank = () => ({ manifest: null, frames: [], events: [], totalEvents: 0, result: null, done: false });
 let live = blank();
 let replay = null;
 let selectedKill = null;
@@ -24,10 +24,8 @@ let frameIndex = 0;
 let playback = null;
 let requestedMode = null;
 let starting = false;
-let pauseRequest = null;
-let pauseSerial = 0;
+let stopRequest = null;
 let menuVisible = true;
-let replayStarted = false;
 let streamOpen = false;
 let drawPending = false;
 let eventRowsDirty = true;
@@ -89,6 +87,7 @@ function playerLabel(manifest, id) {
 function outcome(result, manifest) {
   if (!result || typeof result !== 'object') return '结果未记录';
   const reason = result.reason;
+  if (reason === 'stopped') return '已停止';
   const reasonText = ({ 'last-tank': '场上最后一辆坦克', timeout: '达到时间上限', tick_limit: '达到时间上限', 'double-knockout': '同时被击毁', 'score-target': '达到目标分数', 'score-limit': '达到目标分数', 'round-limit': '达到局数上限' })[reason] ?? reason;
   const winner = result.winner == null ? '平局' : `选手 ${playerLabel(manifest, result.winner)} 获胜`;
   return reasonText ? `${winner}（${reasonText}）` : winner;
@@ -194,7 +193,7 @@ function effectsAt(frames, index) {
   return effects;
 }
 
-function renderScoreboard(match, state, renderer, paused) {
+function renderScoreboard(match, state, renderer) {
   const ids = state?.tanks?.map((tank) => tank.id) ?? match.manifest?.players ?? [];
   const scores = ids.map((id) => state?.scores?.[id] ?? (state?.result?.winner === id ? 1 : 0));
   const equipment = ids.map((id) => renderer?.equippedWeapon?.(state?.tanks.find((tank) => tank.id === id), state) ?? null);
@@ -251,10 +250,9 @@ function renderScoreboard(match, state, renderer, paused) {
   el['round-label'].textContent = Number.isSafeInteger(state?.targetScore)
     ? `第 ${round} 局 · 先到 ${state.targetScore} 分` : `第 ${round} 局`;
   const notice = el['round-notice'];
-  notice.classList.toggle('is-paused', paused);
-  if (paused) {
+  if (match.done && match.result?.reason === 'stopped' && (!replay || frameIndex === match.frames.length - 1)) {
     notice.hidden = false;
-    notice.textContent = '已暂停';
+    notice.textContent = '已停止';
   } else if (state?.phase === 'intermission') {
     notice.hidden = false;
     notice.textContent = state.roundWinner == null ? '本局平局' : `选手 ${playerLabel(match.manifest, state.roundWinner)} 拿下本局`;
@@ -326,12 +324,18 @@ function render() {
   el['return-menu'].hidden = menuVisible;
   el['continue-match'].hidden = !live.manifest && !replay;
   el['continue-match'].textContent = replay ? '返回回放' : '返回对局';
-  const canPauseLive = matchActive && typeof live.manifest.matchId === 'string';
-  el.pause.hidden = menuVisible || (replay ? replay.frames.length < 2 : !canPauseLive);
-  el.pause.disabled = Boolean(!replay && (pauseRequest || !streamOpen || starting));
-  el.pause.textContent = replay
-    ? playback ? '暂停' : frameIndex === replay.frames.length - 1 ? '重播' : replayStarted ? '继续' : '播放'
-    : pauseRequest ? (pauseRequest.paused ? '暂停中…' : '恢复中…') : live.paused ? '继续' : '暂停';
+  const canStopLive = !menuVisible && !replay && matchActive && typeof live.manifest.matchId === 'string';
+  const canPlayReplay = !menuVisible && replay?.frames.length > 1;
+  const canStopReplay = canPlayReplay && (Boolean(playback) || frameIndex > 0);
+  const stopping = Boolean(stopRequest && stopRequest.matchId === live.manifest?.matchId);
+  el['match-controls'].hidden = !canStopLive && !canPlayReplay;
+  el['stop-match'].hidden = !canStopLive;
+  el['stop-match'].disabled = stopping || !streamOpen || starting;
+  el['stop-match'].textContent = stopping ? '停止中…' : '停止对局';
+  el['play-replay'].hidden = !canPlayReplay;
+  el['play-replay'].disabled = Boolean(playback);
+  el['play-replay'].textContent = frameIndex === replay?.frames.length - 1 ? '重播' : '播放回放';
+  el['stop-replay'].hidden = !canStopReplay;
   el['human-help'].hidden = !help;
   el['human-help'].textContent = help || '';
   el.battle.classList.toggle('pointer-control', activeMode() === 'local3');
@@ -366,8 +370,7 @@ function render() {
   } else if (!menuVisible) {
     el.battle.getContext('2d')?.clearRect(0, 0, el.battle.width, el.battle.height);
   }
-  if (!menuVisible) renderScoreboard(match, record?.state, renderer, replay ? replayStarted && !playback &&
-    frameIndex < match.frames.length - 1 : live.paused && !live.done);
+  if (!menuVisible) renderScoreboard(match, record?.state, renderer);
   if (el.details.open) {
     renderEvents(match, Boolean(replay));
     renderKillMarkers();
@@ -384,11 +387,11 @@ function queueDraw(updateEvents = false) {
 function liveStatus() {
   if (replay) return;
   if (live.done) {
-    setStatus(live.result ? `对局结束：${outcome(live.result, live.manifest)}。` : '对局已结束。');
+    setStatus(live.result?.reason === 'stopped' ? '对局已停止。'
+      : live.result ? `对局结束：${outcome(live.result, live.manifest)}。` : '对局已结束。');
   } else if (live.manifest) {
     const seed = live.manifest.seed;
-    setStatus(live.paused ? '对局已暂停。'
-      : `${matchMode(live.manifest.mode)?.label ?? '对战'}进行中${seed == null ? '' : `，种子 ${seed}`}。`);
+    setStatus(`${matchMode(live.manifest.mode)?.label ?? '对战'}进行中${seed == null ? '' : `，种子 ${seed}`}。`);
   } else {
     setStatus(starting ? '正在启动对局…' : '等待开局，或打开已有的回放。');
   }
@@ -409,9 +412,8 @@ function stopPlayback() {
 
 function play() {
   if (!replay || replay.frames.length < 2) return;
-  if (playback) return stopPlayback();
+  if (playback) return;
   if (frameIndex === replay.frames.length - 1) seek(0);
-  replayStarted = true;
   selectedKill = null;
   const startTick = tickOf(replay.frames[frameIndex]);
   const rate = Number(replay.manifest.tickRate);
@@ -430,15 +432,11 @@ function play() {
   queueDraw();
 }
 
-function applyPause(record) {
-  if (live.done || !live.manifest || typeof record.paused !== 'boolean' ||
-      record.matchId !== live.manifest.matchId) return false;
-  if (record.paused && !live.paused) {
-    inputEpoch++;
-    resetInput();
-  }
-  live.paused = record.paused;
-  return true;
+function finishLive(result) {
+  resetInput();
+  inputEpoch++;
+  live.done = true;
+  live.result = result ?? null;
 }
 
 function reduceLive(record) {
@@ -446,26 +444,18 @@ function reduceLive(record) {
     inputEpoch++;
     resetInput();
     live = blank();
-    pauseSerial++;
     live.manifest = { ...record.manifest, mode: record.manifest?.mode ?? requestedMode };
     appendTick(live, record);
     if (!replay) setError('');
-  } else if (record.type === 'tick' && record.state && live.manifest && !live.done) {
+  } else if (record.type === 'tick' && record.state && live.manifest && (!live.done || live.result?.reason === 'stopped')) {
     if (tickOf(record) <= tickOf(live.frames.at(-1))) return;
     // Keep a small recent history so transient effects render the same way as replay.
     appendTick(live, record);
     if (live.frames.length > WEAPON_FEEDBACK_TICKS) live.frames.shift();
     updatePointer();
     if (live.events.length > 100) live.events = live.events.slice(-100);
-  } else if (record.type === 'pause') {
-    if (!applyPause(record)) return;
-    pauseSerial++;
   } else if (record.type === 'end' || record.type === 'error') {
-    resetInput();
-    inputEpoch++;
-    live.done = true;
-    live.paused = false;
-    live.result = record.result ?? null;
+    finishLive(record.result);
     if (record.type === 'error' && !replay) setError(record.message || '裁判报告运行失败。');
   } else return;
   liveStatus();
@@ -508,31 +498,38 @@ async function post(route, body, timeout = 5000) {
   return response.json().catch(() => null);
 }
 
-el.pause.addEventListener('click', async () => {
-  if (replay) return play();
-  if (menuVisible || live.done || pauseRequest || !streamOpen || typeof live.manifest?.matchId !== 'string') return;
-  const request = { paused: !live.paused, matchId: live.manifest.matchId };
-  const serial = pauseSerial;
-  pauseRequest = request;
-  el.pause.disabled = true;
-  if (request.paused) {
-    inputEpoch++;
-    resetInput();
-  }
+el['play-replay'].addEventListener('click', play);
+el['stop-replay'].addEventListener('click', () => {
+  if (!replay) return;
+  stopPlayback();
+  seek(0);
+});
+
+el['stop-match'].addEventListener('click', async () => {
+  const matchId = live.manifest?.matchId;
+  if (replay || menuVisible || live.done || typeof matchId !== 'string' || stopRequest?.matchId === matchId || !streamOpen) return;
+  const request = { matchId };
+  stopRequest = request;
+  el['stop-match'].disabled = true;
+  inputEpoch++;
+  resetInput();
   setError('');
   queueDraw();
   try {
-    const response = await post('/api/pause', request);
-    if (pauseSerial === serial && !applyPause(response ?? {})) throw new Error('裁判未确认当前对局状态。');
+    const response = await post('/api/stop', request);
+    if (!live.done && live.manifest?.matchId === request.matchId) {
+      if (response?.matchId !== request.matchId || !response.result) throw new Error('裁判未确认当前对局状态。');
+      // The terminal SSE can race its HTTP acknowledgment. Accept remaining ticks
+      // of this stopped match so the stage still reaches the last saved frame.
+      finishLive(response.result);
+    }
   } catch (error) {
     if (!replay && !live.done && live.manifest?.matchId === request.matchId) {
-      if (request.paused && !live.paused) {
-        for (const id of humanSeats(live.manifest.mode)) sendInput(id, neutral);
-      }
-      setError(`无法${request.paused ? '暂停' : '恢复'}对局：${error.message}`);
+      for (const id of humanSeats(live.manifest.mode)) sendInput(id, neutral);
+      setError(`无法停止对局：${error.message}`);
     }
   } finally {
-    if (pauseRequest === request) pauseRequest = null;
+    if (stopRequest === request) stopRequest = null;
     liveStatus();
     queueDraw();
   }
@@ -565,7 +562,6 @@ el['match-form'].addEventListener('submit', async (event) => {
   stopPlayback();
   replay = null;
   selectedKill = null;
-  replayStarted = false;
   menuVisible = false;
   starting = true;
   requestedMode = mode;
@@ -658,8 +654,7 @@ el['replay-file'].addEventListener('change', async () => {
     candidate.lethalIndex = indexLethalProjectiles(candidate.frames);
     replay = candidate;
     selectedKill = null;
-    replayStarted = false;
-    menuVisible = false;
+      menuVisible = false;
     frameIndex = 0;
     setStatus(candidate.done ? `回放：${outcome(candidate.result, candidate.manifest)}。` : '已打开记录，未找到结束行。');
     queueDraw(true);
@@ -676,7 +671,6 @@ el['back-live'].addEventListener('click', () => {
   stopPlayback();
   replay = null;
   selectedKill = null;
-  replayStarted = false;
   menuVisible = !live.manifest;
   setError('');
   liveStatus();
@@ -701,7 +695,8 @@ el.next.addEventListener('click', () => { stopPlayback(); seek(frameIndex + 1); 
 el.details.addEventListener('toggle', () => queueDraw(true));
 
 function activeMode() {
-  return !menuVisible && !replay && !live.done && !live.paused && !pauseRequest ? live.manifest?.mode : null;
+  const stopping = stopRequest && stopRequest.matchId === live.manifest?.matchId;
+  return !menuVisible && !replay && !live.done && !stopping ? live.manifest?.mode : null;
 }
 
 function resetInput() {

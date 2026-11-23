@@ -16,7 +16,11 @@
       <button type="button" id="match-id" class="match-id" hidden>
         <span>对局 ID</span><code id="match-id-value"></code><span id="match-id-copy" aria-live="polite">复制</span>
       </button>
-      <button type="button" id="pause" class="pause-button" hidden>暂停</button>
+      <div id="match-controls" class="match-controls" hidden>
+        <button type="button" id="stop-match" class="match-primary" hidden>停止对局</button>
+        <button type="button" id="play-replay" class="match-primary" hidden>播放回放</button>
+        <button type="button" id="stop-replay" hidden>停止回放</button>
+      </div>
     </header>
 
     <section id="menu" class="game-menu" aria-labelledby="game-title">
