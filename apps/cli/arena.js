@@ -2,7 +2,8 @@ import {parseArgs} from 'node:util';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {game,gamesByRate,gameForRate} from '../../games/tank-trouble/adapter/index.js';
-import {recorder,REPLAY_FILENAME,verifyReplay} from '../../replay/index.js';
+import {readReplay,recorder,REPLAY_FILENAME,verifyReplay} from '../../replay/index.js';
+import {replayReport} from '../../replay/report.js';
 import {makeMatch,playersForMode,seatIds} from './match-options.js';
 import {loadBotRegistry} from './bot-registry.js';
 import {serve} from './serve.js';
@@ -25,11 +26,12 @@ try {
     args,allowPositionals:true,options:{
       seed:{type:'string'}, 'max-ticks':{type:'string'}, 'timeout-ms':{type:'string'},
       ...seatFlags('bot-'),...seatFlags('name-'),'score-to-win':{type:'string'},port:{type:'string'},
-      rounds:{type:'string'},out:{type:'string'},cols:{type:'string'},rows:{type:'string'},'shell-speed':{type:'string'},
+      tick:{type:'string'},rounds:{type:'string'},out:{type:'string'},cols:{type:'string'},rows:{type:'string'},'shell-speed':{type:'string'},
       'shrink-after':{type:'string'},'shrink-duration':{type:'string'},'round-limit':{type:'string'},
       'maze-complexity':{type:'string'},'friendly-fire':{type:'string'},'simulation-rate':{type:'string'},teams:{type:'string'}
     }
   });
+  if (values.tick!==undefined && command!=='report') throw new Error('--tick is supported by report');
   const overrides=Object.fromEntries([['cols','cols'],['rows','rows'],['shrinkAfterSeconds','shrink-after'],
     ['shrinkDurationSeconds','shrink-duration'],['roundLimit','round-limit'],['simulationRate','simulation-rate']]
     .filter(([,flag])=>values[flag]!==undefined).map(([key,flag])=>[key,integer(values[flag])]));
@@ -75,11 +77,15 @@ try {
   } else if (command === 'verify') {
     if (positionals.length !== 1) throw new Error('verify requires one path to '+REPLAY_FILENAME);
     console.log(JSON.stringify(await verifyReplay(positionals[0],registry)));
+  } else if (command === 'report') {
+    if (positionals.length !== 1) throw new Error('report requires one path to '+REPLAY_FILENAME);
+    const report=await replayReport(readReplay(positionals[0],registry),{tick:integer(values.tick)});
+    console.log(JSON.stringify(report,null,2));
   } else if (command === 'serve') {
     if (positionals.length) throw new Error('serve does not accept positional arguments');
     await serve({game:selectedGame,selectGame:gameForRate,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
   } else if (!command || command === 'help') {
-    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl.gz> | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <open|classic|dense> --friendly-fire <on|off>\nrun only: --teams \'{"A":"1","B":"2"}\'');
+    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl.gz> | report <match.jsonl.gz> [--tick <n>] | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <open|classic|dense> --friendly-fire <on|off>\nrun only: --teams \'{"A":"1","B":"2"}\'');
   } else {
     throw new Error(`unknown command: ${command}`);
   }

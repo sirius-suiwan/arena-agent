@@ -24,16 +24,22 @@ node apps/cli/arena.js run --seed 42 --bot-a laika --bot-b gpt-dots
 node apps/cli/arena.js serve
 ```
 
-CLI 输出本局目录。打开 [游戏选择页](http://127.0.0.1:8765/) 进入《坦克动荡 2》，或直接打开 [坦克菜单](http://127.0.0.1:8765/tank)。保留原有快捷模式；展开「自定义对局」可在 A–H 之间任选 2–8 个席位。每席可用已注册 bot、真人或留空。三套真人控制各限一席：方向键／M 或空格，ESDF／Q，以及鼠标；可分配到任意席位。实时和回放共享同一套绘图。网页只监听本机，不提供网络联机。选择「打开回放」并载入 `match.jsonl`，即可播放、逐 tick 前后步进或点事件跳转。
+CLI 输出本局目录。打开 [游戏选择页](http://127.0.0.1:8765/) 进入《坦克动荡 2》，或直接打开 [坦克菜单](http://127.0.0.1:8765/tank)。保留原有快捷模式；展开「自定义对局」可在 A–H 之间任选 2–8 个席位。每席可用已注册 bot、真人或留空。三套真人控制各限一席：方向键／M 或空格，ESDF／Q，以及鼠标；可分配到任意席位。实时和回放共享同一套绘图。网页只监听本机，不提供网络联机。选择「打开回放」并载入 `match.jsonl.gz`，即可播放、逐 tick 前后步进或点事件跳转。
 
 ```sh
-node apps/cli/arena.js verify runs/tank-trouble/<match-id>/match.jsonl
+node apps/cli/arena.js verify runs/tank-trouble/MATCH_ID/match.jsonl.gz
+node apps/cli/arena.js report runs/tank-trouble/MATCH_ID/match.jsonl.gz > report.json
+node apps/cli/arena.js report runs/tank-trouble/MATCH_ID/match.jsonl.gz --tick 123 > report-123.json
 node apps/cli/arena.js run --seed 42 --rounds 10
 ```
 
 实时对局中的「停止对局」会完成当前 tick、结束比赛并保存已打的记录，不判胜负，也不能续打。「停止回放」会停止播放并回到第一帧，不改变日志。「对局详情」默认折叠，可展开计时、事件、动作与回放时间轴。
 
-实际对局存于 `runs/<game-id>/<match-id>/`。实战或回放右上角可复制完整对局 ID，与该目录名一致。早期没有 `matchId` 的记录不显示 ID。其中 `manifest.json` 标记版本、种子、选手、运行参数；`match.jsonl` 包含初始状态、每 tick 的观测、提交动作、采纳动作、回退、事件、状态和 SHA-256；`result.json` 记录结果。浏览器直接显示保存的帧；CLI 校验使用原规则版本与采纳动作重算，不启动 bot。完整帧日志适合复盘，连续批量跑赛要留意磁盘用量。
+实际对局存于 `runs/<game-id>/<match-id>/`，对局 ID 可在实战和回放右上角复制：
+
+- `manifest.json` 记录规则版本、种子、选手和运行参数；`result.json` 记录最终结果。
+- `match.jsonl.gz` 是 gzip 压缩的 JSON Lines。每 tick 只存提交及采纳的动作、回退原因、事件和状态 SHA-256；不重复存地图、帧状态或各席观测。浏览器在本机解压并用当前规则生成画面，不上传文件、不运行 bot。CLI `verify` 逐 tick 核对哈希及事件，首处分歧会报出 tick。旧格式不迁移、不兼容。
+- `report` 在验证后输出精简 JSON，包含版本、比分、回退、墙碰、命中和道具等统计与关键事件。分享给 Agent 时通常只需报告，不用给整局录像。加 `--tick` 可附上指定动作 tick 前后约两秒的上下文；原始日志可用 `gzip -dc` 查看。
 
 ## 接入 bot 或游戏
 
@@ -52,7 +58,7 @@ node apps/cli/arena.js run --bot-a laika --bot-b gpt-dots --bot-c laika --bot-d 
   --teams '{"A":"1","B":"2","C":"1","D":"2"}' --friendly-fire off
 ```
 
-`--round-limit` 是每场打几局；`--rounds` 仍是批量跑多少场。长赛制尤其是八席全量录像可能占较多磁盘。
+`--round-limit` 是每场打几局；`--rounds` 仍是批量跑多少场。
 
 每小局默认第 40 秒开始缩圈，用 15 秒缩完。安全范围保持地图的长宽比；坦克连续在外 2 秒才淘汰。只剩一辆坦克时，幸存者在结算阶段无敌。赛前界面可分别改开始时间和耗时，批量跑局也可用 `--shrink-after 40 --shrink-duration 15`（开始时间 0–120 秒，0 表示立即；耗时 1–120 秒）。都按游戏 tick 计时，不受浏览器帧率影响。
 
@@ -60,4 +66,4 @@ node apps/cli/arena.js run --bot-a laika --bot-b gpt-dots --bot-c laika --bot-d 
 
 实战和回放左侧显示当前局数与赛制，右侧是累计击杀（自伤不加），底部是各席位的名字、比分、普通弹空槽和特殊装备。超过四个席位时比分卡换行。新版保留每辆坦克 10 个普通弹槽；回放显示记录中的上限。普通弹命中或消失时释放一格，开火仍受按键状态和武器规则限制。
 
-调试数值见 [classic-profile.json](games/tank-trouble/classic-profile.json)。改完重启并开新局；录制的帧会保留当时的显示参数。改过物理参数后若要校验此前的录像，请使用录像生成时的 JSON 版本。
+调试数值见 [classic-profile.json](games/tank-trouble/classic-profile.json)。改完重启并开新局。回放、校验及复盘依赖录像生成时的引擎与数值配置；修改数值后要复盘之前的对局，请从 Git 取回对应版本的文件。

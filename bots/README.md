@@ -60,9 +60,9 @@ node apps/cli/arena.js run --seed 12 --rounds 3 --score-to-win 1 \
 ## 看一局、改一次、再比较
 
 1. 打开该局的 `manifest.json`：核对规则版本、种子、座位和 bot 文件 SHA-256。对比策略时固定这些条件，记录修改前后的 bot 版本。
-2. 按 `match.jsonl` 中的 `input[座位]` 看当时的观测、`submitted`、`accepted` 和 `fallback`。先排除超时、格式错误，再讨论策略。引擎算的是 `accepted`，不是 bot 打印的想法。
-3. 看 `events`：先找 `round-end`、`hit`、`bounce`，回查射手、事件 tick 和弹丸 ID；ID 在每小局内有效，要和小局号一起看。若要看画面，启动 `node apps/cli/arena.js serve`，打开网页后导入本局 `match.jsonl`。
-4. 用 `node apps/cli/arena.js verify <该局的 match.jsonl 路径>` 检查记录是否能重算。回放验证不会重新运行 bot。
+2. 运行 `node apps/cli/arena.js report 路径/match.jsonl.gz > report.json`。先看超时、非法动作、撞墙和道具统计，再看命中、击毁及局末事件。统计是证据，不代表已经判明 bot 的决策原因。
+3. 找到关键 tick 后加 `--tick 123` 导出前后约两秒的采样。完整的 `submitted`、`accepted`、`fallback` 在 `gzip -dc 路径/match.jsonl.gz` 的 `input[座位]`；引擎使用 `accepted`。弹丸 ID 每小局重置，要连同局号看。
+4. 可在本机网页直接打开 `match.jsonl.gz` 看回放，也可用 `node apps/cli/arena.js verify 路径/match.jsonl.gz` 只校验。回放、报告和校验不重新运行 bot。
 
 每轮只改一个假设，例如「射击前预测一次反弹是否打回自己」，再用相同的多组种子与交换座位复测。看胜负之外，也看自伤次数和回退比例。
 
