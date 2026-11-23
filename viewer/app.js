@@ -1,4 +1,5 @@
 import { renderers } from './renderers.js';
+import { emptyKillTotals, countKills } from './score-data.js';
 import { indexLethalProjectiles, lethalProjectileRings } from './replay-highlight.js';
 import { matchMode, keyboardAction, keySeat, pointerAction } from './input.js';
 
@@ -8,7 +9,7 @@ const el = Object.fromEntries([
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'match-id', 'match-id-value', 'match-id-copy',
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
-  'scoreboard', 'round-label', 'round-notice', 'canvas-wrap',
+  'scoreboard', 'kill-board', 'arena-round-mode', 'arena-round', 'arena-round-target', 'round-label', 'round-notice', 'canvas-wrap',
   'kill-panel', 'kill-markers', 'kill-status',
   'seat-name-A', 'seat-name-B', 'seat-name-C',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
@@ -32,6 +33,7 @@ let eventRowsDirty = true;
 let importSequence = 0;
 let inputEpoch = 0;
 let scoreKey = '';
+let hudRows = [];
 let fieldRatio = '';
 const WEAPON_FEEDBACK_TICKS = 60;
 const MAX_SEAT_NAME_LENGTH = 24;
@@ -51,7 +53,11 @@ function appendTick(match, record) {
     id, entry?.fallback == null ? entry?.accepted : { action: entry.accepted, fallback: entry.fallback },
   ]));
   const frameEvents = Array.isArray(record.events) ? record.events.filter((e) => e && typeof e === 'object') : [];
-  match.frames.push({ tick: tickOf(record), state: record.state, actions, events: frameEvents });
+  const previousKills = match.frames.at(-1)?.kills
+    ?? emptyKillTotals(match.manifest?.players ?? record.state?.tanks?.map(({ id }) => id) ?? []);
+  const kills = match === live && record.stats?.kills && typeof record.stats.kills === 'object'
+    ? { ...record.stats.kills } : countKills(previousKills, frameEvents);
+  match.frames.push({ tick: tickOf(record), state: record.state, actions, events: frameEvents, kills });
   for (const event of frameEvents) {
     match.events.push({ index, tick: tickOf(record), event });
     match.totalEvents++;
@@ -193,60 +199,114 @@ function effectsAt(frames, index) {
   return effects;
 }
 
-function renderScoreboard(match, state, renderer) {
+function makeNode(tag, className, value) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (value != null) node.textContent = value;
+  return node;
+}
+
+function setText(node, text) {
+  if (node.textContent !== String(text)) node.textContent = String(text);
+}
+
+function renderScoreboard(match, state, renderer, kills = {}) {
   const ids = state?.tanks?.map((tank) => tank.id) ?? match.manifest?.players ?? [];
-  const scores = ids.map((id) => state?.scores?.[id] ?? (state?.result?.winner === id ? 1 : 0));
-  const equipment = ids.map((id) => renderer?.equippedWeapon?.(state?.tanks.find((tank) => tank.id === id), state) ?? null);
   const names = ids.map((id) => playerName(match.manifest, id));
-  const key = JSON.stringify([match.manifest?.mode, ids, names, scores, equipment, renderer?.title]);
+  const key = JSON.stringify([match.manifest?.mode, ids, names, renderer?.title]);
   if (scoreKey !== key) {
     scoreKey = key;
-    const icons = [];
-    const weapons = [];
     const items = document.createDocumentFragment();
-    ids.forEach((id, index) => {
-      const row = document.createElement('span');
-      row.className = 'score';
-      const weapon = equipment[index];
-      const weaponLabel = weapon && renderer?.weaponLabel?.(weapon);
-      const name = names[index];
+    const railItems = document.createDocumentFragment();
+    hudRows = ids.map((id, index) => {
+      const card = makeNode('div', 'score player-result');
       const player = playerLabel(match.manifest, id);
-      row.setAttribute('aria-label', `选手 ${player}：${scores[index]} 分${weaponLabel ? `，已装备${weaponLabel}` : ''}`);
-      row.title = player;
-      const icon = document.createElement('canvas');
-      icon.className = 'score-icon';
+      const color = renderer?.seatColor?.(index, match.manifest?.mode);
+      const identity = makeNode('div', 'score-identity');
+      const name = makeNode('strong', 'score-name', names[index]);
+      name.dir = 'auto';
+      const seat = makeNode('span', 'score-id', names[index] === id ? '' : id);
+      identity.append(name, seat);
+      const face = makeNode('div', 'score-face');
+      const icon = makeNode('canvas', 'score-icon');
+      const number = makeNode('span', 'score-number', '0');
+      const ammo = makeNode('div', 'score-ammo');
+      const slots = makeNode('span', 'ammo-bars');
+      slots.setAttribute('aria-hidden', 'true');
+      const available = makeNode('span', 'ammo-quantity');
+      ammo.append(slots, available);
+      face.append(icon, number, ammo);
+      const equip = makeNode('div', 'score-equipment');
+      const weaponIcon = makeNode('canvas', 'weapon-badge');
+      const weaponText = makeNode('span', 'weapon-text');
+      equip.append(weaponIcon, weaponText);
+      card.append(face, identity, equip);
+      card.title = player;
       icon.setAttribute('aria-hidden', 'true');
-      icons.push(icon);
-      const number = document.createElement('span');
-      number.className = 'score-number';
-      number.textContent = scores[index];
-      const label = document.createElement('span');
-      label.className = 'score-id';
-      label.textContent = id;
-      row.append(icon, number);
-      if (name !== id) {
-        const nameLabel = document.createElement('span');
-        nameLabel.className = 'score-name';
-        nameLabel.textContent = name;
-        nameLabel.dir = 'auto';
-        row.append(nameLabel);
-      }
-      row.append(label);
-      if (weaponLabel) {
-        const badge = document.createElement('canvas');
-        badge.className = 'weapon-badge';
-        badge.title = `已装备${weaponLabel}`;
-        badge.setAttribute('aria-hidden', 'true');
-        weapons.push([badge, weapon]);
-        row.append(badge);
-      }
-      items.append(row);
+      weaponIcon.setAttribute('aria-hidden', 'true');
+      if (color) card.style.setProperty('--seat-tint', color);
+
+      const rail = makeNode('li', 'kill-seat');
+      const railIcon = makeNode('canvas', 'kill-icon');
+      railIcon.setAttribute('aria-hidden', 'true');
+      const railName = makeNode('span', 'kill-name', names[index]);
+      railName.dir = 'auto';
+      const count = makeNode('strong', 'kill-number', '0');
+      rail.append(railIcon, count, railName);
+      rail.title = player;
+      items.append(card);
+      railItems.append(rail);
+      return { id, player, card, icon, number, ammo, slots, available, equip, weaponIcon,
+        weaponText, rail, railIcon, count, maxAmmo: 0, bars: [], equipment: undefined };
     });
     el.scoreboard.replaceChildren(items);
-    icons.forEach((icon, index) => renderer?.scoreIcon?.(icon, index, match.manifest?.mode));
-    for (const [icon, weapon] of weapons) renderer?.weaponIcon?.(icon, weapon);
+    el['kill-board'].replaceChildren(railItems);
+    el.scoreboard.style.setProperty('--seat-count', ids.length || 2);
+    hudRows.forEach(({ icon, railIcon }, index) => {
+      renderer?.scoreIcon?.(icon, index, match.manifest?.mode);
+      renderer?.scoreIcon?.(railIcon, index, match.manifest?.mode);
+    });
+  }
+  for (const row of hudRows) {
+    const tank = state?.tanks?.find(({ id }) => id === row.id);
+    const dead = tank?.alive === false;
+    const score = state?.scores?.[row.id] ?? (state?.result?.winner === row.id ? 1 : 0);
+    const ammo = tank ? renderer?.ammo?.(state, row.id) : null;
+    const equipped = renderer?.equippedWeapon?.(tank, state) ?? null;
+    const weapon = equipped && renderer?.weaponLabel?.(equipped);
+    const killCount = Number.isSafeInteger(kills[row.id]) ? Math.max(0, kills[row.id]) : 0;
+    row.card.classList.toggle('is-destroyed', dead);
+    row.rail.classList.toggle('is-destroyed', dead);
+    setText(row.number, score);
+    setText(row.count, killCount);
+    row.rail.setAttribute('aria-label', `${row.player}：${killCount} 次击杀`);
+    row.ammo.hidden = !ammo;
+    if (ammo) {
+      setText(row.available, `${ammo.available}/${ammo.limit}`);
+      row.ammo.title = '空闲普通弹槽，开火仍受冷却和特殊武器状态限制';
+      if (row.maxAmmo !== ammo.limit) {
+        row.maxAmmo = ammo.limit;
+        row.bars = Array.from({ length: ammo.limit }, () => makeNode('span', 'ammo-slot'));
+        row.slots.replaceChildren(...row.bars);
+      }
+      row.bars.forEach((bar, index) => bar.classList.toggle('is-free', index < ammo.available));
+    }
+    row.equip.hidden = !weapon;
+    if (weapon) {
+      const quantity = Number.isSafeInteger(tank?.weaponAmmo) && tank.weaponAmmo > 0 ? ` ×${tank.weaponAmmo}`
+        : equipped === 'frag' && tank?.fragId ? ' · 可引爆' : '';
+      setText(row.weaponText, `${weapon}${quantity}`);
+      row.equip.title = `已装备${weapon}`;
+      if (row.equipment !== equipped) renderer?.weaponIcon?.(row.weaponIcon, equipped);
+      row.equipment = equipped;
+    } else if (!weapon) row.equipment = undefined;
+    row.card.setAttribute('aria-label', `选手 ${row.player}：${score} 分${dead ? '，本局已击毁' : ''}${ammo ? `，空闲普通弹槽 ${ammo.available}/${ammo.limit}` : ''}${weapon ? `，已装备${weapon}` : ''}`);
   }
   const round = state?.round ?? 1;
+  const target = Number.isSafeInteger(state?.targetScore) ? `先到 ${state.targetScore} 分` : '单局对战';
+  setText(el['arena-round-mode'], matchMode(match.manifest?.mode)?.label ?? '坦克对战');
+  setText(el['arena-round'], `第 ${round} 局`);
+  setText(el['arena-round-target'], target);
   el['round-label'].textContent = Number.isSafeInteger(state?.targetScore)
     ? `第 ${round} 局 · 先到 ${state.targetScore} 分` : `第 ${round} 局`;
   const notice = el['round-notice'];
@@ -359,18 +419,19 @@ function render() {
     const ratio = String(record.state.width / record.state.height);
     if (ratio !== fieldRatio && Number.isFinite(Number(ratio)) && Number(ratio) > 0) {
       fieldRatio = ratio;
-      el['canvas-wrap'].style.setProperty('--field-ratio', ratio);
+      el.stage.style.setProperty('--field-ratio', ratio);
     }
     el.battle.setAttribute('aria-label', renderer.title);
     renderer.draw(el.battle, record.state, {
       mode: match.manifest?.mode,
+      names: Object.fromEntries((record.state.tanks ?? []).map(({ id }) => [id, playerName(match.manifest, id)])),
       effects: effectsAt(match.frames, current),
       lethalRings: replay ? lethalProjectileRings(replay.lethalIndex, record, current) : [],
     });
   } else if (!menuVisible) {
     el.battle.getContext('2d')?.clearRect(0, 0, el.battle.width, el.battle.height);
   }
-  if (!menuVisible) renderScoreboard(match, record?.state, renderer);
+  if (!menuVisible) renderScoreboard(match, record?.state, renderer, record?.kills);
   if (el.details.open) {
     renderEvents(match, Boolean(replay));
     renderKillMarkers();

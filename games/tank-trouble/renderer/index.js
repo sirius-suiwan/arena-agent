@@ -58,47 +58,48 @@ function fitCanvas(canvas) {
   return { ctx: canvas.getContext('2d'), width, height, ratio };
 }
 
-function tankGlyph(ctx, color) {
-  ctx.fillStyle = '#222';
-  ctx.fillRect(-10, -9, 19, 4);
-  ctx.fillRect(-10, 5, 19, 4);
-  ctx.fillRect(6, -1.9, 8, 3.8);
-  ctx.fillRect(-9, -5, 17, 10);
-  ctx.fillStyle = color;
-  ctx.fillRect(-7.5, -4, 13.8, 8);
+export function tankSeatColor(index, mode) {
+  return team(index, mode).hull;
+}
+
+function roundedGlyph(ctx, x, y, w, h, radius, paint, outline, line = 1.15) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, radius);
+  ctx.fillStyle = paint;
+  ctx.fill();
+  if (outline) {
+    ctx.lineWidth = line;
+    ctx.strokeStyle = outline;
+    ctx.stroke();
+  }
 }
 
 function stageTankGlyph(ctx, color) {
-  ctx.lineJoin = 'miter';
-  ctx.lineWidth = 1.15;
-  ctx.strokeStyle = color.outline;
-  ctx.fillStyle = color.track;
-  ctx.fillRect(-10, -8.6, 19, 4);
-  ctx.strokeRect(-10, -8.6, 19, 4);
-  ctx.fillRect(-10, 4.6, 19, 4);
-  ctx.strokeRect(-10, 4.6, 19, 4);
-  ctx.fillStyle = color.hull;
-  ctx.fillRect(-9, -5.6, 17.5, 11.2);
-  ctx.strokeRect(-9, -5.6, 17.5, 11.2);
-  ctx.fillRect(2, -1.6, 12, 3.2);
-  ctx.strokeRect(2, -1.6, 12, 3.2);
+  ctx.lineJoin = 'round';
+  roundedGlyph(ctx, -10.8, -9.6, 19.7, 4.6, 1.5, color.track, color.outline);
+  roundedGlyph(ctx, -10.8, 5, 19.7, 4.6, 1.5, color.track, color.outline);
+  roundedGlyph(ctx, -9.2, -5.8, 17.8, 11.6, 2.1, color.hull, color.outline);
+  roundedGlyph(ctx, 2.3, -1.9, 11.2, 3.8, 0.8, color.hull, color.outline);
   ctx.beginPath();
-  ctx.arc(-0.8, 0, 4.55, 0, Math.PI * 2);
+  ctx.arc(-0.45, 0, 4.6, 0, Math.PI * 2);
   ctx.fillStyle = color.turret;
   ctx.fill();
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = color.outline;
   ctx.stroke();
 }
 
-function weaponGlyph(ctx, kind, onField = false) {
-  ctx.fillStyle = onField ? '#8d8d8d' : '#272727';
-  ctx.fillRect(-7.5, -7.5, 15, 15);
-  if (onField) {
-    ctx.lineWidth = 0.9;
-    ctx.strokeStyle = '#606060';
-    ctx.strokeRect(-7, -7, 14, 14);
-  }
-  ctx.strokeStyle = onField ? '#383838' : '#fff';
-  ctx.fillStyle = onField ? '#383838' : '#fff';
+const weaponInks = {
+  'death-ray': '#af3952', laser: '#9d396d', 'laser-sight': '#9d396d',
+  gatling: '#9b6118', rapid: '#9b6118', mine: '#564879', frag: '#258170',
+  shield: '#2578a1',
+};
+
+function weaponGlyph(ctx, kind) {
+  const color = Object.hasOwn(weaponInks, kind) ? weaponInks[kind] : '#555d71';
+  roundedGlyph(ctx, -7.2, -7.2, 14.4, 14.4, 2.3, '#f8f7f4', color, 1.05);
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
   ctx.lineWidth = 1.5;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -137,7 +138,7 @@ function weaponGlyph(ctx, kind, onField = false) {
 function drawCrate(ctx, pickup) {
   ctx.save();
   ctx.translate(pickup.x, pickup.y);
-  weaponGlyph(ctx, pickup.type, true);
+  weaponGlyph(ctx, pickup.type);
   ctx.restore();
 }
 
@@ -245,7 +246,7 @@ function drawLethalRings(ctx, state, mode, rings) {
 }
 
 /** Draw a read-only projection of an authoritative tank state; no art files from the original are used. */
-export function drawTankFrame(canvas, state, { mode, effects = [], lethalRings = [] } = {}) {
+export function drawTankFrame(canvas, state, { mode, names = {}, effects = [], lethalRings = [] } = {}) {
   const { ctx, width, height, ratio } = fitCanvas(canvas);
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -304,6 +305,25 @@ export function drawTankFrame(canvas, state, { mode, effects = [], lethalRings =
     ctx.rotate(Number.isFinite(tank.angle) ? tank.angle : 0);
     stageTankGlyph(ctx, color);
     ctx.restore();
+    const name = Object.hasOwn(names, tank.id) ? names[tank.id] : null;
+    if (typeof name === 'string' && name !== tank.id && name && scale / ratio >= 0.76) {
+      ctx.save();
+      const letters = [...name];
+      const label = letters.length > 13 ? letters.slice(0, 12).join('') + '…' : name;
+      ctx.font = '650 11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      const available = ctx.measureText(label)?.width ?? label.length * 8;
+      const halfWidth = Math.min(65, available / 2);
+      const px = Math.max(halfWidth + 3, Math.min(state.width - halfWidth - 3, tank.x));
+      const py = tank.y < 28 ? tank.y + 22 : tank.y - 15;
+      ctx.strokeStyle = '#efefed';
+      ctx.lineWidth = 2.6;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(label, px, py, 130);
+      ctx.fillStyle = '#282734';
+      ctx.fillText(label, px, py, 130);
+      ctx.restore();
+    }
   }
 
   for (const bullet of state.bullets) {
@@ -332,7 +352,8 @@ export function drawScoreIcon(canvas, index, mode) {
   ctx.clearRect(0, 0, width, height);
   const scale = Math.min(width, height) / 29;
   ctx.setTransform(scale, 0, 0, scale, width / 2, height / 2);
-  tankGlyph(ctx, team(index, mode).hull);
+  ctx.rotate(-Math.PI / 2);
+  stageTankGlyph(ctx, team(index, mode));
 }
 
 export function drawWeaponIcon(canvas, weapon) {

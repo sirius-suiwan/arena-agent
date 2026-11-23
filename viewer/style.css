@@ -76,31 +76,69 @@ button.match-id {
 body:has(#stage:not([hidden])) { background: #fff; }
 main:has(#stage:not([hidden])) { width: calc(100% - 10px); padding: 3px 0 9px; }
 main:has(#stage:not([hidden])) .toolbar { padding: 0 0 2px; }
-.canvas-wrap {
+.board {
   --field-ratio: 1.3333333;
-  position: relative;
-  overflow: hidden;
-  width: min(100%, calc(max(155px, 100svh - 104px) * var(--field-ratio)));
+  --rail-width: clamp(78px, 9vw, 132px);
+  width: min(100%, calc(max(200px, 100svh - 184px) * var(--field-ratio) + 2 * var(--rail-width)));
   margin-inline: auto;
+  display: grid;
+  grid-template-areas: 'round field kills' 'round scores kills' 'hint hint hint';
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--rail-width);
+  align-items: stretch;
 }
+.canvas-wrap { grid-area: field; position: relative; overflow: hidden; min-width: 0; }
 canvas#battle { width: 100%; aspect-ratio: var(--field-ratio); display: block; }
+.round-rail, .kill-rail {
+  padding: clamp(9px, 1.5vw, 17px) clamp(5px, 1.25vw, 13px);
+  align-content: start;
+  min-width: 0;
+  background: #202331;
+  color: #f5f5fb;
+}
+.round-rail { grid-area: round; display: grid; padding-top: clamp(14px, 4vw, 42px); }
+.kill-rail { grid-area: kills; }
+.rail-kicker { color: #c5cbdb; font-size: 11px; font-weight: 700; margin: 0 0 8px; }
+.arena-round { margin: 0; font-size: clamp(16px, 2.45vw, 28px); font-weight: 850; letter-spacing: -.065em; white-space: nowrap; }
+.rail-caption { margin: 5px 0 0; color: #b6bccc; font-size: 11px; line-height: 1.35; }
+#kill-board { display: grid; gap: 9px; list-style: none; margin: 0; padding: 0; }
+.kill-seat { display: grid; align-items: center; grid-template-columns: 30px minmax(0, 1fr); gap: 3px 5px; }
+.kill-icon { width: 30px; height: 31px; padding: 1px; display: block; border-radius: 4px; background: #f5f3f0; }
+.kill-number { text-align: end; font-size: clamp(16px, 2vw, 25px); font-variant-numeric: tabular-nums; }
+.kill-name { grid-column: 1 / -1; font-size: 10px; color: #e0e3ed; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kill-seat.is-destroyed { opacity: .58; }
 canvas#battle.pointer-control { cursor: crosshair; touch-action: none; }
 .round-notice {
   position: absolute; inset: auto 0 10px; width: fit-content; max-width: 94%; margin: auto;
   border: 1px solid #6c6c6c; background: #f8f8f8f2; padding: 6px 11px;
   font-size: 13px; font-weight: 700; pointer-events: none;
 }
-.score-panel, .scoreboard { justify-content: center; }
-.score-panel { min-height: 24px; }
-.scoreboard { gap: clamp(13px, 6vw, 70px); }
-.score { display: flex; align-items: center; gap: 5px; }
-.score-icon { width: 25px; height: 23px; display: block; }
-.weapon-badge { width: 17px; height: 17px; display: block; margin-left: 1px; }
-.score-number { font: 800 17px/1 ui-monospace, monospace; }
-.score-name { max-width: min(15ch, 18vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.score-id { color: var(--muted); font: 700 10px ui-monospace, monospace; }
+.score-panel { grid-area: scores; display: block; padding: 3px 2px 5px; min-width: 0; }
+.scoreboard { display: grid; grid-template-columns: repeat(var(--seat-count, 2), minmax(0, 1fr)); gap: clamp(3px, 1.1vw, 11px); }
+.score.player-result {
+  --seat-tint: #727682;
+  display: grid; grid-template-rows: auto auto auto; align-content: start;
+  min-width: 0; min-height: 95px; padding: 4px clamp(4px, 1vw, 10px) 3px;
+  background: #f6f5f2; border-bottom: 2px solid var(--seat-tint); border-radius: 0 0 4px 4px;
+}
+.score.player-result.is-destroyed { background: #f1f1ef; border-bottom-color: #b5b5b5; }
+.score.player-result.is-destroyed .score-face { opacity: .42; filter: saturate(.3); }
+.score.player-result.is-destroyed .score-identity { color: #595b64; }
+.score-face { display: flex; justify-content: center; align-items: center; gap: clamp(5px, 1.35vw, 16px); }
+.score-icon { width: clamp(31px, 5.1vw, 55px); height: clamp(34px, 5.45vw, 58px); display: block; }
+.score-number { font: 850 clamp(22px, 4vw, 40px)/1 ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.score-ammo { display: grid; justify-items: center; gap: 2px; }
+.ammo-bars { display: flex; flex-direction: column-reverse; gap: 1px; }
+.ammo-slot { width: 11px; height: 3px; display: block; border-radius: 1px; background: #dcddd9; }
+.ammo-slot.is-free { background: #252839; }
+.ammo-quantity { font: 750 9px/1.15 ui-monospace, monospace; color: #444654; }
+.score-identity { display: flex; align-items: baseline; justify-content: center; gap: 5px; min-width: 0; margin-top: 2px; }
+.score-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: clamp(11px, 1.5vw, 15px); }
+.score-id { color: var(--muted); font: 700 9px ui-monospace, monospace; }
+.score-equipment { display: flex; align-items: center; justify-content: center; gap: 3px; min-width: 0; color: #474a57; font-size: 10px; }
+.weapon-badge { width: 15px; height: 15px; display: block; flex: none; }
+.weapon-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hint { color: var(--muted); font-size: 12px; }
-.control-hint { text-align: center; line-height: 1.3; margin: 2px 0; }
+.control-hint { grid-area: hint; text-align: center; line-height: 1.3; margin: 2px 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .error { border: 1px solid #a33438; color: #8b1b1e; background: #ffe8e8; padding: 7px 10px; font-size: 13px; }
 .files { justify-content: flex-end; padding: 4px 3px 0; }
@@ -133,10 +171,25 @@ input[type=number] { width: 84px; margin-left: 3px; background: #fafafa; }
   .stats label { margin-left: 0; }
 }
 
-@media (max-height: 550px) {
-  .canvas-wrap { width: min(100%, calc(max(130px, 100svh - 87px) * var(--field-ratio))); }
+@media (max-height: 550px) and (min-width: 651px) {
+  .board { width: min(100%, calc(max(150px, 100svh - 155px) * var(--field-ratio) + 2 * var(--rail-width))); }
 }
-
+@media (max-width: 650px) {
+  .board {
+    width: 100%;
+    grid-template-areas: 'round kills' 'field field' 'scores scores' 'hint hint';
+    grid-template-columns: minmax(80px, .65fr) minmax(0, 1.35fr);
+  }
+  .round-rail, .kill-rail { padding: 6px 8px; min-height: 57px; }
+  .rail-kicker { margin: 0 0 3px; }
+  .rail-caption { margin: 3px 0 0; }
+  #kill-board { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
+  .kill-seat { grid-template-columns: 21px minmax(0, 1fr); max-width: 65px; }
+  .kill-icon { width: 21px; height: 22px; }
+  .kill-number { text-align: start; font-size: 16px; }
+  .kill-name { display: none; }
+  .score.player-result { min-height: 88px; }
+}
 .seat-name-settings .hint { margin: 5px 0; }
 .seat-name-inputs { display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .seat-name-inputs label { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; }

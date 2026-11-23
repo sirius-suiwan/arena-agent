@@ -9,3 +9,5 @@
 - 开局请求可选 `playerNames`，例 `{"A":"红队","B":"斥候"}`。只应用于本次选手席位；空名使用 bot 名或席位 ID。实战与回放从 `manifest.playerNames` 读取显示名。
 
 - 停止实战：`POST /api/stop` 传 `{"matchId":"..."}`。裁判完成当前 tick 后结束本场，写入 `{"winner":null,"reason":"stopped"}` 并关闭选手进程，不判胜负，不可恢复。SSE 正常发送 `end`。若最后一个 tick 已自然结束，则返回真实结果。停止回放只把播放器送回开头。
+
+- 实时 `start` 和 `tick` 可包含 `stats.kills`，为按席位统计的累计击杀，自伤不加。该字段由宿主为观战提供；历史回放可直接从日志的 `destroyed` 事件重建。

@@ -35,6 +35,13 @@
     </section>
 
     <section id="stage" class="board" aria-label="战场" hidden>
+      <aside class="round-rail" aria-label="局数">
+        <div>
+          <p id="arena-round-mode" class="rail-kicker">对局</p>
+          <p id="arena-round" class="arena-round">第 1 局</p>
+          <p id="arena-round-target" class="rail-caption"></p>
+        </div>
+      </aside>
       <div id="canvas-wrap" class="canvas-wrap">
         <canvas id="battle" aria-label="坦克迷宫战场">战场画面需要浏览器支持 Canvas。</canvas>
         <p id="round-notice" class="round-notice" hidden></p>
@@ -42,6 +49,10 @@
       <div class="score-panel">
         <div id="scoreboard" class="scoreboard" aria-label="选手比分"></div>
       </div>
+      <aside class="kill-rail" aria-label="对局击杀">
+        <p class="rail-kicker">击杀</p>
+        <ol id="kill-board" aria-label="选手击杀数"></ol>
+      </aside>
       <p id="human-help" class="hint control-hint" hidden></p>
     </section>
     <p id="status" class="visually-hidden" role="status" aria-live="polite">等待开局，或打开已有的回放。</p>

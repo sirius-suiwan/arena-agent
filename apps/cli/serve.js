@@ -2,6 +2,7 @@ import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {recorder} from '../../replay/index.js';
+import {countKills,emptyKillTotals} from '../../viewer/score-data.js';
 import {humansForMode,makeMatch} from './match-options.js';
 
 const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8'};
@@ -22,15 +23,21 @@ export async function serve({game,root,base,port,config={}}) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid port');
   const clients = new Set();
   let active=false, mode, first, latest, terminal, epoch=0, currentMatch;
-  let inputs=new Map();
+  let inputs=new Map(), kills={};
   const send = (res,event) => {
     if (!event || res.destroyed) return;
     if (res.writableLength > 256*1024) {res.destroy();return;}
     res.write('data: '+JSON.stringify(event)+'\n\n');
   };
   const publish = event => {
-    if (event.type==='start') first=event;
-    if (event.type==='tick') latest=event;
+    if (event.type==='start') {
+      kills=emptyKillTotals(event.manifest.players);
+      first=event={...event,stats:{kills}};
+    }
+    if (event.type==='tick') {
+      kills=countKills(kills,event.events);
+      latest=event={...event,stats:{kills}};
+    }
     if (event.type==='end' || event.type==='error') terminal=event;
     for (const res of clients) send(res,event);
   };
