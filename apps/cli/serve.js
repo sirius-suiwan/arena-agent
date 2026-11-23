@@ -6,6 +6,7 @@ import {countKills,emptyKillTotals} from '../../viewer/score-data.js';
 import {humansForMode,makeMatch,parseCustomSeats,playersForMode,seatIds} from './match-options.js';
 import {botCatalog,loadBotRegistry} from './bot-registry.js';
 import {applyTankOptions,tankOptions} from './tank-options.js';
+import {randomMatchSeed} from './seed.js';
 
 const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8',json:'application/json; charset=utf-8'};
 const json = (res,status,data) => { res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data)); };
@@ -96,7 +97,7 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
       if (req.method==='POST' && path==='/api/match') {
         const data = await requestBody(req);
         if (active) return json(res,409,{error:'match already in progress'});
-        if (!['bots','human','local2','local3','custom'].includes(data?.mode) || !Number.isSafeInteger(data.seed)) return json(res,400,{error:'invalid match options'});
+        if (!['bots','human','local2','local3','custom'].includes(data?.mode) || (Object.hasOwn(data,'seed') && !Number.isSafeInteger(data.seed))) return json(res,400,{error:'invalid match options'});
         const {simulationRate=game.tickRate,...matchConfig}=applyTankOptions(config,data);
         const selectedGame=selectGame(simulationRate);
         if (!selectedGame) return json(res,400,{error:'unavailable simulation rate'});
@@ -123,10 +124,11 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
         }
         if (active) return json(res,409,{error:'match already in progress'});
         active=true;epoch++;first=latest=terminal=currentMatch=undefined;
+        const seed=data.seed ?? randomMatchSeed();
         const localSeats=custom?Object.keys(custom.humanControls):humansForMode(mode);
         inputs=new Map(localSeats.map(id=>[id,{held:selectedGame.neutralAction(),fireQueued:false}]));
         try {
-          const match=await makeMatch({game:selectedGame,root,base,config:matchConfig,seed:data.seed,mode,paths,roster:data.seats,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
+          const match=await makeMatch({game:selectedGame,root,base,config:matchConfig,seed,mode,paths,roster:data.seats,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
           const controller=new AbortController();
           const session={id:match.matchId,controller,game:selectedGame};
           currentMatch=session;

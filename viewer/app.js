@@ -5,7 +5,7 @@ import { matchMode, keyboardAction, keySeat, pointerAction, humanControls, human
 
 const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
-  'battle', 'mode-label', 'match-form', 'seed', 'simulation-rate', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
+  'battle', 'mode-label', 'match-form', 'seed', 'match-seed', 'simulation-rate', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'match-id', 'match-id-value', 'match-id-copy',
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
@@ -433,6 +433,9 @@ function render() {
   const frame = hasFrames ? tickOf(record) : 0;
   el['frame-label'].textContent = `TICK ${frame}${match.manifest?.tickRate ? ` · ${match.manifest.tickRate} tick/s` : ''}`;
   el['time-label'].textContent = elapsedLabel(frame, match.manifest?.tickRate);
+  const currentSeed = match.manifest?.seed;
+  el['match-seed'].hidden = !Number.isSafeInteger(currentSeed);
+  setText(el['match-seed'], Number.isSafeInteger(currentSeed) ? `种子 ${currentSeed}` : '');
   el.menu.hidden = !menuVisible;
   el.stage.hidden = menuVisible;
   renderMatchId(match.manifest);
@@ -822,8 +825,10 @@ el['match-form'].addEventListener('submit', async (event) => {
   if (!streamOpen) return setError('尚未连到裁判，请稍后重试。');
   const requested = event.submitter?.value;
   const mode = matchMode(requested) ? requested : 'human';
-  const seed = Number(el.seed.value);
-  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return setError('种子必须是有效的非负整数。');
+  const seed = el.seed.value === '' ? undefined : Number(el.seed.value);
+  if (el.seed.validity?.badInput || (seed !== undefined && (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff))) {
+    return setError('种子必须是有效的非负整数。');
+  }
   const overrides = {};
   for (const option of matchOptions) {
     const element = el[option.id];
@@ -865,7 +870,8 @@ el['match-form'].addEventListener('submit', async (event) => {
   queueDraw(true);
   try {
     await post('/api/match', {
-      mode, seed,
+      mode,
+      ...(seed === undefined ? {} : { seed }),
       ...overrides,
       ...(botSeats.length ? { bots } : {}),
       ...(custom ? { seats: custom.seats } : {}),

@@ -102,6 +102,7 @@
           <p id="arena-round" class="arena-round">第 1 局</p>
           <p id="arena-round-target" class="rail-caption"></p>
           <p id="arena-zone" class="rail-caption arena-zone" hidden></p>
+          <p id="match-seed" class="rail-caption" hidden></p>
         </div>
       </aside>
       <div id="canvas-wrap" class="canvas-wrap">
@@ -135,8 +136,8 @@
           <span id="round-label">第 1 局</span>
           <span id="time-label">对局时间 00:00</span>
           <span id="frame-label">TICK 0</span>
-          <label for="seed">随机种子
-            <input id="seed" form="match-form" type="number" min="0" max="4294967295" value="12" required>
+          <label for="seed">下场种子
+            <input id="seed" form="match-form" type="number" min="0" max="4294967295" placeholder="留空每场随机">
           </label>
         </div>
         <section class="seat-name-settings" aria-labelledby="seat-names-title">

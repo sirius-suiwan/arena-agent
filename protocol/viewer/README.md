@@ -1,6 +1,6 @@
 # 本机界面协议 v1
 
-- `POST /api/match` 请求 JSON `{"mode":"bots","seed":42}` ，模式可为 `bots`、`human`（A 为人类）、`local2` 或 `local3`。
+- `POST /api/match` 请求 JSON `{"mode":"bots"}`。可选 `seed`（安全整数，`0` 有效）；省略时由宿主生成，实际种子见 `manifest.seed`。模式可为 `bots`、`human`（A 为人类）、`local2` 或 `local3`。
 - `GET /api/bots` 返回当前游戏注册表 `{"bots":[{"id":"laika","name":"Laika（复刻）"}]}`。开局可传 `bots:{"A":"laika","B":"gpt-dots"}`，值只接受注册 ID，不接受文件路径。Bot 对战可选 A、B 和 C，指定 C 则开三人局；人机对战只允许 B；纯本地多人不接受 bot 席位。未指定时 B 用 Laika，其余席用 GPT-dots。
 - 自定义开局请求 `{"mode":"custom","seed":42,"seats":{"A":{"bot":"laika"},"D":{"control":"arrows"},"H":{"control":"mouse"}}}`。A–H 中任选 2–8 个席位，省略代表空席。每席只能指定注册 bot 或一套真人控制。真人控制 `arrows`、`esdf`、`mouse` 各限一个席位，满三套不能再加真人。不能混用 `seats` 和预设的 `bots`。录像清单中的 `humanControls` 是真人席位到控制的映射；纯 bot 自定义局是空映射。
 - `GET /api/options` 返回本次启动的缩圈、赛制和地图默认值，包括 `simulationRate`（25/30/60，默认 25）。开局请求可覆盖该值；每局一旦开始不更改，回放按 `manifest.tickRate` 计时。`POST /api/match` 可在顶层覆盖 `shrinkAfterSeconds`（0–120，默认 40）、`shrinkDurationSeconds`（1–120，默认 15）、`roundLimit`（0–20，0 是先到目标分）、`cols`（4–16）、`rows`（4–12）、`mazeComplexity`（`open` / `classic` / `dense`）或布尔值 `friendlyFire`。状态中的 `zone` 和每小局 `roundTick` 用于绘制实战与回放，不读客户端时钟。仅支持当前规则的录像。

@@ -7,6 +7,7 @@ import {replayReport} from '../../replay/report.js';
 import {makeMatch,playersForMode,seatIds} from './match-options.js';
 import {loadBotRegistry} from './bot-registry.js';
 import {serve} from './serve.js';
+import {randomMatchSeed} from './seed.js';
 import {applyTankOptions} from './tank-options.js';
 
 const root = fileURLToPath(new URL('../../',import.meta.url));
@@ -58,6 +59,10 @@ try {
     const rounds = integer(values.rounds) ?? 1;
     if (rounds < 1 || rounds > 1000) throw new Error('rounds must be 1-1000');
     if (positionals.length) throw new Error('run does not accept positional arguments');
+    const baseSeed=integer(values.seed);
+    if (baseSeed!==undefined && !Number.isSafeInteger(baseSeed+(rounds-1))) {
+      throw new Error('--seed and --rounds exceed the safe integer range');
+    }
     const bots=await loadBotRegistry(root,game.id);
     const paths=seatValues('bot-');
     if (values.teams!==undefined) config.teams=selectedGame.validateTeams(JSON.parse(values.teams),playersForMode('bots',paths));
@@ -68,7 +73,7 @@ try {
     }
     for (let i = 0; i < rounds; i++) {
       const match = await makeMatch({
-        game:selectedGame,root,playerNames,base:resolve(values.out ?? 'runs'),seed:(integer(values.seed) ?? 42)+i,
+        game:selectedGame,root,playerNames,base:resolve(values.out ?? 'runs'),seed:baseSeed===undefined?randomMatchSeed():baseSeed+i,
         maxTicks:integer(values['max-ticks']),timeoutMs:integer(values['timeout-ms']),
         paths,registry:bots,config,recorder
       });
@@ -85,7 +90,7 @@ try {
     if (positionals.length) throw new Error('serve does not accept positional arguments');
     await serve({game:selectedGame,selectGame:gameForRate,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
   } else if (!command || command === 'help') {
-    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl.gz> | report <match.jsonl.gz> [--tick <n>] | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <open|classic|dense> --friendly-fire <on|off>\nrun only: --teams \'{"A":"1","B":"2"}\'');
+    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl.gz> | report <match.jsonl.gz> [--tick <n>] | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <open|classic|dense> --friendly-fire <on|off>\nrun only: --seed <integer> (random if omitted), --teams \'{"A":"1","B":"2"}\'');
   } else {
     throw new Error(`unknown command: ${command}`);
   }

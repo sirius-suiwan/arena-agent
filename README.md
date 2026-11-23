@@ -33,6 +33,8 @@ node apps/cli/arena.js report runs/tank-trouble/MATCH_ID/match.jsonl.gz --tick 1
 node apps/cli/arena.js run --seed 42 --rounds 10
 ```
 
+「对局详情」里的下场种子留空时每场随机；本场实际种子显示在地图旁，也写入对局清单。手填种子（包括 `0`）可复现地图和开局。CLI 不传 `--seed` 时每场随机；显式指定时，批量对局按该种子起逐场加一。
+
 实时对局中的「停止对局」会完成当前 tick、结束比赛并保存已打的记录，不判胜负，也不能续打。「停止回放」会停止播放并回到第一帧，不改变日志。「对局详情」默认折叠，可展开计时、事件、动作与回放时间轴。
 
 实际对局存于 `runs/<game-id>/<match-id>/`，对局 ID 可在实战和回放右上角复制：
