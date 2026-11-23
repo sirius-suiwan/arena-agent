@@ -1,5 +1,8 @@
+import tuning from '../../games/tank-trouble/classic-profile.json' with {type:'json'};
+
 const integer=(min,max)=>value=>Number.isInteger(value)&&value>=min&&value<=max;
 const settings={
+  simulationRate:{value:tuning.defaultSimulationRate,valid:value=>tuning.simulationRates.includes(value)},
   shrinkAfterSeconds:{value:40,valid:integer(0,120)},
   shrinkDurationSeconds:{value:15,valid:integer(1,120)},
   roundLimit:{value:0,valid:integer(0,20)},

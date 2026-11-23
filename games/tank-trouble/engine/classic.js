@@ -1,8 +1,11 @@
+import {CLASSIC_DATA,CLASSIC_FRAME_RATE,classicProfile} from './profile-v8.js';
+
 export const TICK_RATE = 60;
 const CELL = 64, TANK_RADIUS = 12, BULLET_RADIUS = 3;
 const MOVE = 2.2, TURN = 0.06, SHELL_SPEED = 6, LIFETIME = 450, COOLDOWN = 24;
 const EPS = 1e-7, TAU = 2 * Math.PI;
 export const PICKUP_TYPES = Object.freeze(['death-ray', 'gatling', 'mine', 'frag', 'laser']);
+export const PICKUP_TYPES_V8 = Object.freeze(Object.keys(CLASSIC_DATA.crates.weights));
 const SETTLE = 180, MINE_ARM = 30, FRAG_TTL = 240, SHRAPNEL_TTL=60;
 const LASER_RANGE=576, LASER_GUIDE=256;
 const DEATH_CHARGE=90, GATLING_AMMO=18, GATLING_CHARGE=18, GATLING_GAP=5;
@@ -35,6 +38,8 @@ export const DEFAULT_CONFIG_V3 = Object.freeze({ ...DEFAULT_CONFIG, cols:12, row
 export const DEFAULT_CONFIG_V4 = Object.freeze({ ...DEFAULT_CONFIG_V3, shellSpeed:5.2 });
 export const DEFAULT_CONFIG_V6 = Object.freeze({ ...DEFAULT_CONFIG_V4, shrinkAfterSeconds:40, shrinkDurationSeconds:15 });
 export const DEFAULT_CONFIG_V7 = Object.freeze({ ...DEFAULT_CONFIG_V6, mazeComplexity:'classic', friendlyFire:false, teams:undefined });
+const defaultsV8 = profile => ({...DEFAULT_CONFIG_V7,maxTicks:60*profile.tickRate,
+  shellSpeed:profile.shellSpeed,classicSolo:false});
 const LOOP_OPENING_CHANCE=Object.freeze({open:0.60,classic:0.22,dense:0});
 const TEAM_IDS=Object.freeze(['1','2','3','4']);
 const CRATE_HALF_SIZE=8, PICKUP_PADDING=2;
@@ -52,16 +57,18 @@ export function validateTeams(teams,players) {
   return Object.fromEntries(players.map(id=>[id,teams[id]]));
 }
 
-function normalizedConfig(input, defaults) {
+function normalizedConfig(input, defaults, profile) {
   if (input === undefined) input={};
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('config must be an object');
   for (const key of Object.keys(input)) if (!Object.hasOwn(defaults, key)) throw new Error('unknown config key: ' + key);
   const c = { ...defaults, ...input };
+  const tickRate=profile?.tickRate??TICK_RATE;
   for (const [key, lo, hi] of [['cols',4,16],['rows',4,12],['maxTicks',1,36000],['pickupInterval',1,3600]]) {
     if (!Number.isInteger(c[key]) || c[key] < lo || c[key] > hi) throw new RangeError(key + ' must be an integer in [' + lo + ', ' + hi + ']');
   }
   if (typeof c.pickups !== 'boolean') throw new TypeError('pickups must be a boolean');
-  if (Object.hasOwn(defaults,'shellSpeed') && (!Number.isFinite(c.shellSpeed)||c.shellSpeed<3||c.shellSpeed>9)) {
+  if (Object.hasOwn(defaults,'shellSpeed') && (!profile||Object.hasOwn(input,'shellSpeed')) &&
+      (!Number.isFinite(c.shellSpeed)||c.shellSpeed<3||c.shellSpeed>9)) {
     throw new RangeError('shellSpeed must be a finite number between 3 and 9 px/tick');
   }
   if (Object.hasOwn(defaults,'shrinkAfterSeconds')) {
@@ -71,7 +78,7 @@ function normalizedConfig(input, defaults) {
       }
     }
     if (!Object.hasOwn(input,'maxTicks')) {
-      c.maxTicks=Math.max(c.maxTicks,(c.shrinkAfterSeconds+c.shrinkDurationSeconds+5)*TICK_RATE);
+      c.maxTicks=Math.max(c.maxTicks,(c.shrinkAfterSeconds+c.shrinkDurationSeconds+5)*tickRate);
     }
   }
   if (Object.hasOwn(defaults,'mazeComplexity')) {
@@ -80,6 +87,10 @@ function normalizedConfig(input, defaults) {
     }
     if (typeof c.friendlyFire!=='boolean') throw new TypeError('friendlyFire must be a boolean');
     if (c.teams===undefined) delete c.teams;
+  }
+  if (profile) {
+    if (typeof c.classicSolo!=='boolean') throw new TypeError('classicSolo must be a boolean');
+    if (!Object.hasOwn(input,'pickupInterval')) delete c.pickupInterval;
   }
   return c;
 }
@@ -152,13 +163,13 @@ function multiplayerSpawns(cols, rows, walls, count, rng) {
   });
 }
 
-function initRound({ seed, config, players }, revised, defaults, maxPlayers=3) {
+function initRound({ seed, config, players }, revised, defaults, maxPlayers=3, profile) {
   if (!Array.isArray(players) || players.length<2 || players.length>maxPlayers || new Set(players).size !== players.length ||
       (maxPlayers>3?[...players]:players).some(x => typeof x !== 'string' || !x.trim() || x.length > 128)) {
     throw new TypeError(maxPlayers>3?'two to eight distinct nonempty string player IDs are required'
       :'two or three distinct nonempty string player IDs are required');
   }
-  const c = normalizedConfig(config,defaults), rng = { value: seedValue(seed) };
+  const c = normalizedConfig(config,defaults,profile), rng = { value: seedValue(seed) };
   if (c.teams!==undefined) c.teams=validateTeams(c.teams,players);
   const width = c.cols * CELL, height = c.rows * CELL;
   const walls = generateMaze(c.cols, c.rows, rng, c.mazeComplexity===undefined?undefined:LOOP_OPENING_CHANCE[c.mazeComplexity]);
@@ -181,7 +192,7 @@ function initRound({ seed, config, players }, revised, defaults, maxPlayers=3) {
       weaponAmmo:0, weaponCharge:0, weaponGap:0, fragId:null, fireHeld:false, aimAngle:null, aimGuide:null })),
     bullets: [], pickups: [], mines:[], settleUntil:null, result: null,
     ...(revised?{pickupBlocks:[]}:null),
-    ...(Object.hasOwn(defaults,'shellSpeed')?{shellLimit:MAX_SHELLS_V4}:null)
+    ...(Object.hasOwn(defaults,'shellSpeed')?{shellLimit:profile?.shellLimit??MAX_SHELLS_V4}:null)
   };
 }
 
@@ -199,8 +210,9 @@ export function roundTickLimitV7(config) {
 export function matchTickLimitV7({scoreToWin:_scoreToWin,roundLimit:_roundLimit,...config}={}) {
   return Math.min(100_000,Math.max(8400,3*(roundTickLimitV7(config)+TICK_RATE)));
 }
-function initWithZone(input, defaults) {
-  const state=initRound(input,true,defaults,8);
+function initWithZone(input, defaults, profile) {
+  const state=initRound(input,true,defaults,8,profile);
+  const tickRate=profile?.tickRate??TICK_RATE;
   const {width,height}=state;
   // The middle cell is reachable; for even dimensions choose the upper/left
   // tied cell so the center never lies on a maze wall.
@@ -209,10 +221,10 @@ function initWithZone(input, defaults) {
   const initialScale=Math.max(Math.max(x,width-x)/width,Math.max(y,height-y)/height);
   const finalScale=ZONE_FINAL_MIN_HALF_SPAN/Math.min(width,height);
   const initialHalfWidth=width*initialScale, initialHalfHeight=height*initialScale;
-  const startTick=state.config.shrinkAfterSeconds*TICK_RATE;
+  const startTick=state.config.shrinkAfterSeconds*tickRate;
   const zone={x,y,halfWidth:initialHalfWidth,halfHeight:initialHalfHeight,initialHalfWidth,initialHalfHeight,
     finalHalfWidth:width*finalScale,finalHalfHeight:height*finalScale,
-    startTick,endTick:startTick+state.config.shrinkDurationSeconds*TICK_RATE,graceTicks:ZONE_GRACE,
+    startTick,endTick:startTick+state.config.shrinkDurationSeconds*tickRate,graceTicks:profile?.zoneGraceTicks??ZONE_GRACE,
     outsideTicks:Object.fromEntries(state.tanks.map(t=>[t.id,0]))};
   return {...state,zone,tanks:state.tanks.map(t=>({...t,invulnerable:false}))};
 }
@@ -221,6 +233,23 @@ export function initV7(input) {
   const state=initWithZone(input,DEFAULT_CONFIG_V7);
   const {teams,friendlyFire}=state.config;
   return {...state,friendlyFire,...(teams?{teams:{...teams}}:{})};
+}
+
+export function roundTickLimitV8(config, tickRate) {
+  const profile=classicProfile(tickRate);
+  return normalizedConfig(config,defaultsV8(profile),profile).maxTicks;
+}
+export function matchTickLimitV8({scoreToWin:_scoreToWin,roundLimit:_roundLimit,...config}={}, tickRate) {
+  return Math.min(100_000,Math.max(140*tickRate,3*(roundTickLimitV8(config,tickRate)+tickRate)));
+}
+export function initV8(input,tickRate) {
+  const profile=classicProfile(tickRate);
+  const state=initWithZone(input,defaultsV8(profile),profile);
+  const {teams,friendlyFire,shellSpeed}=state.config;
+  const rng={value:state.rng};
+  const nextPickupAt=state.config.pickups?classicPickupDelay(state,rng,tickRate,true):null;
+  return {...state,friendlyFire,...(teams?{teams:{...teams}}:{}),
+    profile:Object.freeze({...profile,shellSpeed}),rng:rng.value,nextPickupAt};
 }
 
 function distanceToWallSquared(x, y, w) {
@@ -318,9 +347,14 @@ function moveTanks(s, actions, events) {
   const proposed = s.tanks.map(t => {
     if (!t.alive) return { ...t };
     const a = Object.hasOwn(actions,t.id) ? actions[t.id] : { throttle: 0, turn: 0, fire: false };
-    const locked=t.weapon==='death-ray'&&t.weaponCharge>0&&a.fire;
-    const angle = ((t.angle+(locked?0:a.turn*TURN))%TAU+TAU)%TAU;
-    const x = t.x+Math.cos(angle)*(locked?0:a.throttle*MOVE), y = t.y+Math.sin(angle)*(locked?0:a.throttle*MOVE);
+    const locked=s.profile
+      ? t.weapon==='remote'&&t.fragId!=null ||
+        t.weapon==='death-ray'&&(t.weaponCharge>0&&t.beamUntil===undefined||t.beamUntil>s.tick)
+      : t.weapon==='death-ray'&&t.weaponCharge>0&&a.fire;
+    const turnRate=s.profile?.turnSpeed??TURN;
+    const moveRate=s.profile?(a.throttle<0?s.profile.reverseSpeed:s.profile.forwardSpeed):MOVE;
+    const angle = ((t.angle+(locked?0:a.turn*turnRate))%TAU+TAU)%TAU;
+    const x = t.x+Math.cos(angle)*(locked?0:a.throttle*moveRate), y = t.y+Math.sin(angle)*(locked?0:a.throttle*moveRate);
     const blocked = s.walls.some(w => distanceToWallSquared(x,y,w) < TANK_RADIUS**2);
     if (blocked) events.push({ type:'wall-stop', tankId:t.id, x:t.x, y:t.y });
     return { ...t, x:blocked?t.x:x, y:blocked?t.y:y, angle, cooldown:Math.max(0,t.cooldown-1) };
@@ -363,19 +397,172 @@ function resetWeapon(t) {
   t.weapon=null;t.weaponAmmo=0;t.weaponCharge=0;t.weaponGap=0;t.fragId=null;t.aimAngle=null;t.aimGuide=null;
 }
 
+function resetClassicWeapon(t) {
+  resetWeapon(t);
+  delete t.burstTick;
+  delete t.spinDownUntil;
+  delete t.beamUntil;
+  delete t.beamId;
+}
+
 function burst(b,s,events,type, angle, deferred) {
-  const count=type==='mine-burst'?12:16;
+  const count=s.profile?.fragmentCount??(type==='mine-burst'?12:16);
   events.push({type,x:b.x,y:b.y,ownerId:b.owner,[type==='mine-burst'?'mineId':'bulletId']:b.id});
   // Queue bursts after the projectile loop: child objects first advance on
   // the next tick. They get their own stable IDs and explicit source ID.
   for (let i=0;i<count;i++) {
     const heading=angle+i*TAU/count;
     const x=b.x,y=b.y;
-    deferred.push({owner:b.owner,x,y,angle:heading,speed:5,ttl:SHRAPNEL_TTL,kind:'shrapnel',sourceId:b.id});
+    deferred.push({owner:b.owner,x,y,angle:heading,speed:s.profile?.fragmentSpeed??5,ttl:s.profile?.fragmentTtl??SHRAPNEL_TTL,kind:'shrapnel',sourceId:b.id});
+  }
+}
+
+function projectileByOwner(s,t) { return s.bullets.find(b=>b.id===t.fragId); }
+
+function guideClassicMissiles(s,actions) {
+  if (!s.profile) return;
+  const p=s.profile;
+  for (const b of s.bullets) {
+    if (b.kind!=='missile'&&b.kind!=='remote') continue;
+    const old=Math.atan2(b.vy,b.vx);
+    let delta=0;
+    if (b.kind==='remote') {
+      const owner=s.tanks.find(t=>t.id===b.owner);
+      const turn=Object.hasOwn(actions,b.owner)?actions[b.owner].turn:0;
+      if (owner?.alive&&owner.fragId===b.id) delta=turn*p.remoteTurn;
+    } else if ((b.age??0)>=p.missileDelay) {
+      let target=null,nearest=Infinity;
+      for (const t of s.tanks) if (vulnerable(s,t,b.owner)) {
+        const d=(t.x-b.x)**2+(t.y-b.y)**2;
+        if(d<nearest) {nearest=d;target=t;}
+      }
+      b.targetId=target?.id??null;
+      if(target) {
+        const to=Math.atan2(target.y-b.y,target.x-b.x);
+        delta=between(Math.atan2(Math.sin(to-old),Math.cos(to-old)),-p.missileTurn,p.missileTurn);
+      }
+    }
+    if(delta!==0) {b.vx=Math.cos(old+delta)*p.missileSpeed;b.vy=Math.sin(old+delta)*p.missileSpeed;}
+  }
+}
+
+function emitClassicBeam(t,s,events,impacts,firingTick) {
+  const dx=Math.cos(t.aimAngle),dy=Math.sin(t.aimAngle);
+  // Stop at the outside perimeter, not at interior walls. This reconstruction
+  // keeps the beam straight; it does not reproduce original bending.
+  const length=Math.min(dx>EPS?(s.width-t.x)/dx:dx<-EPS?-t.x/dx:Infinity,
+    dy>EPS?(s.height-t.y)/dy:dy<-EPS?-t.y/dy:Infinity);
+  const endX=t.x+dx*length,endY=t.y+dy*length;
+  const beam={id:t.beamId,owner:t.id,kind:'death-ray'};
+  events.push({type:firingTick?'weapon-fired':'death-ray-beam',tankId:t.id,weapon:'death-ray',bulletId:beam.id,
+    x:t.x,y:t.y,endX,endY,continuous:true});
+  for(const target of s.tanks) {
+    if (target.id===t.id||!vulnerable(s,target,t.id)) continue;
+    const f=circleHit(t.x,t.y,dx*length,dy*length,target.x,target.y,TANK_RADIUS);
+    if (f!==null) impacts.push({bullet:beam,tankId:target.id,x:t.x+dx*length*f,y:t.y+dy*length*f});
+  }
+}
+
+function fireClassicWeapons(s,actions,events,impacts,deferred) {
+  const p=s.profile;
+  for (const t of s.tanks) {
+    if (!t.alive) continue;
+    const firing=Object.hasOwn(actions,t.id)&&actions[t.id].fire;
+    const pressed=firing&&!t.fireHeld;
+    t.fireHeld=firing;
+    if (t.weapon==='death-ray') {
+      if (t.beamUntil!==undefined) {
+        if (s.tick<t.beamUntil) emitClassicBeam(t,s,events,impacts,false);
+        else resetClassicWeapon(t);
+        continue;
+      }
+      if (!t.weaponCharge) {
+        if (!pressed) continue;
+        t.aimAngle=t.angle;
+        events.push({type:'weapon-charge',tankId:t.id,weapon:t.weapon,x:t.x,y:t.y});
+      }
+      if (++t.weaponCharge+EPS<p.deathRayCharge) continue;
+      t.beamId='b'+s.nextBullet++;
+      t.beamUntil=s.tick+p.deathRayActive;
+      emitClassicBeam(t,s,events,impacts,true);
+      continue;
+    }
+    if (t.weapon==='gatling') {
+      const spinDown=()=>{
+        t.spinDownUntil=s.tick+p.gatlingSpinDown+t.weaponCharge;
+        t.weaponAmmo=0;t.weaponGap=0;
+        delete t.burstTick;
+      };
+      if (t.spinDownUntil!==undefined) {
+        if (s.tick+EPS>=t.spinDownUntil) resetClassicWeapon(t);
+        continue;
+      }
+      if(!firing) {
+        if (t.burstTick!==undefined) spinDown();
+        continue;
+      }
+      if (t.burstTick===undefined) {
+        t.weaponCharge=1;t.burstTick=s.tick+p.gatlingSpin-1;
+        events.push({type:'weapon-charge',tankId:t.id,weapon:t.weapon,x:t.x,y:t.y});
+      } else t.weaponCharge=Math.min(Math.ceil(p.gatlingSpin),t.weaponCharge+1);
+      t.weaponGap=Math.max(0,Math.ceil(t.burstTick-s.tick-EPS));
+      if (s.tick+EPS<t.burstTick) continue;
+      if (t.weaponAmmo>0) {
+        const rng={value:s.rng};
+        const spread=(next(rng)*2-1)*p.gatlingSpread;
+        s.rng=rng.value;
+        shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle+spread,speed:p.gatlingSpeed,ttl:p.gatlingTtl,kind:'gatling'});
+        t.weaponAmmo--;
+      } else events.push({type:'shot-blocked',tankId:t.id,reason:'magazine-empty',weapon:'gatling'});
+      t.burstTick+=p.gatlingGap;
+      t.weaponGap=Math.max(0,Math.ceil(t.burstTick-s.tick-EPS));
+      continue;
+    }
+    if (!pressed) continue;
+    if (t.weapon==='laser') {
+      const b=shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:p.laserSpeed,ttl:p.laserTtl,kind:'laser'});
+      events.push({type:'weapon-fired',tankId:t.id,weapon:'laser',bulletId:b.id,x:t.x,y:t.y,
+        endX:t.x,endY:t.y,moving:true});
+      resetClassicWeapon(t);
+      continue;
+    }
+    if (t.weapon==='mine') {
+      const dx=Math.cos(t.angle),dy=Math.sin(t.angle);
+      const hit=wallHit(t.x,t.y,-dx*16,-dy*16,s.walls);
+      const dist=hit?Math.max(0,hit.t*16-0.1):16;
+      const mine={id:'m'+s.nextMine++,owner:t.id,x:t.x-dx*dist,y:t.y-dy*dist,
+        armedAt:s.tick+p.mineArm,ownerCleared:false,triggeredAt:null,detonateAt:null};
+      s.mines.push(mine);
+      events.push({type:'mine-placed',mineId:mine.id,tankId:t.id,x:mine.x,y:mine.y,armedAt:mine.armedAt});
+      if (--t.weaponAmmo===0) resetClassicWeapon(t);
+      continue;
+    }
+    if (t.weapon==='frag'||t.weapon==='remote'||t.weapon==='missile') {
+      if (t.fragId===null) {
+        const b=shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:p.missileSpeed,ttl:p.missileTtl,kind:t.weapon});
+        if(t.weapon==='missile') {b.age=0;b.targetId=null;resetClassicWeapon(t);}
+        else {t.fragId=b.id;t.weaponAmmo=0;}
+      } else if (t.weapon==='frag') {
+        const b=projectileByOwner(s,t);
+        if (b) {
+          s.bullets=s.bullets.filter(other=>other.id!==b.id);
+          burst(b,s,events,'frag-burst',Math.atan2(b.vy,b.vx),deferred);
+        }
+        resetClassicWeapon(t);
+      }
+      // The remote shell waits for collision/expiry; extra presses do not steer or detonate.
+      continue;
+    }
+    if (s.bullets.filter(b=>b.owner===t.id&&b.kind==='shell').length>=p.shellLimit) {
+      events.push({type:'shot-blocked',tankId:t.id,reason:'shell-limit'});
+      continue;
+    }
+    shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:p.shellSpeed,ttl:p.shellTtl,kind:'shell'});
   }
 }
 
 function fireShells(s, actions, events, impacts, deferred, shellSpeed, shellLimit) {
+  if (s.profile) return fireClassicWeapons(s,actions,events,impacts,deferred);
   for (const t of s.tanks) {
     if (!t.alive) continue;
     const firing=Object.hasOwn(actions,t.id)&&actions[t.id].fire;
@@ -468,29 +655,33 @@ function advanceShell(b, s, events, impacts, deferred) {
       burst(b,s,events,'frag-burst',Math.atan2(b.vy,b.vx),deferred);
       const owner=s.tanks.find(t=>t.id===b.owner);
       if (owner?.fragId===b.id) resetWeapon(owner);
+    } else if (s.profile&&b.kind==='remote') {
+      const owner=s.tanks.find(t=>t.id===b.owner);
+      if (owner?.fragId===b.id) resetClassicWeapon(owner);
     }
     events.push({type:'shell-expired',bulletId:b.id,x:b.x,y:b.y,reason,kind:b.kind});
     return false;
   }
   if (b.ttl <= 0) return false;
-  let remaining = 1;
+  let remaining = s.profile?Math.min(1,b.ttl):1;
+  const radius=s.profile&&b.kind==='laser'?0:BULLET_RADIUS;
   // Sweep through the remaining fraction after each bounce; hard cap guarantees
   // bounded work in degenerate geometry.
   for (let i=0;i<8 && remaining>EPS;i++) {
     const dx=b.vx*remaining, dy=b.vy*remaining;
-    const wall=wallHit(b.x,b.y,dx,dy,s.walls);
+    const wall=wallHit(b.x,b.y,dx,dy,s.walls,radius);
     let target = null;
     for (const t of s.tanks) {
       if (!vulnerable(s,t,b.owner) || (t.id===b.owner && !b.ownerArmed)) continue;
-      const radius=TANK_RADIUS+BULLET_RADIUS;
-      const overlapping=(b.x-t.x)**2+(b.y-t.y)**2<radius**2-EPS;
-      const f=overlapping?0:circleHit(b.x,b.y,dx,dy,t.x,t.y,radius);
+      const targetRadius=TANK_RADIUS+radius;
+      const overlapping=(b.x-t.x)**2+(b.y-t.y)**2<targetRadius**2-EPS;
+      const f=overlapping?0:circleHit(b.x,b.y,dx,dy,t.x,t.y,targetRadius);
       if (f!==null && (!target || f<target.f-EPS)) target={t,f};
     }
     if (target && (!wall || target.f < wall.t-EPS)) {
       b.x+=dx*target.f; b.y+=dy*target.f;
       impacts.push({bullet:b,tankId:target.t.id,x:b.x,y:b.y});
-      return b.kind==='frag'?expire('impact'):false;
+      return b.kind==='frag'||s.profile&&b.kind==='remote'?expire('impact'):false;
     }
     if (!wall) {
       b.x+=dx; b.y+=dy;
@@ -499,6 +690,7 @@ function advanceShell(b, s, events, impacts, deferred) {
       break;
     }
     b.x+=dx*wall.t; b.y+=dy*wall.t;
+    if(s.profile&&b.kind==='shrapnel') return expire('wall');
     bounceVelocity(b,wall.normals);
     b.ownerArmed=true;
     events.push({type:'bounce',bulletId:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy});
@@ -508,14 +700,35 @@ function advanceShell(b, s, events, impacts, deferred) {
       return expire('bounce-limit');
     }
   }
+  if(s.profile&&b.kind==='missile') b.age++;
   b.ttl--;
   return b.ttl>0 || expire('ttl');
+}
+
+function classicPickupDelay(s,rng,tickRate,first) {
+  if (s.config.pickupInterval!==undefined) return s.config.pickupInterval;
+  const cells=(s.width/CELL)*(s.height/CELL); // Every cell is reachable.
+  const rules=CLASSIC_DATA.crates;
+  const classicFrames=Math.ceil(rules.minimumSourceFrames+Math.floor(next(rng)*rules.randomSourceFrameCount)+
+    (first?0:rules.subsequentSourceFramesPerReachableCellNumerator/cells));
+  return Math.ceil(classicFrames*tickRate/CLASSIC_FRAME_RATE);
+}
+
+function chooseClassicCrate(rng) {
+  const pool=Object.entries(CLASSIC_DATA.crates.weights).filter(([,weight])=>weight>0);
+  let roll=next(rng)*pool.reduce((sum,[,weight])=>sum+weight,0);
+  for (const [id,weight] of pool) {
+    if (roll<weight) return id;
+    roll-=weight;
+  }
+  return pool.at(-1)?.[0];
 }
 
 function awardPickups(s, events, revised=false, spawn=true) {
   if (!s.config.pickups) return;
   const rng = {value:s.rng};
-  if (spawn && s.tick % s.config.pickupInterval === 0 && s.pickups.length < 4) {
+  const attempt=spawn&&(s.profile ? s.tick>=s.nextPickupAt : s.tick%s.config.pickupInterval===0);
+  if (attempt && s.pickups.length < (s.profile?.crateLimit??4)) {
     const spots=[];
     for (let y=CELL/2;y<s.height;y+=CELL) for (let x=CELL/2;x<s.width;x+=CELL) {
       if (s.pickups.some(p=>p.x===x&&p.y===y) || s.tanks.some(t=>t.alive&&Math.hypot(t.x-x,t.y-y)<30)) continue;
@@ -523,11 +736,14 @@ function awardPickups(s, events, revised=false, spawn=true) {
     }
     if (spots.length) {
       const p={id:'p'+s.nextPickup++,...spots[Math.floor(next(rng)*spots.length)],
-        type:PICKUP_TYPES[Math.floor(next(rng)*PICKUP_TYPES.length)]};
+        type:s.profile?(s.config.classicSolo?CLASSIC_DATA.crates.soloType:chooseClassicCrate(rng))
+          :PICKUP_TYPES[Math.floor(next(rng)*PICKUP_TYPES.length)]};
       s.pickups.push(p);
       events.push({type:'pickup-spawn',pickupType:p.type,pickupId:p.id,x:p.x,y:p.y});
     }
   }
+  // An attempt at the cap or without a legal position still resets the timer.
+  if (s.profile&&attempt) s.nextPickupAt=s.tick+classicPickupDelay(s,rng,s.profile.tickRate,false);
   const blocked=[];
   const blockedPreviously=s.pickupBlocks;
   s.pickups=s.pickups.filter(p=>{
@@ -553,8 +769,8 @@ function awardPickups(s, events, revised=false, spawn=true) {
     const tied=candidates.filter((_t,i)=>Math.abs(distances[i]-minimum)<=EPS);
     const winner=tied.length===1?tied[0]:tied[Math.floor(next(rng)*tied.length)];
     winner.weapon=p.type;
-    winner.weaponAmmo=p.type==='gatling'?GATLING_AMMO:p.type==='mine'?3:1;
-    const needsPress=p.type!=='gatling'&&p.type!=='death-ray';
+    winner.weaponAmmo=p.type==='gatling'?(s.profile?.gatlingAmmo??GATLING_AMMO):p.type==='mine'?(s.profile?.mineAmmo??3):1;
+    const needsPress=Boolean(s.profile)||p.type!=='gatling'&&p.type!=='death-ray';
     events.push({type:'pickup',tankId:winner.id,pickupId:p.id,pickupType:p.type,x:p.x,y:p.y,
       ...(revised?{weaponAmmo:winner.weaponAmmo,activation:needsPress?'press':'hold',releaseRequired:needsPress&&winner.fireHeld}:null)});
 
@@ -564,7 +780,28 @@ function awardPickups(s, events, revised=false, spawn=true) {
   if (revised) s.pickupBlocks=blocked;
 }
 
+function advanceClassicMines(s,events,deferred) {
+  s.mines=s.mines.filter(m=>{
+    const owner=s.tanks.find(t=>t.id===m.owner);
+    if (!owner.alive||Math.hypot(owner.x-m.x,owner.y-m.y)>TANK_RADIUS+8) m.ownerCleared=true;
+    if (m.detonateAt!==null) {
+      if (s.tick+EPS<m.detonateAt) return true;
+      burst(m,s,events,'mine-burst',0,deferred);
+      return false;
+    }
+    if (s.tick+EPS<m.armedAt) return true;
+    const victim=s.tanks.find(t=>vulnerable(s,t,m.owner)&&(t.id!==m.owner||m.ownerCleared)&&Math.hypot(t.x-m.x,t.y-m.y)<=TANK_RADIUS+6);
+    if (victim) {
+      m.triggeredAt=s.tick;
+      m.detonateAt=s.tick+s.profile.mineFuse;
+      events.push({type:'mine-trigger',mineId:m.id,tankId:victim.id,x:m.x,y:m.y,detonateAt:m.detonateAt});
+    }
+    return true;
+  });
+}
+
 function advanceMines(s,events,deferred) {
+  if (s.profile) return advanceClassicMines(s,events,deferred);
   s.mines=s.mines.filter(m=>{
     const owner=s.tanks.find(t=>t.id===m.owner);
     if (!owner.alive||Math.hypot(owner.x-m.x,owner.y-m.y)>TANK_RADIUS+8) m.ownerCleared=true;
@@ -603,6 +840,7 @@ function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=M
     mines:state.mines.map(m=>({...m}))};
   const events=[], impacts=[], deferred=[];
   moveTanks(s,actions,events);
+  if (s.profile) guideClassicMissiles(s,actions);
   fireShells(s,actions,events,impacts,deferred,shellSpeed,shellLimit);
   s.bullets=s.bullets.filter(b=>advanceShell(b,s,events,impacts,deferred));
   advanceMines(s,events,deferred);
@@ -630,7 +868,7 @@ function stepRound(state, actions, revised, shellSpeed=SHELL_SPEED, shellLimit=M
       }
     }
     if (s.settleUntil===null) {
-      s.settleUntil=s.tick+SETTLE;
+      s.settleUntil=s.tick+(s.profile?.settleTicks??SETTLE);
       events.push(survivorTeam!==null
         ?{type:'last-team-pending',teamId:survivorTeam,tankIds:alive.map(t=>t.id),settleUntil:s.settleUntil}
         :{type:'last-tank-pending',tankId:alive[0].id,settleUntil:s.settleUntil});
@@ -658,3 +896,4 @@ export const step = (state, actions) => stepRound(state, actions, false);
 export const stepV3 = (state, actions) => stepRound(state, actions, true);
 export const stepV4 = (state, actions) => stepRound(state, actions, true, state.config.shellSpeed, MAX_SHELLS_V4);
 export const stepV6 = (state, actions) => stepRound(state, actions, true, state.config.shellSpeed, MAX_SHELLS_V4, true);
+export const stepV8 = (state, actions) => stepRound(state, actions, true, state.profile.shellSpeed, state.profile.shellLimit, true);

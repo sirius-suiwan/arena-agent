@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {game,gameV6,classicRoundGameV7 as roundGame,validateTeams} from '../adapter/index.js';
+import {gameV7 as game,gameV6,classicRoundGameV7 as roundGame,validateTeams} from '../adapter/index.js';
 
 const players=['A','B','D'], teams={A:'1',B:'1',D:'4'};
 const neutral={throttle:0,turn:0,fire:false};

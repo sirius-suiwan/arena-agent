@@ -1,0 +1,58 @@
+{
+  "source": {
+    "description": "Classic v4.03 and archived 4399 v4.0; tank movement from Classic GameTank. Arena uses its own engine.",
+    "classicGame": "https://classic.tanktrouble.com/includes/TankTrouble_v4.03.swf",
+    "classicTank": "https://classic.tanktrouble.com/Assets/GameTank.swf",
+    "archive4399": "https://github.com/ruffle-rs/ruffle/issues/15017",
+    "framesPerSecond": 25,
+    "cellPixels": 50,
+    "originalLiveShells": 5
+  },
+  "simulationRates": [25, 30, 60],
+  "defaultSimulationRate": 25,
+  "arenaCellPixels": 64,
+  "movement": {
+    "forwardPixelsPerSourceFrame": 4,
+    "reversePixelsPerSourceFrame": 2.5,
+    "turnDegreesPerSourceFrame": 10
+  },
+  "shell": {
+    "pixelsPerSourceFrame": 4.5,
+    "lifeSourceFrames": 250,
+    "arenaLiveShells": 10
+  },
+  "weapons": {
+    "gatling": { "pixelsPerSourceFrame": 5.5, "lifeSourceFrames": 125, "ammo": 20, "spinSourceFrames": 10, "gapSourceFrames": 3, "spinDownBaseSourceFrames": 35, "spreadDegrees": 5.5 },
+    "laser": { "pixelsPerSourceFrame": 70, "lifeSourceFrames": 8, "guideCells": 4 },
+    "deathRay": { "chargeSourceFrames": 15, "activeSourceFrames": 30 },
+    "missile": { "pixelsPerSourceFrame": 4.5, "lifeSourceFrames": 250, "homingDelaySourceFrames": 50, "remoteDegreesPerSourceFrame": 15 },
+    "mine": { "ammo": 3, "armSourceFrames": 20, "fuseSourceFrames": 6 },
+    "fragment": { "count": 40 }
+  },
+  "crates": {
+    "maxOnField": 3,
+    "minimumSourceFrames": 350,
+    "randomSourceFrameCount": 200,
+    "subsequentSourceFramesPerReachableCellNumerator": 2000,
+    "soloType": "laser",
+    "weights": { "death-ray": 1, "gatling": 1, "mine": 1, "frag": 1, "laser": 1, "missile": 1, "remote": 1 }
+  },
+  "arena": {
+    "settlementSeconds": 3,
+    "intermissionSeconds": 1,
+    "zoneGraceSeconds": 2,
+    "homingSteerDegreesPerSecond": 165,
+    "fragmentPixelsPerSecond": 300,
+    "fragmentLifeSeconds": 1
+  },
+  "render": {
+    "tankScale": 1,
+    "wallWidth": 5.2,
+    "shellRadius": 3,
+    "gatlingRadius": 2.1,
+    "shrapnelRadius": 2.1,
+    "missileScale": 1,
+    "crateScale": 1,
+    "zoneOutsideAlpha": 0.22
+  }
+}

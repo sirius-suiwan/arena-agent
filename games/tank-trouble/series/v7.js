@@ -30,7 +30,9 @@ function leadingScore(scores) {
   return leaders.length===1?leaders[0]:null;
 }
 
-export function withClassicSeriesV7(roundGame) {
+export function withClassicSeriesV7(roundGame,{
+  breakTicks=BREAK_TICKS,settlementTicks=SETTLEMENT_TICKS,defaultMatchTicks=DEFAULT_MATCH_TICKS
+}={}) {
   function freshRound(series,round,scores,teamScores,tick) {
     const seed=round===1?series.seed:JSON.stringify([series.seed,round]);
     const state=roundGame.init({seed,config:series.config,players:series.players});
@@ -40,14 +42,14 @@ export function withClassicSeriesV7(roundGame) {
 
   return Object.freeze({
     ...roundGame,
-    defaultMatchTicks:DEFAULT_MATCH_TICKS,
+    defaultMatchTicks,
     matchTickLimit(config={}) {
       const {roundLimit,roundConfig}=seriesSettings(config);
-      if (!roundLimit) return roundGame.matchTickLimit?.(roundConfig)??DEFAULT_MATCH_TICKS;
+      if (!roundLimit) return roundGame.matchTickLimit?.(roundConfig)??defaultMatchTicks;
       const max=roundGame.roundTickLimit?.(roundConfig)??roundConfig.maxTicks??3600;
       // A sole survivor can use the whole settlement period before scoring.
       // Only interrupted (non-final) rounds incur an intermission.
-      return roundLimit*(max+SETTLEMENT_TICKS)+(roundLimit-1)*BREAK_TICKS;
+      return roundLimit*(max+settlementTicks)+(roundLimit-1)*breakTicks;
     },
     init({seed,config={},players}) {
       const {scoreToWin,roundLimit,roundConfig}=seriesSettings(config);
@@ -98,7 +100,7 @@ export function withClassicSeriesV7(roundGame) {
       const result=finishReason?{winner:teamMode?null:victor,reason:finishReason,scores:scored,
         ...(teamMode?{winnerTeam:victor,teamScores:scoredTeams}:{})}:null;
       return {state:{...current,scores:scored,teamScores:scoredTeams,phase:result?'finished':'intermission',
-        roundWinner:winner,roundWinnerTeam:winnerTeam,intermission:result?0:BREAK_TICKS,result},events,result};
+        roundWinner:winner,roundWinnerTeam:winnerTeam,intermission:result?0:breakTicks,result},events,result};
     }
   });
 }

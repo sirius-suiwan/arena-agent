@@ -1,7 +1,7 @@
 import {parseArgs} from 'node:util';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {game,gameV1,gameV2,gameV3,gameV4,gameV5,gameV6} from '../../games/tank-trouble/adapter/index.js';
+import {game,gameV1,gameV2,gameV3,gameV4,gameV5,gameV6,gameV7,gameV8_25,gameV8_30,gameV8_60} from '../../games/tank-trouble/adapter/index.js';
 import {recorder,verifyReplay} from '../../replay/index.js';
 import {makeMatch,playersForMode,seatIds} from './match-options.js';
 import {loadBotRegistry} from './bot-registry.js';
@@ -9,7 +9,9 @@ import {serve} from './serve.js';
 import {applyTankOptions} from './tank-options.js';
 
 const root = fileURLToPath(new URL('../../',import.meta.url));
-const registry = Object.freeze(Object.fromEntries([game,gameV1,gameV2,gameV3,gameV4,gameV5,gameV6].map(g=>[g.id+'@'+g.version,g])));
+const profiles=new Map([gameV8_25,gameV8_30,gameV8_60].map(g=>[g.tickRate,g]));
+const selectGame=rate=>profiles.get(rate);
+const registry = Object.freeze(Object.fromEntries([gameV1,gameV2,gameV3,gameV4,gameV5,gameV6,gameV7,...profiles.values()].map(g=>[g.id+'@'+g.version,g])));
 const [command,...args] = process.argv.slice(2);
 const seatFlags=prefix=>Object.fromEntries(seatIds.map(id=>[prefix+id.toLowerCase(),{type:'string'}]));
 
@@ -27,18 +29,19 @@ try {
       ...seatFlags('bot-'),...seatFlags('name-'),'score-to-win':{type:'string'},port:{type:'string'},
       rounds:{type:'string'},out:{type:'string'},cols:{type:'string'},rows:{type:'string'},'shell-speed':{type:'string'},
       'shrink-after':{type:'string'},'shrink-duration':{type:'string'},'round-limit':{type:'string'},
-      'maze-complexity':{type:'string'},'friendly-fire':{type:'string'},teams:{type:'string'}
+      'maze-complexity':{type:'string'},'friendly-fire':{type:'string'},'simulation-rate':{type:'string'},teams:{type:'string'}
     }
   });
   const overrides=Object.fromEntries([['cols','cols'],['rows','rows'],['shrinkAfterSeconds','shrink-after'],
-    ['shrinkDurationSeconds','shrink-duration'],['roundLimit','round-limit']]
+    ['shrinkDurationSeconds','shrink-duration'],['roundLimit','round-limit'],['simulationRate','simulation-rate']]
     .filter(([,flag])=>values[flag]!==undefined).map(([key,flag])=>[key,integer(values[flag])]));
   if (values['maze-complexity']!==undefined) overrides.mazeComplexity=values['maze-complexity'];
   if (values['friendly-fire']!==undefined) {
     if (!['on','off'].includes(values['friendly-fire'])) throw new Error('--friendly-fire must be on or off');
     overrides.friendlyFire=values['friendly-fire']==='on';
   }
-  const config=applyTankOptions({},overrides);
+  const {simulationRate=game.tickRate,...config}=applyTankOptions({},overrides);
+  const selectedGame=selectGame(simulationRate);
   if (values['score-to-win']!==undefined) config.scoreToWin=integer(values['score-to-win']);
   if (values.teams!==undefined && command!=='run') throw new Error('--teams is supported by run; use the custom lobby for live teams');
   if (values['shell-speed']!==undefined) {
@@ -57,7 +60,7 @@ try {
     if (positionals.length) throw new Error('run does not accept positional arguments');
     const bots=await loadBotRegistry(root,game.id);
     const paths=seatValues('bot-');
-    if (values.teams!==undefined) config.teams=game.validateTeams(JSON.parse(values.teams),playersForMode('bots',paths));
+    if (values.teams!==undefined) config.teams=selectedGame.validateTeams(JSON.parse(values.teams),playersForMode('bots',paths));
     for (const choice of Object.values(paths)) {
       if (!bots.has(choice) && /^[a-z][a-z0-9-]{0,47}$/.test(choice)) {
         throw new Error('unknown bot id: '+choice);
@@ -65,7 +68,7 @@ try {
     }
     for (let i = 0; i < rounds; i++) {
       const match = await makeMatch({
-        game,root,playerNames,base:resolve(values.out ?? 'runs'),seed:(integer(values.seed) ?? 42)+i,
+        game:selectedGame,root,playerNames,base:resolve(values.out ?? 'runs'),seed:(integer(values.seed) ?? 42)+i,
         maxTicks:integer(values['max-ticks']),timeoutMs:integer(values['timeout-ms']),
         paths,registry:bots,config,recorder
       });
@@ -76,9 +79,9 @@ try {
     console.log(JSON.stringify(await verifyReplay(positionals[0],registry)));
   } else if (command === 'serve') {
     if (positionals.length) throw new Error('serve does not accept positional arguments');
-    await serve({game,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
+    await serve({game:selectedGame,selectGame,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
   } else if (!command || command === 'help') {
-    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl> | serve\nrun and serve: --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <open|classic|dense> --friendly-fire <on|off>\nrun only: --teams \'{"A":"1","B":"2"}\'');
+    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl> | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <open|classic|dense> --friendly-fire <on|off>\nrun only: --teams \'{"A":"1","B":"2"}\'');
   } else {
     throw new Error(`unknown command: ${command}`);
   }

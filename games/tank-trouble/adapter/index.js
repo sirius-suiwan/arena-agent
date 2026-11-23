@@ -1,5 +1,6 @@
 import { init, step, TICK_RATE } from '../engine/engine.js';
 import * as classic from '../engine/classic.js';
+import {CLASSIC_DATA,classicProfile} from '../engine/profile-v8.js';
 import {withClassicSeries,withClassicSeriesV7} from '../series/index.js';
 export {validateTeams} from '../engine/classic.js';
 
@@ -103,4 +104,27 @@ export const classicRoundGameV7 = Object.freeze({
   }
 });
 
-export const game = withClassicSeriesV7(classicRoundGameV7);
+export const gameV7 = withClassicSeriesV7(classicRoundGameV7);
+
+function makeClassicV8(tickRate) {
+  const profile=classicProfile(tickRate);
+  const round=Object.freeze({
+    ...classicRoundGameV7,
+    version:'8-'+tickRate,
+    tickRate,
+    init:input=>classic.initV8(input,tickRate),
+    step:classic.stepV8,
+    roundTickLimit:config=>classic.roundTickLimitV8(config,tickRate),
+    matchTickLimit:config=>classic.matchTickLimitV8(config,tickRate),
+    observe(state,playerId) {
+      return {...classicRoundGameV7.observe(state,playerId),profile:{...state.profile}};
+    }
+  });
+  return withClassicSeriesV7(round,{breakTicks:profile.intermissionTicks,settlementTicks:profile.settleTicks,
+    defaultMatchTicks:140*tickRate});
+}
+
+export const gameV8_25 = makeClassicV8(25);
+export const gameV8_30 = makeClassicV8(30);
+export const gameV8_60 = makeClassicV8(60);
+export const game = [gameV8_25,gameV8_30,gameV8_60].find(g=>g.tickRate===CLASSIC_DATA.defaultSimulationRate);

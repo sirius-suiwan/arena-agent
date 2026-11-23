@@ -21,7 +21,7 @@ async function requestBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-export async function serve({game,root,base,port,config={}}) {
+export async function serve({game,selectGame=rate=>rate===game.tickRate?game:null,root,base,port,config={}}) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid port');
   const clients = new Set();
   let active=false, first, latest, terminal, epoch=0, currentMatch;
@@ -56,7 +56,7 @@ export async function serve({game,root,base,port,config={}}) {
     const path = req.url.split('?')[0];
     try {
       if (req.method==='GET' && path==='/api/bots') return json(res,200,{bots:botCatalog(await loadBotRegistry(root,game.id))});
-      if (req.method==='GET' && path==='/api/options') return json(res,200,tankOptions(config));
+      if (req.method==='GET' && path==='/api/options') return json(res,200,tankOptions({...config,simulationRate:game.tickRate}));
       if (req.method==='GET' && path==='/api/events') {
         if (clients.size >= 16) return json(res,503,{error:'too many viewers'});
         res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','Connection':'keep-alive'});
@@ -79,10 +79,10 @@ export async function serve({game,root,base,port,config={}}) {
       if (req.method==='POST' && path==='/api/input') {
         const requestEpoch=epoch;
         const {playerId='A',matchId,...action}=await requestBody(req);
-        if (!active || epoch!==requestEpoch || !inputs.has(playerId) ||
+        if (!active || !currentMatch || epoch!==requestEpoch || !inputs.has(playerId) ||
             (matchId!==undefined && matchId!==currentMatch?.id)) return json(res,409,{error:'no human seat in this match'});
         if (currentMatch?.controller.signal.aborted) return json(res,200,{ok:true,ignored:true});
-        const value=game.validateAction(action);
+        const value=currentMatch.game.validateAction(action);
         const input=inputs.get(playerId);
         if (value.fire && !input.held.fire) input.fireQueued=true;
         input.held=value;
@@ -92,7 +92,9 @@ export async function serve({game,root,base,port,config={}}) {
         const data = await requestBody(req);
         if (active) return json(res,409,{error:'match already in progress'});
         if (!['bots','human','local2','local3','custom'].includes(data?.mode) || !Number.isSafeInteger(data.seed)) return json(res,400,{error:'invalid match options'});
-        const matchConfig=applyTankOptions(config,data);
+        const {simulationRate=game.tickRate,...matchConfig}=applyTankOptions(config,data);
+        const selectedGame=selectGame(simulationRate);
+        if (!selectedGame) return json(res,400,{error:'unavailable simulation rate'});
         const mode=data.mode;
         const botSeats=data.mode==='bots'?['A','B','C']:data.mode==='human'?['B']:[];
         if ((mode==='custom' && data.bots!==undefined) || (mode!=='custom' && data.seats!==undefined)) {
@@ -107,7 +109,7 @@ export async function serve({game,root,base,port,config={}}) {
           return json(res,400,{error:'invalid bot selection'});
         }
         if (Object.hasOwn(data,'teams')) {
-          matchConfig.teams=game.validateTeams(data.teams,custom?.ids ?? playersForMode(mode,paths));
+          matchConfig.teams=selectedGame.validateTeams(data.teams,custom?.ids ?? playersForMode(mode,paths));
         }
         const names=data.playerNames;
         if (names!==undefined && (!names || typeof names!=='object' || Array.isArray(names) ||
@@ -117,11 +119,11 @@ export async function serve({game,root,base,port,config={}}) {
         if (active) return json(res,409,{error:'match already in progress'});
         active=true;epoch++;first=latest=terminal=currentMatch=undefined;
         const localSeats=custom?Object.keys(custom.humanControls):humansForMode(mode);
-        inputs=new Map(localSeats.map(id=>[id,{held:game.neutralAction(),fireQueued:false}]));
+        inputs=new Map(localSeats.map(id=>[id,{held:selectedGame.neutralAction(),fireQueued:false}]));
         try {
-          const match=await makeMatch({game,root,base,config:matchConfig,seed:data.seed,mode,paths,roster:data.seats,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
+          const match=await makeMatch({game:selectedGame,root,base,config:matchConfig,seed:data.seed,mode,paths,roster:data.seats,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
           const controller=new AbortController();
-          const session={id:match.matchId,controller};
+          const session={id:match.matchId,controller,game:selectedGame};
           currentMatch=session;
           session.done=match.run({signal:controller.signal}).then(result=>({result}),error=>{
             publish({type:'error',message:error.message});
