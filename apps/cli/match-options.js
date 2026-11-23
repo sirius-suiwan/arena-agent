@@ -19,16 +19,17 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks=game.def
     const sha256 = createHash('sha256').update(await readFile(path)).digest('hex');
     return {id,path,command:ext === '.py' ? 'python3' : process.execPath,version:{file:basename(path),sha256}};
   }));
-  const directory = join(base,game.id,randomUUID());
+  const matchId = randomUUID();
+  const directory = join(base,game.id,matchId);
   const recording = await recorder(directory,onRecord);
-  return {directory,async run() {
+  return {directory,matchId,async run({pause}={}) {
     const seats = {};
     try {
       for (const plan of plans) {
         seats[plan.id] = plan.human ? human[plan.id] : new LocalBot(plan.command,[plan.path]);
       }
       return await runMatch({
-        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,record:message => recording.write(message),
+        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,pause,record:message => recording.write(message),
         botVersions:Object.fromEntries(plans.map(p=>[p.id,p.version]))
       });
     } finally {
