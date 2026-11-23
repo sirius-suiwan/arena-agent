@@ -27,10 +27,14 @@
 - `id` 在同一游戏下唯一，长 1–48 位，以小写字母开头，支持小写字母、数字和连字符；`name` 最多 24 字，作为菜单和默认席位显示名。
 - `entry` 是包内 `.js`、`.mjs` 或 `.py` 入口；宿主按后缀选择 Node.js 或 Python 3，不接受自定义命令。路径用包内相对路径，不能跨出目录。额外模块和策略数据通过可选的 `files` 列出；日志记录声明、入口及这些依赖的组合 SHA-256，便于复盘。依赖不会自动安装。
 - 刷新坦克页面，新 bot 就会出现在选座菜单里，无需修改宿主。一个目录也可使用多个 `<name>.bot.json`。声明或路径错误会提示对应清单；修正后刷新即可。
-- CLI 接受注册 ID，也保留直接指定脚本路径的用法。两个或三个席位都可选不同 bot，例如：
+- CLI 接受注册 ID，也保留直接指定脚本路径的用法。`--bot-a` 到 `--bot-h` 支持最多八席。A、B 默认参赛，C–H 只在指定时加入；各席独立运行，允许同一个 bot 出现在多个席位。自定义真人席位用网页。
 
 ```sh
 node apps/cli/arena.js run --seed 42 --bot-a laika --bot-b maze-hunter --bot-c scout
+
+# 八个独立进程，同一 bot 可以多次参赛
+node apps/cli/arena.js run --seed 42 --bot-a laika --bot-b scout --bot-c turret --bot-d scout \
+  --bot-e turret --bot-f laika --bot-g turret --bot-h scout
 ```
 
 [Laika（复刻）](laika/README.md) 与现有 `turret`、`scout` 都用相同的声明注册。注册不是安全审核；脚本依旧是本地进程，只运行可信的 bot。
@@ -62,4 +66,4 @@ node apps/cli/arena.js run --seed 12 --rounds 3 --score-to-win 1 \
 
 每轮只改一个假设，例如「射击前预测一次反弹是否打回自己」，再用相同的多组种子与交换座位复测。看胜负之外，也看自伤次数和回退比例。
 
-不需要改 `playerId` 来命名。注册 bot 默认使用声明的 `name`；未注册的脚本可在 `ready` 中加 `"name":"迷宫斥候"`。CLI 的 `--name-a`、`--name-b` 或 `--name-c` 可为本场指定显示名。
+不需要改 `playerId` 来命名。注册 bot 默认使用声明的 `name`；未注册的脚本可在 `ready` 中加 `"name":"迷宫斥候"`。CLI 的 `--name-a` 到 `--name-h` 可为本场指定显示名。

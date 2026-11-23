@@ -3,13 +3,14 @@ import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {game,gameV1,gameV2,gameV3,gameV4} from '../../games/tank-trouble/adapter/index.js';
 import {recorder,verifyReplay} from '../../replay/index.js';
-import {makeMatch} from './match-options.js';
+import {makeMatch,seatIds} from './match-options.js';
 import {loadBotRegistry} from './bot-registry.js';
 import {serve} from './serve.js';
 
 const root = fileURLToPath(new URL('../../',import.meta.url));
 const registry = Object.freeze(Object.fromEntries([game,gameV1,gameV2,gameV3,gameV4].map(g=>[g.id+'@'+g.version,g])));
 const [command,...args] = process.argv.slice(2);
+const seatFlags=prefix=>Object.fromEntries(seatIds.map(id=>[prefix+id.toLowerCase(),{type:'string'}]));
 
 function integer(value) {
   if (value === undefined) return undefined;
@@ -22,8 +23,8 @@ try {
   const {values,positionals} = parseArgs({
     args,allowPositionals:true,options:{
       seed:{type:'string'}, 'max-ticks':{type:'string'}, 'timeout-ms':{type:'string'},
-      'bot-a':{type:'string'},'bot-b':{type:'string'},'bot-c':{type:'string'},'score-to-win':{type:'string'},port:{type:'string'},
-      rounds:{type:'string'},out:{type:'string'},'name-a':{type:'string'},'name-b':{type:'string'},'name-c':{type:'string'},cols:{type:'string'},rows:{type:'string'},'shell-speed':{type:'string'}
+      ...seatFlags('bot-'),...seatFlags('name-'),'score-to-win':{type:'string'},port:{type:'string'},
+      rounds:{type:'string'},out:{type:'string'},cols:{type:'string'},rows:{type:'string'},'shell-speed':{type:'string'}
     }
   });
   const config=Object.fromEntries([['cols',values.cols],['rows',values.rows],['scoreToWin',values['score-to-win']]]
@@ -33,17 +34,19 @@ try {
     if (!Number.isFinite(speed) || speed<3 || speed>9) throw new Error('shell speed must be 3–9 px/tick');
     config.shellSpeed=speed;
   }
-  const playerNames=Object.fromEntries(['A','B','C'].flatMap(id=>{
-    const value=values['name-'+id.toLowerCase()];
+  const seatValues=prefix=>Object.fromEntries(seatIds.flatMap(id=>{
+    const value=values[prefix+id.toLowerCase()];
     return value===undefined?[]:[[id,value]];
   }));
+  const playerNames=seatValues('name-');
   if (command === 'run') {
     const rounds = integer(values.rounds) ?? 1;
     if (rounds < 1 || rounds > 1000) throw new Error('rounds must be 1-1000');
     if (positionals.length) throw new Error('run does not accept positional arguments');
     const bots=await loadBotRegistry(root,game.id);
-    for (const choice of [values['bot-a'],values['bot-b'],values['bot-c']]) {
-      if (choice!==undefined && !bots.has(choice) && /^[a-z][a-z0-9-]{0,47}$/.test(choice)) {
+    const paths=seatValues('bot-');
+    for (const choice of Object.values(paths)) {
+      if (!bots.has(choice) && /^[a-z][a-z0-9-]{0,47}$/.test(choice)) {
         throw new Error('unknown bot id: '+choice);
       }
     }
@@ -51,7 +54,7 @@ try {
       const match = await makeMatch({
         game,root,playerNames,base:resolve(values.out ?? 'runs'),seed:(integer(values.seed) ?? 42)+i,
         maxTicks:integer(values['max-ticks']),timeoutMs:integer(values['timeout-ms']),
-        paths:{A:values['bot-a'],B:values['bot-b'],C:values['bot-c']},registry:bots,config,recorder
+        paths,registry:bots,config,recorder
       });
       console.log(JSON.stringify({directory:match.directory,result:await match.run()}));
     }
@@ -62,7 +65,7 @@ try {
     if (positionals.length) throw new Error('serve does not accept positional arguments');
     await serve({game,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
   } else if (!command || command === 'help') {
-    console.log('node apps/cli/arena.js run [--bot-a <id-or-path>] [--bot-b <id-or-path>] | verify <match.jsonl> | serve');
+    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl> | serve');
   } else {
     throw new Error(`unknown command: ${command}`);
   }

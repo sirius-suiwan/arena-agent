@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {recorder} from '../../replay/index.js';
 import {countKills,emptyKillTotals} from '../../viewer/score-data.js';
-import {humansForMode,makeMatch} from './match-options.js';
+import {humansForMode,makeMatch,parseCustomSeats,seatIds} from './match-options.js';
 import {botCatalog,loadBotRegistry} from './bot-registry.js';
 
 const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8'};
@@ -23,7 +23,7 @@ async function requestBody(req) {
 export async function serve({game,root,base,port,config={}}) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid port');
   const clients = new Set();
-  let active=false, mode, first, latest, terminal, epoch=0, currentMatch;
+  let active=false, first, latest, terminal, epoch=0, currentMatch;
   let inputs=new Map(), kills={};
   const send = (res,event) => {
     if (!event || res.destroyed) return;
@@ -76,8 +76,9 @@ export async function serve({game,root,base,port,config={}}) {
       }
       if (req.method==='POST' && path==='/api/input') {
         const requestEpoch=epoch;
-        const {playerId='A',...action}=await requestBody(req);
-        if (!active || epoch!==requestEpoch || !inputs.has(playerId)) return json(res,409,{error:'no human seat'});
+        const {playerId='A',matchId,...action}=await requestBody(req);
+        if (!active || epoch!==requestEpoch || !inputs.has(playerId) ||
+            (matchId!==undefined && matchId!==currentMatch?.id)) return json(res,409,{error:'no human seat in this match'});
         if (currentMatch?.controller.signal.aborted) return json(res,200,{ok:true,ignored:true});
         const value=game.validateAction(action);
         const input=inputs.get(playerId);
@@ -88,9 +89,15 @@ export async function serve({game,root,base,port,config={}}) {
       if (req.method==='POST' && path==='/api/match') {
         const data = await requestBody(req);
         if (active) return json(res,409,{error:'match already in progress'});
-        if (!['bots','human','local2','local3'].includes(data?.mode) || !Number.isSafeInteger(data.seed)) return json(res,400,{error:'invalid match options'});
+        if (!['bots','human','local2','local3','custom'].includes(data?.mode) || !Number.isSafeInteger(data.seed)) return json(res,400,{error:'invalid match options'});
+        const mode=data.mode;
         const botSeats=data.mode==='bots'?['A','B','C']:data.mode==='human'?['B']:[];
-        const registry=botSeats.length?await loadBotRegistry(root,game.id):new Map();
+        if ((mode==='custom' && data.bots!==undefined) || (mode!=='custom' && data.seats!==undefined)) {
+          return json(res,400,{error:'use seats for custom mode and bots for preset modes'});
+        }
+        const useBots=mode==='custom'?Object.values(data.seats??{}).some(seat=>seat && Object.hasOwn(seat,'bot')):botSeats.length>0;
+        const registry=useBots?await loadBotRegistry(root,game.id):new Map();
+        const custom=mode==='custom'?parseCustomSeats(data.seats,registry):null;
         const paths=data.bots===undefined?{}:data.bots;
         if (!paths || typeof paths!=='object' || Array.isArray(paths) ||
             Object.entries(paths).some(([seat,id])=>!botSeats.includes(seat) || typeof id!=='string' || !registry.has(id))) {
@@ -98,14 +105,15 @@ export async function serve({game,root,base,port,config={}}) {
         }
         const names=data.playerNames;
         if (names!==undefined && (!names || typeof names!=='object' || Array.isArray(names) ||
-            Object.keys(names).some(id=>!['A','B','C'].includes(id) || typeof names[id]!=='string'))) {
+            Object.keys(names).some(id=>!(custom?.ids ?? seatIds.slice(0,3)).includes(id) || typeof names[id]!=='string'))) {
           return json(res,400,{error:'invalid player names'});
         }
         if (active) return json(res,409,{error:'match already in progress'});
-        active=true;mode=data.mode;epoch++;first=latest=terminal=currentMatch=undefined;
-        inputs=new Map(humansForMode(mode).map(id=>[id,{held:game.neutralAction(),fireQueued:false}]));
+        active=true;epoch++;first=latest=terminal=currentMatch=undefined;
+        const localSeats=custom?Object.keys(custom.humanControls):humansForMode(mode);
+        inputs=new Map(localSeats.map(id=>[id,{held:game.neutralAction(),fireQueued:false}]));
         try {
-          const match=await makeMatch({game,root,base,config,seed:data.seed,mode,paths,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
+          const match=await makeMatch({game,root,base,config,seed:data.seed,mode,paths,roster:data.seats,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
           const controller=new AbortController();
           const session={id:match.matchId,controller};
           currentMatch=session;
