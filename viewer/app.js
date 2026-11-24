@@ -1106,7 +1106,7 @@ el['match-form'].addEventListener('submit', async (event) => {
     if (startAttempt !== attempt) return; // SSE can start and even finish before the HTTP response is processed.
     if (typeof response?.matchId !== 'string') throw new Error('裁判未确认新对局。');
     attempt.matchId = response.matchId;
-    attempt.timer = setTimeout(() => failStartAttempt(attempt, '等待新对局超时，请检查裁判连接。'), 10_000);
+    attempt.timer = setTimeout(() => failStartAttempt(attempt, '等待新对局超时，请检查裁判连接。'), 20_000);
   } catch (error) {
     failStartAttempt(attempt, `开局失败：${error.message}`);
   }
