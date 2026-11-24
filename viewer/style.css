@@ -246,6 +246,14 @@ input[type=number] { width: 84px; margin-left: 3px; background: #fafafa; }
 .game-settings summary { cursor: pointer; font-size: 12px; font-weight: 700; text-align: center; }
 .game-settings .zone-settings { margin-top: 9px; }
 .game-settings .hint { text-align: center; }
+.replay-storage form { display: grid; gap: 6px; margin: 9px 0 0; }
+.replay-storage label { font-size: 12px; font-weight: 700; }
+.replay-storage input {
+  width: 100%; min-width: 0; padding: 5px 8px; border: 1px solid #a9b7c3; border-radius: 4px; font: inherit;
+}
+.replay-storage-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 5px; }
+.replay-storage-status { overflow-wrap: anywhere; }
+
 .team-mode { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; margin-bottom: 6px; }
 .custom-seat-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .custom-seat-row label { flex: 1; }

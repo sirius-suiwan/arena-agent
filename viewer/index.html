@@ -102,6 +102,21 @@
         <p class="hint">设置自动保存在当前浏览器，种子除外。</p>
         <button type="button" id="reset-setup">恢复默认</button>
       </details>
+      <details class="game-settings replay-storage">
+        <summary>回放存储</summary>
+        <form id="replay-storage-form">
+          <label for="replay-directory">新回放保存目录</label>
+          <input id="replay-directory" type="text" required maxlength="1000"
+            placeholder="例如 ~/Documents/Arena Replays" autocomplete="off" spellcheck="false" dir="auto"
+            aria-describedby="replay-storage-help replay-storage-status">
+          <div class="replay-storage-actions">
+            <button type="submit" id="save-replay-directory" disabled>保存目录</button>
+            <button type="button" id="reset-replay-directory" disabled>使用启动默认目录</button>
+          </div>
+        </form>
+        <p class="hint" id="replay-storage-help">输入运行 Arena 的电脑上的绝对路径。仅用于新开的网页对局，不移动旧回放。</p>
+        <p class="hint replay-storage-status" id="replay-storage-status" role="status" aria-live="polite">正在读取存储设置…</p>
+      </details>
       <button type="button" id="continue-match" hidden>返回对局</button>
     </section>
 

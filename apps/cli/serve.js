@@ -7,6 +7,7 @@ import {humansForMode,makeMatch,parseCustomSeats,playersForMode,seatIds} from '.
 import {botCatalog,loadBotRegistry} from './bot-registry.js';
 import {applyTankOptions,tankOptions} from './tank-options.js';
 import {randomMatchSeed} from './seed.js';
+import {openReplayStorage} from './replay-storage.js';
 
 const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8',json:'application/json; charset=utf-8'};
 const json = (res,status,data) => { res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data)); };
@@ -29,6 +30,7 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
     ...['adapter/index.js','engine/classic.js','engine/profile.js','engine/laser-geometry.js','series/index.js','classic-profile.json']
       .map(file=>'games/'+game.id+'/'+file)
   ]);
+  const storage=await openReplayStorage(root,base);
   const clients = new Set();
   let active=false, first, latest, terminal, epoch=0, currentMatch;
   let inputs=new Map(), kills={};
@@ -61,6 +63,23 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
         (req.headers.origin && req.headers.origin !== 'http://'+host)) return json(res,403,{error:'local origin only'});
     const path = req.url.split('?')[0];
     try {
+      if (path==='/api/replay-storage') {
+        const site=req.headers['sec-fetch-site'];
+        if (site && site!=='same-origin' && site!=='none' ||
+            req.method==='POST' && req.headers.origin!=='http://'+host) {
+          return json(res,403,{error:'local origin only'});
+        }
+        res.setHeader('Cache-Control','no-store');
+        if (req.method==='GET') return json(res,200,await storage.current());
+        if (req.method==='POST') {
+          const body=await requestBody(req);
+          if (!body || typeof body!=='object' || Object.keys(body).length!==1 || !Object.hasOwn(body,'directory')) {
+            return json(res,400,{error:'invalid replay storage request'});
+          }
+          return json(res,200,await storage.update(body.directory));
+        }
+        return json(res,405,{error:'method not allowed'});
+      }
       if (req.method==='GET' && path==='/api/bots') return json(res,200,{bots:botCatalog(await loadBotRegistry(root,game.id))});
       if (req.method==='GET' && path==='/api/options') return json(res,200,tankOptions({...config,simulationRate:game.tickRate}));
       if (req.method==='GET' && path==='/api/events') {
@@ -128,7 +147,8 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
         const localSeats=custom?Object.keys(custom.humanControls):humansForMode(mode);
         inputs=new Map(localSeats.map(id=>[id,{held:selectedGame.neutralAction(),fireQueued:false}]));
         try {
-          const match=await makeMatch({game:selectedGame,root,base,config:matchConfig,seed,mode,paths,roster:data.seats,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
+          const {directory:replayDirectory}=await storage.current();
+          const match=await makeMatch({game:selectedGame,root,base:replayDirectory,config:matchConfig,seed,mode,paths,roster:data.seats,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,onRecord:publish});
           const controller=new AbortController();
           const session={id:match.matchId,controller,game:selectedGame};
           currentMatch=session;

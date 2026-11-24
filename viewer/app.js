@@ -924,6 +924,60 @@ async function loadMatchOptions() {
 }
 void loadMatchOptions();
 
+const replayStorageRoute = '/api/replay-storage';
+const replayStorageForm = document.getElementById('replay-storage-form');
+const replayDirectoryInput = document.getElementById('replay-directory');
+const replayStorageStatus = document.getElementById('replay-storage-status');
+const saveReplayDirectory = document.getElementById('save-replay-directory');
+const resetReplayDirectory = document.getElementById('reset-replay-directory');
+let storageBusy = false;
+
+function pendingReplayStorage(pending) {
+  storageBusy = pending;
+  replayDirectoryInput.disabled = saveReplayDirectory.disabled = resetReplayDirectory.disabled = pending;
+}
+
+function showReplayStorage(current) {
+  replayDirectoryInput.value = current.directory;
+  replayStorageStatus.textContent = [
+    current.warning, `${current.custom ? '已设置' : '启动默认目录'}：${current.directory}`
+  ].filter(Boolean).join(' ');
+}
+
+async function loadReplayStorage() {
+  pendingReplayStorage(true);
+  try {
+    const response = await fetch(replayStorageRoute, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    showReplayStorage(await response.json());
+  } catch (error) {
+    replayStorageStatus.textContent = `无法读取回放目录（${error.message}）。可以重填后保存。`;
+  } finally {
+    pendingReplayStorage(false);
+  }
+}
+
+async function updateReplayStorage(directory) {
+  if (storageBusy) return;
+  pendingReplayStorage(true);
+  replayStorageStatus.textContent = '正在保存回放目录…';
+  try {
+    showReplayStorage(await post(replayStorageRoute, { directory }));
+  } catch (error) {
+    replayStorageStatus.textContent = `未能确认保存：${error.message}。刷新可核对当前设置。`;
+  } finally {
+    pendingReplayStorage(false);
+  }
+}
+
+replayStorageForm.addEventListener('submit', event => {
+  event.preventDefault();
+  void updateReplayStorage(replayDirectoryInput.value);
+});
+resetReplayDirectory.addEventListener('click', () => { void updateReplayStorage(null); });
+void loadReplayStorage();
+
+
 el['match-form'].addEventListener('submit', async (event) => {
   event.preventDefault();
   if (starting || (live.manifest && !live.done)) return;

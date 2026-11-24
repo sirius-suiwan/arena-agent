@@ -1,5 +1,6 @@
 # 本机界面协议 v1
 
+- `GET /api/replay-storage` 返回 `{directory,defaultDirectory,custom,warning}`。同源 `POST /api/replay-storage` 传 JSON `{"directory":"/绝对/目录"}`，传 `null` 恢复启动默认目录。保存时验证目录可写，设置保存在宿主本机，同一工程的新网页对局才读取变更。本接口不浏览目录、不读取录像文件、不修改 CLI 的输出目录。
 - `POST /api/match` 请求 JSON `{"mode":"bots"}`。可选 `seed`（安全整数，`0` 有效）；省略时由宿主生成，实际种子见 `manifest.seed`。模式可为 `bots`、`human`（A 为人类）、`local2` 或 `local3`。
 - `GET /api/bots` 返回当前游戏注册表 `{"bots":[{"id":"laika","name":"Laika（复刻）"}]}`。开局可传 `bots:{"A":"laika","B":"gpt-dots"}`，值只接受注册 ID，不接受文件路径。Bot 对战可选 A、B 和 C，指定 C 则开三人局；人机对战只允许 B；纯本地多人不接受 bot 席位。未指定时 B 用 Laika，其余席用 GPT-dots。
 - 自定义开局请求 `{"mode":"custom","seed":42,"seats":{"A":{"bot":"laika"},"D":{"control":"arrows"},"H":{"control":"mouse"}}}`。A–H 中任选 2–8 个席位，省略代表空席。每席只能指定注册 bot 或一套真人控制。真人控制 `arrows`、`esdf`、`mouse` 各限一个席位，满三套不能再加真人。不能混用 `seats` 和预设的 `bots`。录像清单中的 `humanControls` 是真人席位到控制的映射；纯 bot 自定义局是空映射。
