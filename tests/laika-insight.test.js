@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {createLaikaPolicy} from '../bots/laika/policy.js';
 import {withLaikaInsight} from '../games/tank-trouble/bots/laika-insight.js';
 import {classicProfile} from '../games/tank-trouble/engine/profile.js';
 
@@ -119,4 +120,24 @@ test('ordinary visible enemy poses alone do not introduce tactical shot override
   const b=tank('B',100,64,0);
   assert.deepEqual((await wrap().act(observe(b))).value,neutral);
   assert.deepEqual((await wrap(shooting).act(observe(b))).value,shooting);
+});
+
+
+test('wrapped Laika reverses away from a wall only when the retreat is clear',async()=>{
+  const profile=classicProfile(60);
+  const makeSeat=()=>{
+    const decide=createLaikaPolicy();
+    return withLaikaInsight({act:async ({observation})=>({value:decide(observation),error:null})});
+  };
+  const me=tank('A',76.25,96,Math.PI),target=tank('B',228,200,0);
+  const blocked=makeSeat(),clear=makeSeat();
+  for(let tick=0;tick<7;tick++) {
+    const shell={id:'b',kind:'shell',owner:'B',y:96,vy:0,ttl:100};
+    const input=(x,vx)=>wallCase(tick,{
+      profile,tanks:[me,target],pickups:[{x:96,y:96}],
+      bullets:[{...shell,x,vx}]
+    });
+    assert.deepEqual((await clear.act(input(53,2.4))).value,{...neutral,throttle:-1});
+    assert.equal((await blocked.act(input(94,-2.4))).value.throttle,0);
+  }
 });
