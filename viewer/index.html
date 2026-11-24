@@ -89,6 +89,12 @@
           <label class="shrink-setting">队伍友伤
             <input id="friendly-fire" type="checkbox">
           </label>
+          <label class="shrink-setting">缩圈终点
+            <select id="shrink-center">
+              <option value="center" selected>地图中央</option>
+              <option value="random">每小局随机</option>
+            </select>
+          </label>
           <label class="shrink-setting" for="shrink-after">缩圈开始（每小局）
             <input id="shrink-after" form="match-form" type="number" min="0" max="120" step="1" value="40" required> 秒
           </label>

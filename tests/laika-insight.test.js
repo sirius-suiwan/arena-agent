@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createLaikaPolicy} from '../bots/laika/policy.js';
 import {withLaikaInsight} from '../games/tank-trouble/bots/laika-insight.js';
+import {gameForRate} from '../games/tank-trouble/adapter/index.js';
 import {classicProfile} from '../games/tank-trouble/engine/profile.js';
 
 const neutral={throttle:0,turn:0,fire:false};
@@ -141,4 +142,39 @@ test('wrapped Laika reverses away from a wall only when the retreat is clear',as
     assert.deepEqual((await clear.act(input(53,2.4))).value,{...neutral,throttle:-1});
     assert.equal((await blocked.act(input(94,-2.4))).value.throttle,0);
   }
+});
+
+test('Laika routes around a wall when nearing shrink but does not share the destination with the base process',async()=>{
+  const me=tank('A',96,96,Math.PI/2),other=tank('B',232,232,0);
+  const walls=[{x1:128,y1:64,x2:128,y2:128}];
+  const input={...observe(other,{tanks:[me,other],walls,round:1,
+    zone:{x:96,y:96,halfWidth:160,halfHeight:160,finalHalfWidth:24,finalHalfHeight:24,startTick:120,endTick:200}}),
+    shrinkDestination:{x:160,y:96,startsAt:120,endsAt:200}};
+  const seat=withLaikaInsight({act(message) {
+    assert.equal(message.shrinkDestination,undefined);
+    return {value:neutral};
+  }});
+  assert.deepEqual((await seat.act(input)).value,{...neutral,throttle:-1});
+  assert.deepEqual((await wrap(shooting).act(input)).value,shooting);
+  const far={...input,observation:{...input.observation,zone:{...input.observation.zone,startTick:1000,endTick:1100}},
+    shrinkDestination:{...input.shrinkDestination,startsAt:1000,endsAt:1100}};
+  assert.deepEqual((await wrap().act(far)).value,neutral);
+  assert.deepEqual((await wrap().act({...input,shrinkDestination:{...input.shrinkDestination,startsAt:121}})).value,neutral);
+});
+
+
+test('a neutral Laika can reach the random destination before movement of the safe zone begins',async()=>{
+  const game=gameForRate(25), seat=wrap();
+  let state=game.init({seed:42,config:{shrinkCenter:'random',shrinkAfterSeconds:20,pickups:false},players:['A','B']});
+  const start=state.tanks[0],destination=state.zoneDestination;
+  const distance=t=>Math.hypot(t.x-destination.x,t.y-destination.y);
+  assert.ok(distance(start)>200);
+  for(let tick=0;tick<state.zone.startTick;tick++) {
+    const observation=game.observe(state,'A');
+    const a=(await seat.act({tick,observation,...game.privilegedObservation(state)})).value;
+    const advanced=game.step(state,{A:a,B:neutral});
+    assert.ok(!advanced.events.some(event=>event.type==='wall-stop'&&event.tankId==='A'));
+    state=advanced.state;
+  }
+  assert.ok(distance(state.tanks[0])<8);
 });

@@ -11,6 +11,7 @@ export const matchOptionDefinitions = [
   { id: 'maze-rows', key: 'rows', min: 4, max: 12, initial: 9, label: '地图行数' },
   { id: 'maze-complexity', key: 'mazeComplexity', values: ['auto', 'open', 'classic', 'dense'], initial: 'auto', label: '迷宫复杂度' },
   { id: 'friendly-fire', key: 'friendlyFire', initial: false },
+  { id: 'shrink-center', key: 'shrinkCenter', values: ['center', 'random'], initial: 'center', label: '缩圈终点' },
   { id: 'shrink-after', key: 'shrinkAfterSeconds', min: 0, max: 120, initial: 40, label: '缩圈开始时间' },
   { id: 'shrink-duration', key: 'shrinkDurationSeconds', min: 1, max: 120, initial: 15, label: '缩圈持续时间' },
 ];

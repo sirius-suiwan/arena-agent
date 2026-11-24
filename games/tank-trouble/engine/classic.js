@@ -51,12 +51,17 @@ export function validateTeams(teams,players) {
 function normalizedConfig(input={}, profile) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('config must be an object');
   const base=defaults(profile);
-  for (const key of Object.keys(input)) if (!Object.hasOwn(base, key)) throw new Error('unknown config key: ' + key);
+  for (const key of Object.keys(input)) if (!Object.hasOwn(base,key)&&key!=='shrinkCenter') throw new Error('unknown config key: ' + key);
   const c = {...base,...input};
   for (const [key, lo, hi] of [['cols',4,16],['rows',4,12],['maxTicks',1,36000],['pickupInterval',1,3600],
     ['shrinkAfterSeconds',0,120],['shrinkDurationSeconds',1,120]]) {
     if (!Number.isInteger(c[key]) || c[key] < lo || c[key] > hi) throw new RangeError(key + ' must be an integer in [' + lo + ', ' + hi + ']');
   }
+  if (Object.hasOwn(c,'shrinkCenter')&&!['center','random'].includes(c.shrinkCenter)) {
+    throw new RangeError('shrinkCenter must be center or random');
+  }
+  // Keep the existing fixed-center state representation unchanged.
+  if (c.shrinkCenter==='center') delete c.shrinkCenter;
   for (const key of ['pickups','friendlyFire','classicSolo']) {
     if (typeof c[key] !== 'boolean') throw new TypeError(key+' must be a boolean');
   }
@@ -189,7 +194,19 @@ function initWithZone(input,profile) {
     finalHalfWidth:width*finalScale,finalHalfHeight:height*finalScale,
     startTick,endTick:startTick+state.config.shrinkDurationSeconds*tickRate,graceTicks:profile.zoneGraceTicks,
     outsideTicks:Object.fromEntries(state.tanks.map(t=>[t.id,0]))};
-  return {...state,zone,tanks:state.tanks.map(t=>({...t,invulnerable:false}))};
+  let zoneDestination;
+  if(state.config.shrinkCenter==='random') {
+    // A separate deterministic draw never consumes the maze, crate or weapon RNG.
+    // Reachable cell centers leave at least one navigable position in the last zone.
+    const candidates=[];
+    for(let py=CELL/2;py<height;py+=CELL) for(let px=CELL/2;px<width;px+=CELL) {
+      if(px>=zone.finalHalfWidth&&px<=width-zone.finalHalfWidth&&
+         py>=zone.finalHalfHeight&&py<=height-zone.finalHalfHeight) candidates.push({x:px,y:py});
+    }
+    const rng={value:seedValue(JSON.stringify(['zone-center',input.seed]))};
+    zoneDestination={...candidates[Math.floor(next(rng)*candidates.length)],initialX:x,initialY:y};
+  }
+  return {...state,zone,...(zoneDestination?{zoneDestination}:{}),tanks:state.tanks.map(t=>({...t,invulnerable:false}))};
 }
 
 export function roundTickLimit(config, tickRate) {
@@ -796,10 +813,13 @@ function advanceZone(s, events) {
   const lerp=(a,b)=>fraction===1?b:a+(b-a)*fraction;
   const halfWidth=lerp(zone.initialHalfWidth,zone.finalHalfWidth);
   const halfHeight=lerp(zone.initialHalfHeight,zone.finalHalfHeight);
+  const destination=s.zoneDestination;
+  const x=destination?lerp(destination.initialX,destination.x):zone.x;
+  const y=destination?lerp(destination.initialY,destination.y):zone.y;
   const outsideTicks={...zone.outsideTicks};
   for (const tank of s.tanks) {
     if (!tank.alive) continue;
-    const outside=!tank.invulnerable && (Math.abs(tank.x-zone.x)>halfWidth || Math.abs(tank.y-zone.y)>halfHeight);
+    const outside=!tank.invulnerable && (Math.abs(tank.x-x)>halfWidth || Math.abs(tank.y-y)>halfHeight);
     const exposure=outside?outsideTicks[tank.id]+1:0;
     outsideTicks[tank.id]=exposure;
     if (exposure>=zone.graceTicks) {
@@ -811,7 +831,7 @@ function advanceZone(s, events) {
       events.push({type:'zone-eliminated',tankId:tank.id,x:tank.x,y:tank.y});
     }
   }
-  s.zone={...zone,halfWidth,halfHeight,outsideTicks};
+  s.zone={...zone,x,y,halfWidth,halfHeight,outsideTicks};
 }
 
 export function step(state, actions) {

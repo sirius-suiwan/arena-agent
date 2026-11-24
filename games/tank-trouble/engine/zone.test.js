@@ -128,3 +128,45 @@ test('series resets the zone for a fresh round and keeps observations detached',
   assert.deepEqual(state.zone.outsideTicks,{A:0,B:0});
   assert(state.tanks.every(t=>!t.invulnerable));
 });
+
+test('seeded random zones use reachable map cells and do not consume gameplay randomness',()=>{
+  const targets=new Set();
+  for(const [cols,rows] of [[4,4],[16,4],[4,12],[16,12]]) for(const seed of [0,1,19,42]) {
+    const input={seed,players,config:{cols,rows}};
+    const fixed=init(input,60), randomInput={...input,config:{...input.config,shrinkCenter:'random'}};
+    const state=init(randomInput,60),{zone,zoneDestination:goal}=state;
+    assert.deepEqual(init({...input,config:{...input.config,shrinkCenter:'center'}},60),fixed);
+    assert.deepEqual(init(randomInput,60),state);
+    assert.equal(state.rng,fixed.rng);
+    assert.equal(state.nextPickupAt,fixed.nextPickupAt);
+    assert.deepEqual(state.walls,fixed.walls);
+    assert.deepEqual(state.tanks,fixed.tanks);
+    assert.ok(goal.x>=zone.finalHalfWidth&&goal.x<=state.width-zone.finalHalfWidth);
+    assert.ok(goal.y>=zone.finalHalfHeight&&goal.y<=state.height-zone.finalHalfHeight);
+    assert.deepEqual([goal.x%64,goal.y%64],[32,32]);
+    targets.add(JSON.stringify([goal.x,goal.y]));
+    for(const rate of [25,30]) assert.deepEqual(init(randomInput,rate).zoneDestination,goal);
+    const before=step({...state,tick:zone.startTick-1},{}).state;
+    assert.deepEqual(before.zone,zone);
+    const middle=step({...state,tick:(zone.startTick+zone.endTick)/2-1},{}).state;
+    near(middle.zone.x,(zone.x+goal.x)/2); near(middle.zone.y,(zone.y+goal.y)/2);
+    const end=step({...state,tick:zone.endTick-1},{}).state;
+    assert.deepEqual([end.zone.x,end.zone.y],[goal.x,goal.y]);
+    assert.ok(!Object.hasOwn(game.observe(state,'A'),'zoneDestination'));
+    assert.ok(!Object.hasOwn(game.spectateState(state),'zoneDestination'));
+  }
+  assert.ok(targets.size>=8);
+  assert.throws(()=>make({shrinkCenter:'unknown'}),/shrinkCenter/);
+});
+
+test('a new small round samples its own destination without leaking it to normal seats',()=>{
+  let state=game.init({seed:37,config:{pickups:false,maxTicks:1,shrinkCenter:'random'},players});
+  const first=state.zoneDestination;
+  for(let i=0;state.round===1&&i<100;i++) state=game.step(state,{}).state;
+  assert.equal(state.round,2);
+  const second=init({seed:'[37,2]',config:state.series.config,players},60).zoneDestination;
+  assert.deepEqual(state.zoneDestination,second);
+  assert.notDeepEqual(second,first);
+  assert.ok(!Object.hasOwn(game.observe(state,'A').zone,'zoneDestination'));
+  assert.equal(game.privilegedObservation(state).shrinkDestination.x,second.x);
+});

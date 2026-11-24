@@ -11,6 +11,7 @@ const sizeMode=config=>config.mapSizeMode===undefined?(hasDimensions(config)?'ma
 const settings={
   simulationRate:{value:tuning.defaultSimulationRate,valid:value=>tuning.simulationRates.includes(value)},
   shrinkAfterSeconds:{value:40,valid:integer(0,120)},
+  shrinkCenter:{value:'center',valid:value=>['center','random'].includes(value)},
   shrinkDurationSeconds:{value:15,valid:integer(1,120)},
   roundLimit:{value:0,valid:integer(0,20)},
   cols:{value:12,valid:integer(4,16)},

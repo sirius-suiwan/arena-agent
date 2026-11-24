@@ -6,7 +6,7 @@ import { matchMode, keyboardAction, keySeat, pointerAction, humanControls, human
 
 const byId = (id) => document.getElementById(id);
 const el = Object.fromEntries([
-  'battle', 'mode-label', 'match-form', 'seed', 'match-seed', 'match-insight', 'simulation-rate', 'map-size-mode', 'map-size-preview', 'reset-setup', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
+  'battle', 'mode-label', 'match-form', 'seed', 'match-seed', 'match-insight', 'simulation-rate', 'map-size-mode', 'map-size-preview', 'reset-setup', 'shrink-center', 'shrink-after', 'shrink-duration', 'round-limit', 'maze-cols', 'maze-rows', 'maze-complexity', 'friendly-fire', 'team-mode', 'team-scoreboard', 'arena-zone', 'back-live', 'replay-file',
   'status', 'error', 'frame-label', 'time-label', 'human-help', 'timeline-panel',
   'match-id', 'match-id-value', 'match-id-copy',
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
@@ -437,9 +437,12 @@ function render() {
   const insightSeats = insight?.seats;
   const privileged = Array.isArray(insightSeats) ? insightSeats.filter((id) => typeof id === 'string' && /^[A-H]$/.test(id)).slice(0, 8) : [];
   el['match-insight'].hidden = privileged.length === 0;
-  const hasForecast = Array.isArray(insight?.capabilities) && insight.capabilities.includes('pickup-forecast');
-  const ability = insight?.contract === 'accepted-opponent-actions' ?
-    (hasForecast ? '读指令／刷箱预报' : '读指令') : '刷箱预报';
+  const capabilities = Array.isArray(insight?.capabilities) ? insight.capabilities : [];
+  const ability = [
+    insight?.contract === 'accepted-opponent-actions' && '读指令',
+    capabilities.includes('pickup-forecast') && '刷箱预报',
+    capabilities.includes('shrink-destination') && '缩圈终点预报',
+  ].filter(Boolean).join('／') || '对局情报';
   setText(el['match-insight'], privileged.length ? `${ability}：${privileged.join('、')}` : '');
   el.menu.hidden = !menuVisible;
   el.stage.hidden = menuVisible;

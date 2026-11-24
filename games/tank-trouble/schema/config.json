@@ -10,6 +10,7 @@
     "pickupInterval": {"type": "integer", "minimum": 1, "maximum": 3600},
     "scoreToWin": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3},
     "shellSpeed": {"type": "number", "minimum": 3, "maximum": 9, "description": "Explicit override in world pixels per simulation tick."},
+    "shrinkCenter": {"enum": ["center", "random"], "default": "center"},
     "shrinkAfterSeconds": {"type": "integer", "minimum": 0, "maximum": 120, "default": 40},
     "shrinkDurationSeconds": {"type": "integer", "minimum": 1, "maximum": 120, "default": 15},
     "classicSolo": {"type": "boolean", "default": false},

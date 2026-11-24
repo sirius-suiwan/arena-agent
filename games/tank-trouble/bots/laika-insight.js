@@ -1,7 +1,8 @@
 // Independent Tank Trouble tactic for the privileged Laika seat. Does not change the base bot.
 import {traceLaser} from '../engine/laser-geometry.js';
+import {makeZoneStaging} from './laika-zone.js';
 
-export const LAIKA_INSIGHT_POLICY='laika-insight/5';
+export const LAIKA_INSIGHT_POLICY='laika-insight/6';
 
 const TANK_RADIUS=12, SHELL_RADIUS=3;
 const EPS=1e-7;
@@ -124,8 +125,9 @@ function stageForPickup(message,base,me,obs) {
 // Detect repeated *attempted* wall-blocked movement without mistaking waiting,
 // tank collisions, or a single turn at a corner for a stuck bot.
 function makeWallRecovery() {
+  const zoneStaging=makeZoneStaging({blockedByWall,pose,safeToRecover,teamMate});
   let prior=null,blocked=0,exit=null;
-  const reset=()=>{prior=null;blocked=0;exit=null;};
+  const reset=()=>{prior=null;blocked=0;exit=null;zoneStaging.reset();};
   function choose(me,obs) {
     const cell=64;
     const center={x:(Math.floor(me.x/cell)+0.5)*cell,y:(Math.floor(me.y/cell)+0.5)*cell};
@@ -170,7 +172,10 @@ function makeWallRecovery() {
     const wasRecovering=exit!==null;
     let action=exit&&mayRecover?(choose(me,obs)??base):base;
     if(exit&&mayRecover&&action===base) exit=null;
-    if(!wasRecovering&&message.pickupForecast) action=stageForPickup(message,base,me,obs);
+    if(!wasRecovering) {
+      action=zoneStaging.apply(message,action,me,obs);
+      if(action===base&&message.pickupForecast) action=stageForPickup(message,base,me,obs);
+    }
     const wallBlocked=action.throttle!==0&&d2(pose(me,action,obs),me)<0.1**2;
     prior={me,wallBlocked,tick:message.tick,round:obs.round};
     return action;
@@ -184,7 +189,7 @@ export function withLaikaInsight(seat) {
     start(message) { recovery.reset();return seat.start?.(message); },
     async act(message,budget) {
       const began=performance.now();
-      const {pickupForecast,...ordinaryMessage}=message;
+      const {pickupForecast,shrinkDestination,...ordinaryMessage}=message;
       // Reserve a small margin for the synchronous overlay. If a deadline is
       // already too close, still give the base process its ordinary decision.
       const hasBudget=Number.isFinite(budget)&&budget>2;

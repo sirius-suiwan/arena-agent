@@ -24,12 +24,13 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
   if (!Array.isArray(privilegedSeats)||privilegedSeats.some(id=>!players.includes(id))) throw new Error('invalid privileged seats');
   const insightSet=new Set(privilegedSeats);
   const insight=players.filter(id=>insightSet.has(id));
+  const capabilities=insight.length?(game.insightCapabilitiesForConfig?.(config)??game.insightCapabilities):null;
   const manifest = {
     format:MATCH_FORMAT, protocol:1, game:game.id, rulesVersion:game.version, tickRate:game.tickRate,
     mode, realtime, timeoutMs, seed, config, players, maxTicks, botVersions,
     ...(matchId?{matchId}:{}), ...(humanControls?{humanControls}:{}),
     ...(insight.length?{inputInsight:{seats:insight,timing:'concurrent',
-      ...(game.insightCapabilities?.length?{capabilities:[...game.insightCapabilities]}:{})}}:{})
+      ...(capabilities?.length?{capabilities:[...capabilities]}:{})}}:{})
   };
   try {
     let state = game.init({seed,config,players});

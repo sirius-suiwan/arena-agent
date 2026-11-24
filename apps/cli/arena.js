@@ -28,7 +28,7 @@ try {
       seed:{type:'string'}, 'max-ticks':{type:'string'}, 'timeout-ms':{type:'string'},
       ...seatFlags('bot-'),...seatFlags('name-'),'score-to-win':{type:'string'},port:{type:'string'},
       tick:{type:'string'},rounds:{type:'string'},out:{type:'string'},cols:{type:'string'},rows:{type:'string'},'shell-speed':{type:'string'},
-      'shrink-after':{type:'string'},'shrink-duration':{type:'string'},'round-limit':{type:'string'},
+      'shrink-center':{type:'string'},'shrink-after':{type:'string'},'shrink-duration':{type:'string'},'round-limit':{type:'string'},
       'maze-complexity':{type:'string'},'friendly-fire':{type:'string'},'simulation-rate':{type:'string'},teams:{type:'string'}
     }
   });
@@ -36,6 +36,7 @@ try {
   const overrides=Object.fromEntries([['cols','cols'],['rows','rows'],['shrinkAfterSeconds','shrink-after'],
     ['shrinkDurationSeconds','shrink-duration'],['roundLimit','round-limit'],['simulationRate','simulation-rate']]
     .filter(([,flag])=>values[flag]!==undefined).map(([key,flag])=>[key,integer(values[flag])]));
+  if (values['shrink-center']!==undefined) overrides.shrinkCenter=values['shrink-center'];
   if (values['maze-complexity']!==undefined) overrides.mazeComplexity=values['maze-complexity'];
   if (values['friendly-fire']!==undefined) {
     if (!['on','off'].includes(values['friendly-fire'])) throw new Error('--friendly-fire must be on or off');
@@ -90,7 +91,7 @@ try {
     if (positionals.length) throw new Error('serve does not accept positional arguments');
     await serve({game:selectedGame,selectGame:gameForRate,root,config,base:resolve(values.out ?? 'runs'),port:integer(values.port) ?? 8765});
   } else if (!command || command === 'help') {
-    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl.gz> | report <match.jsonl.gz> [--tick <n>] | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <auto|open|classic|dense> --friendly-fire <on|off>\nrun only: --seed <integer> (random if omitted), --teams \'{"A":"1","B":"2"}\'');
+    console.log('node apps/cli/arena.js run [--bot-a <id-or-path> ... --bot-h <id-or-path>] | verify <match.jsonl.gz> | report <match.jsonl.gz> [--tick <n>] | serve\nrun and serve: --simulation-rate <25|30|60> --shrink-after <0–120> --shrink-duration <1–120> --shrink-center <center|random> --round-limit <0–20> --cols <4–16> --rows <4–12> --maze-complexity <auto|open|classic|dense> --friendly-fire <on|off>\nrun only: --seed <integer> (random if omitted), --teams \'{"A":"1","B":"2"}\'');
   } else {
     throw new Error(`unknown command: ${command}`);
   }

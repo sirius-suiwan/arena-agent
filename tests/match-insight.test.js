@@ -48,7 +48,7 @@ const script=`
     const msg=JSON.parse(line);
     if(msg.type==='start') console.log(JSON.stringify({type:'ready',protocol:1,name:'Laika'}));
     if(msg.type==='observe') console.log(JSON.stringify({
-      type:'action',tick:msg.tick,action:{throttle:0,turn:0,fire:['opponentActions','opponentActionsTick','pickupForecast'].some(key=>Object.hasOwn(msg,key))}
+      type:'action',tick:msg.tick,action:{throttle:0,turn:0,fire:['opponentActions','opponentActionsTick','pickupForecast','shrinkDestination'].some(key=>Object.hasOwn(msg,key))}
     }));
   });
 `;
@@ -84,11 +84,14 @@ async function fetchManifest(t, registryFolder, paths, options={}) {
 test('only registered builtin Laika or its actual default entry receives the privilege',async t=>{
   const genuine=await fetchManifest(t,'laika',{B:'laika'});
   assert.deepEqual(genuine.inputInsight.seats,['B']);
-  assert.equal(genuine.botVersions.B.policy,'laika-insight/5');
+  assert.equal(genuine.botVersions.B.policy,'laika-insight/6');
   assert.deepEqual(genuine.inputInsight.capabilities,['pickup-forecast']);
   assert.equal(Object.hasOwn(genuine.botVersions.A,'policy'),false);
 
-  const fake=await fetchManifest(t,'fake',{B:'laika'});
+  const random=await fetchManifest(t,'laika',{B:'laika'},{config:{shrinkCenter:'random'}});
+  assert.deepEqual(random.inputInsight,{seats:['B'],timing:'concurrent',capabilities:['pickup-forecast','shrink-destination']});
+
+  const fake=await fetchManifest(t,'fake',{B:'laika'},{config:{shrinkCenter:'random'}});
   assert.equal(Object.hasOwn(fake,'inputInsight'),false);
 
   const builtinDefault=await fetchManifest(t,'none',{});
@@ -138,4 +141,29 @@ test('forecast is absent during settlement or disabled pickups and omits distant
   assert.equal(hint({...near,phase:'intermission'}),undefined);
   assert.equal(hint({...near,settleUntil:40}),undefined);
   assert.equal(hint(game.init({...input,config:{pickups:false}})),undefined);
+});
+
+test('the random shrink destination is copied only for authorized seats, with no timing change',async()=>{
+  const records=[],started=[];
+  const ids=[...'ABCD'];
+  const seats=Object.fromEntries(ids.map(id=>[id,{async act(message,budget) {
+    const isPrivileged=id==='C'||id==='D';
+    assert.equal(budget,250);
+    assert.equal(Object.hasOwn(message,'opponentActions'),false);
+    assert.equal(Object.hasOwn(message,'shrinkDestination'),isPrivileged);
+    assert.equal(Object.hasOwn(message.observation,'zoneDestination'),false);
+    assert.equal(Object.hasOwn(message.observation.zone,'finalX'),false);
+    if(isPrivileged) {
+      assert.deepEqual(message.shrinkDestination,game.privilegedObservation(records[0].state).shrinkDestination);
+      message.shrinkDestination.x=-100;
+    }
+    started.push(id);
+    await Promise.resolve();
+    assert.deepEqual(started,ids);
+    return {value:game.neutralAction()};
+  }}]));
+  await runMatch({game,seats,seed:7,maxTicks:1,timeoutMs:250,record:row=>records.push(row),
+    config:{shrinkCenter:'random',pickups:false},humanControls:{A:'arrows'},privilegedSeats:['C','D']});
+  assert.deepEqual(records[0].manifest.inputInsight.capabilities,['pickup-forecast','shrink-destination']);
+  assert.ok(!JSON.stringify(records[1].input).includes('shrinkDestination'));
 });

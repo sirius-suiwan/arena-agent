@@ -56,11 +56,17 @@ function makeClassic(tickRate) {
     tickRate,
     init:input=>classic.init(input,tickRate),
     observe,
-    insightCapabilities:Object.freeze(['pickup-forecast']),
+    insightCapabilitiesForConfig:config=>config.shrinkCenter==='random'
+      ? ['pickup-forecast','shrink-destination'] : ['pickup-forecast'],
     privilegedObservation(state) {
       const pickupForecast=classic.pickupForecast(state);
-      return pickupForecast?{pickupForecast}:undefined;
+      const {zoneDestination:destination,zone,roundTick,phase,settleUntil}=state;
+      const shrinkDestination=destination&&phase==='playing'&&settleUntil===null&&roundTick<=zone.endTick
+        ? {x:destination.x,y:destination.y,startsAt:zone.startTick,endsAt:zone.endTick} : null;
+      if(!pickupForecast&&!shrinkDestination) return undefined;
+      return {...(pickupForecast?{pickupForecast}:{}),...(shrinkDestination?{shrinkDestination}:{})};
     },
+    spectateState({zoneDestination:_private,...state}) { return state; },
     validateAction,
     neutralAction() { return {throttle:0,turn:0,fire:false}; },
     step:classic.step,
