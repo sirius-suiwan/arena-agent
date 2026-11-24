@@ -1,3 +1,6 @@
+const boardPalette = Object.freeze({
+  surround: '#fbf6ed', floor: '#faf3e7', perimeter: '#253544', interior: '#49535c', rim: '#1d2b38',
+});
 const teams = [
   { hull: '#dc655f', turret: '#f18c80', track: '#913c3b', outline: '#653535' },
   { hull: '#48a783', turret: '#7bc8a7', track: '#2f705c', outline: '#2d5549' },
@@ -376,12 +379,12 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
   const { ctx, width, height, ratio } = fitCanvas(canvas);
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = boardPalette.surround;
   ctx.fillRect(0, 0, width, height);
   if (!validateTankFrame(state)) return;
   const { scale, x, y } = layout(width, height, state);
   ctx.setTransform(scale, 0, 0, scale, x, y);
-  ctx.fillStyle = '#e6e6e6';
+  ctx.fillStyle = boardPalette.floor;
   ctx.fillRect(0, 0, state.width, state.height);
 
   // Replay drawing uses the tuning captured in each frame, not the current JSON.
@@ -401,13 +404,15 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
   const shrapnelRadius = positive('shrapnelRadius', 2.1);
   drawZone(ctx, state, scale, ratio, outsideAlpha);
 
-  // Static exterior walls match the interior gray; the thin black rim sits at the outer edge.
+  // Keep the perimeter prominent and interior routes lighter at every render scale.
   const wallWidth = Math.max(positive('wallWidth', 5.2), 1.7 * ratio / scale);
-  ctx.strokeStyle = '#4c4c4c';
+  ctx.strokeStyle = boardPalette.perimeter;
   ctx.lineWidth = wallWidth;
   ctx.lineCap = 'square';
   ctx.lineJoin = 'miter';
   ctx.strokeRect(0, 0, state.width, state.height);
+  ctx.strokeStyle = boardPalette.interior;
+  ctx.lineWidth = wallWidth * 0.70;
   ctx.beginPath();
   for (const wall of state.walls) {
     if (![wall?.x1, wall?.y1, wall?.x2, wall?.y2].every(Number.isFinite)) continue;
@@ -419,7 +424,7 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
   }
   ctx.stroke();
   const rim = wallWidth / 2;
-  ctx.strokeStyle = '#111';
+  ctx.strokeStyle = boardPalette.rim;
   ctx.lineWidth = ratio / scale;
   ctx.strokeRect(-rim, -rim, state.width + 2 * rim, state.height + 2 * rim);
 
