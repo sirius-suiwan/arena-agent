@@ -11,13 +11,13 @@ const el = Object.fromEntries([
   'match-id', 'match-id-value', 'match-id-copy',
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
   'scoreboard', 'kill-board', 'arena-round-mode', 'arena-round', 'arena-round-target', 'round-label', 'round-notice', 'canvas-wrap',
-  'kill-panel', 'kill-markers', 'kill-status',
+  'kill-panel', 'kill-markers', 'kill-status', 'readiness-warning',
   'custom-seat-list', 'custom-seat-status', 'custom-start',
   'seat-name-A', 'seat-name-B', 'seat-name-C', 'seat-name-D', 'seat-name-E', 'seat-name-F', 'seat-name-G', 'seat-name-H', 'seat-bot-A', 'seat-bot-B', 'seat-bot-C', 'bot-catalog-status',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
 ].map((id) => [id, byId(id)]));
 
-const blank = () => ({ manifest: null, frames: [], events: [], totalEvents: 0, result: null, done: false });
+const blank = () => ({ manifest: null, readiness: null, frames: [], events: [], totalEvents: 0, result: null, done: false });
 let live = blank();
 let replay = null;
 let selectedKill = null;
@@ -26,6 +26,25 @@ let markerButtons = new Map();
 let frameIndex = 0;
 let playback = null;
 let starting = false;
+let startAttempt = null;
+const loadingMatch = blank();
+
+function clearStartAttempt() {
+  if (startAttempt) clearTimeout(startAttempt.timer);
+  startAttempt = null;
+  starting = false;
+}
+
+function failStartAttempt(attempt, message) {
+  if (startAttempt !== attempt) return;
+  clearStartAttempt();
+  if (!replay) {
+    menuVisible = true;
+    setError(message);
+  }
+  liveStatus();
+  queueDraw(true);
+}
 const teamIds = ['1', '2', '3', '4'];
 const teamLetter = (id) => 'ABCD'[teamIds.indexOf(id)] ?? id;
 const matchOptions = matchOptionDefinitions.map(option => ({ ...option }));
@@ -66,6 +85,7 @@ function tickOf(record) {
 }
 
 function appendTick(match, record) {
+  if (record.type === 'start') match.readiness = record.readiness ?? null;
   const index = match.frames.length;
   const actions = record.input && Object.fromEntries(Object.entries(record.input).map(([id, entry]) => [
     id, entry?.fallback == null ? entry?.accepted : { action: entry.accepted, fallback: entry.fallback },
@@ -420,7 +440,7 @@ function zoneLabel(state, tickRate) {
 
 function render() {
   drawPending = false;
-  const match = replay ?? live;
+  const match = replay ?? (starting ? loadingMatch : live);
   const current = replay ? frameIndex : match.frames.length - 1;
   const record = match.frames[current];
   const hasFrames = Boolean(record?.state);
@@ -449,7 +469,7 @@ function render() {
   el.stage.hidden = menuVisible;
   renderMatchId(match.manifest);
   el['return-menu'].hidden = menuVisible;
-  el['continue-match'].hidden = !live.manifest && !replay;
+  el['continue-match'].hidden = (starting || !live.manifest) && !replay;
   el['continue-match'].textContent = replay ? '返回回放' : '返回对局';
   const canStopLive = !menuVisible && !replay && matchActive && typeof live.manifest.matchId === 'string';
   const canPlayReplay = !menuVisible && replay?.frames.length > 1;
@@ -463,6 +483,17 @@ function render() {
   el['play-replay'].disabled = Boolean(playback);
   el['play-replay'].textContent = frameIndex === replay?.frames.length - 1 ? '重播' : '播放回放';
   el['stop-replay'].hidden = !canStopReplay;
+  const readiness = match.readiness;
+  const unavailable = readiness && match.manifest?.players?.flatMap(id => {
+    const reason = readiness[id];
+    const label = { timeout: '握手超时', process_exit: '进程退出', process_unavailable: '进程不可用',
+      line_too_long: '响应超长', invalid_json: '响应不是 JSON', protocol_mismatch: '协议不匹配',
+      backpressure: '输入拥堵' }[reason];
+    return typeof reason === 'string' && reason !== 'ready'
+      ? [`${playerLabel(match.manifest, id)}（${typeof label === 'string' ? label : '未就绪'}）`] : [];
+  });
+  el['readiness-warning'].hidden = !unavailable?.length;
+  setText(el['readiness-warning'], unavailable?.length ? `机器人启动失败：${unavailable.join('、')}。` : '');
   el['human-help'].hidden = !help;
   el['human-help'].textContent = help || '';
   el.battle.classList.toggle('pointer-control', Boolean(pointerSeat(activeManifest())));
@@ -509,7 +540,14 @@ function render() {
   } else if (!menuVisible) {
     el.battle.getContext('2d')?.clearRect(0, 0, el.battle.width, el.battle.height);
   }
-  if (!menuVisible) renderScoreboard(match, record?.state, renderer, record?.kills);
+  if (!menuVisible) {
+    renderScoreboard(match, record?.state, renderer, record?.kills);
+    if (!replay && starting) {
+      const notice = el['round-notice'];
+      notice.hidden = false;
+      setText(notice, '正在启动新对局…');
+    }
+  }
   if (el.details.open) {
     renderEvents(match, Boolean(replay));
     renderKillMarkers();
@@ -524,7 +562,7 @@ function queueDraw(updateEvents = false) {
 }
 
 function liveStatus() {
-  if (replay) return;
+  if (replay || starting) return;
   if (live.done) {
     setStatus(live.result?.reason === 'stopped' ? '对局已停止。'
       : live.result ? `对局结束：${outcome(live.result, live.manifest)}。` : '对局已结束。');
@@ -579,6 +617,10 @@ function finishLive(result) {
 
 function reduceLive(record) {
   if (record.type === 'start' && record.state) {
+    const id = record.manifest?.matchId;
+    if (id && id === live.manifest?.matchId) return;
+    if (startAttempt?.matchId && startAttempt.matchId !== id) return;
+    clearStartAttempt();
     inputEpoch++;
     resetInput();
     live = blank();
@@ -594,6 +636,10 @@ function reduceLive(record) {
     updatePointer();
     if (live.events.length > 100) live.events = live.events.slice(-100);
   } else if (record.type === 'end' || record.type === 'error') {
+    if (starting) {
+      if (record.type === 'error') failStartAttempt(startAttempt, record.message || '裁判报告运行失败。');
+      return;
+    }
     finishLive(record.result);
     if (record.type === 'error' && !replay) setError(record.message || '裁判报告运行失败。');
   } else return;
@@ -1033,11 +1079,13 @@ el['match-form'].addEventListener('submit', async (event) => {
   selectedKill = null;
   menuVisible = false;
   starting = true;
+  const attempt = {};
+  startAttempt = attempt;
   setError('');
   setStatus('正在启动对局…');
   queueDraw(true);
   try {
-    await post('/api/match', {
+    const response = await post('/api/match', {
       mode,
       ...(seed === undefined ? {} : { seed }),
       ...overrides,
@@ -1046,15 +1094,12 @@ el['match-form'].addEventListener('submit', async (event) => {
       ...(custom?.teams ? { teams: custom.teams } : {}),
       ...(Object.keys(playerNames).length ? { playerNames } : {}),
     });
+    if (startAttempt !== attempt) return; // SSE can start and even finish before the HTTP response is processed.
+    if (typeof response?.matchId !== 'string') throw new Error('裁判未确认新对局。');
+    attempt.matchId = response.matchId;
+    attempt.timer = setTimeout(() => failStartAttempt(attempt, '等待新对局超时，请检查裁判连接。'), 10_000);
   } catch (error) {
-    if (!replay) {
-      if (!live.manifest || live.done) menuVisible = true;
-      setError(`开局失败：${error.message}`);
-    }
-  } finally {
-    starting = false;
-    liveStatus();
-    queueDraw();
+    failStartAttempt(attempt, `开局失败：${error.message}`);
   }
 });
 

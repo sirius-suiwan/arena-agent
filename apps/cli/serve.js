@@ -148,16 +148,25 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
         inputs=new Map(localSeats.map(id=>[id,{held:selectedGame.neutralAction(),fireQueued:false}]));
         try {
           const {directory:replayDirectory}=await storage.current();
+          let finished;
           const match=await makeMatch({game:selectedGame,root,base:replayDirectory,config:matchConfig,seed,mode,paths,roster:data.seats,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,
-            onRecord:event=>publish(event.state&&selectedGame.spectateState
-              ? {...event,state:selectedGame.spectateState(event.state)} : event)});
+            onRecord:event=>{
+              if (event.type==='end') finished=event;
+              else publish(event.state&&selectedGame.spectateState
+                ? {...event,state:selectedGame.spectateState(event.state)} : event);
+            }});
           const controller=new AbortController();
           const session={id:match.matchId,controller,game:selectedGame};
           currentMatch=session;
-          session.done=match.run({signal:controller.signal}).then(result=>({result}),error=>{
+          session.done=match.run({signal:controller.signal}).then(result=>{
+            active=false;
+            publish(finished??{type:'end',result});
+            return {result};
+          },error=>{
+            active=false;
             publish({type:'error',message:error.message});
             return {error:error.message};
-          }).finally(()=>{active=false;});
+          });
           json(res,202,{ok:true,matchId:match.matchId});
         } catch(error) {
           active=false;
