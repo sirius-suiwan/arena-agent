@@ -287,12 +287,15 @@ function drawEffects(ctx, state, effects, mode) {
       continue;
     }
     if (event.type === 'laser-path') {
+      // The viewer expresses visual age in 60 Hz units, while the rule
+      // publishes a duration in simulation ticks.
+      const fade=event.fadeTicks*60/(state.profile?.tickRate??60);
       if (!state.bullets.some(bullet => bullet.id === event.bulletId) &&
-          (age === 0 || event.fadeTicks > age)) {
+          (age === 0 || fade > age)) {
         ctx.save();
-        if (event.fadeTicks) ctx.globalAlpha = 1 - age / event.fadeTicks;
-        const path=event.fadeTicks&&age>0&&Array.isArray(event.path)
-          ? cropTrailStart(event.path,age/event.fadeTicks) : event.path;
+        if (fade) ctx.globalAlpha = 1 - age / fade;
+        const path=fade&&age>0&&Array.isArray(event.path)
+          ? cropTrailStart(event.path,age/fade) : event.path;
         drawLaserTrail(ctx, path, teamForOwner(state, mode, event.ownerId));
         ctx.restore();
       }

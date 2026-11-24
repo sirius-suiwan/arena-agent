@@ -5,12 +5,12 @@ import {drawTankFrame} from '../games/tank-trouble/renderer/index.js';
 const path = [{x:20,y:30},{x:31,y:33},{x:40,y:40}];
 const trail = {type:'laser-path',bulletId:'light',ownerId:'A',path};
 
-function draw(bullets, effects = []) {
+function draw(bullets, effects = [], rate = 60) {
   const operations = [];
   const context = new Proxy({}, {
     get: (target, key) => target[key] ?? ((...args) => operations.push([key,...args])),
   });
-  const state = {width:480,height:360,walls:[],tanks:[],pickups:[],bullets,profile:{render:{gatlingRadius:1.35}}};
+  const state = {width:480,height:360,walls:[],tanks:[],pickups:[],bullets,profile:{tickRate:rate,render:{gatlingRadius:1.35}}};
   drawTankFrame({getContext:()=>context,getBoundingClientRect:()=>({width:800,height:600})}, state, {effects});
   return operations;
 }
@@ -59,4 +59,7 @@ test('an expired reflected laser leaves only a short non-active trail',()=>{
   const event={...trail,fadeTicks:3};
   assert.ok(draw([], [{event,age:1}]).some(([op,x])=>op==='lineTo'&&x===40));
   assert.ok(!draw([], [{event,age:3}]).some(([op,x])=>op==='lineTo'&&x===40));
+  const lowRate={...event,fadeTicks:8};
+  assert.ok(draw([], [{event:lowRate,age:12}],25).some(([op,x])=>op==='lineTo'&&x===40));
+  assert.ok(!draw([], [{event:lowRate,age:20}],25).some(([op,x])=>op==='lineTo'&&x===40));
 });
