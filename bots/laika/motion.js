@@ -110,12 +110,15 @@ function forecast(me,obs,physics,horizon) {
       for(let k=0;k<4&&left>EPS;k++) {
         const dx=vx*left,dy=vy*left,w=wallContact(x,y,dx,dy,walls,r);
         const f=w?.f??1,u=x+dx*f,v=y+dy*f;
-        if(armed&&distanceToPath2(me,x,y,u,v)<travel**2) rows[t].push([x,y,u,v,HULL+r]);
+        if(t>=Math.ceil(b.safeTicks??0)&&armed&&distanceToPath2(me,x,y,u,v)<travel**2) rows[t].push([x,y,u,v,HULL+r]);
         x=u;y=v;
         if(!w) {if(sq(me,{x,y})>(HULL+r)**2) armed=true;break;}
         if(b.kind==='shrapnel') {stopped=true;break;}
         if(w.corner) {vx=-vx;vy=-vy;}
-        else {
+        else if(b.kind==='shell'||b.kind==='gatling') {
+          if(Math.abs(w.nx)>EPS) vx=-vx;
+          if(Math.abs(w.ny)>EPS) vy=-vy;
+        } else {
           const dot=vx*w.nx+vy*w.ny;
           vx-=2*dot*w.nx;vy-=2*dot*w.ny;
         }

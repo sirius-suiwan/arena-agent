@@ -26,6 +26,8 @@ test('ordinary shells are edge-triggered, 144 px/s, ten seconds and capped at te
     const s=fixture(hz);
     let r=step(s,{A:action(true)});
     assert.equal(r.state.bullets[0].vx,144/hz);
+    assert.equal(r.events.find(e=>e.type==='shot').x,s.tanks[0].x+18);
+    assert.equal(r.state.bullets[0].ownerArmed,true);
     assert.equal(r.state.bullets[0].ttl,10*hz-1);
     assert.equal(r.state.tanks[0].cooldown,0);
     r=doN(r.state,3,{A:action(true)});
@@ -37,32 +39,59 @@ test('ordinary shells are edge-triggered, 144 px/s, ten seconds and capped at te
   }
 });
 
-test('held Gatling fires 20 deterministic three-pellet bursts at the cumulative 30 Hz cadence',()=>{
-  const s=fixture(30);
-  equip(s,'gatling',20);
-  let r=step(s,{A:action(true)}),shotTimes=[];
-  assert.equal(r.events[0].type,'weapon-charge');
-  for(let i=1;i<90;i++){
-    r=step(r.state,{A:action(true)});
-    const shots=r.events.filter(e=>e.type==='shot');
-    if(!shots.length) continue;
-    shotTimes.push(r.state.tick);
-    assert.equal(shots.length,3);
-    const angles=shots.map(e=>Math.atan2(e.vy,e.vx));
-    assert.ok(angles[0]<-Math.PI/30&&Math.abs(angles[1])<Math.PI/30&&angles[2]>Math.PI/30);
-    for(const e of shots) {
-      assert.ok(Math.abs(Math.hypot(e.vx,e.vy)-176/30)<1e-12);
-      assert.ok(Math.abs(Math.atan2(e.vy,e.vx))<=18*Math.PI/180);
+test('a muzzle pressed against a wall cannot spawn a shell on the far side',()=>{
+  const s=fixture(60);
+  s.walls=[{x1:86,y1:64,x2:86,y2:160}];
+  const r=step(s,{A:action(true)});
+  const shell=r.events.find(e=>e.type==='shot');
+  assert.ok(shell.x>70&&shell.x<=83);
+  assert.ok(r.events.some(e=>e.type==='bounce'&&e.vx<0));
+  assert.ok(r.events.some(e=>e.type==='hit'&&e.tankId==='A'&&e.ownerId==='A'));
+});
+
+test('Gatling requires a fresh press and fires one pellet at a time for exactly 20 rounds',()=>{
+  for(const hz of [25,30,60]) {
+    const start=fixture(hz);
+    equip(start,'gatling',20);
+    start.tanks[0].fireHeld=true;
+    const holding=doN(start,8,{A:action(true)});
+    assert.equal(holding.state.tanks[0].weaponCharge,0);
+    assert.equal(holding.state.bullets.length,0);
+    const ready=step(holding.state,{A:action(false)}).state;
+    let r=step(ready,{A:action(true)}),shots=[];
+    assert.equal(r.events[0].type,'weapon-charge');
+    for(let i=1;i<Math.ceil(3.4*hz);i++){
+      r=step(r.state,{A:action(true)});
+      const fired=r.events.filter(e=>e.type==='shot');
+      if(!fired.length) continue;
+      assert.equal(fired.length,1);
+      const [e]=fired;
+      assert.equal(e.x,88);
+      assert.ok(Math.abs(Math.hypot(e.vx,e.vy)-176/hz)<1e-12);
+      assert.ok(Math.abs(Math.atan2(e.vy,e.vx))<=5.5*Math.PI/180);
+      shots.push(r.state.tick-ready.tick);
     }
+    assert.deepEqual(shots,Array.from({length:20},(_,i)=>Math.ceil((12+i*3)*hz/25)));
+    assert.equal(r.state.tanks[0].weaponAmmo,0);
+    assert.ok(r.state.bullets.every(b=>b.ttl<5*hz));
+    assert.equal(r.state.tanks[0].weapon,'gatling');
+    assert.equal(r.state.tanks[0].spinDownUntil,undefined);
+    r=doN(r.state,Math.ceil(1.8*hz));
+    assert.equal(r.state.tanks[0].weapon,null);
   }
-  assert.equal(shotTimes[0],12);
-  assert.equal(shotTimes.length,20);
-  assert.equal(shotTimes.at(-1),Math.ceil(12+19*3.6));
-  assert.equal(r.state.tanks[0].weaponAmmo,0);
-  assert.ok(r.state.bullets.every(b=>b.ttl<54));
-  assert.equal(r.state.tanks[0].spinDownUntil,undefined);
-  assert.ok(r.state.tanks[0].weapon==='gatling');
-  assert.equal(doN(r.state,60).state.tanks[0].weapon,null);
+});
+
+test('Gatling pellets may hit any valid tank only after the original two safe frames',()=>{
+  for(const hz of [25,30,60]) {
+    const start=fixture(hz);
+    start.tanks[1].x=155;start.tanks[1].y=100;
+    start.bullets.push({id:'safe',owner:'A',kind:'gatling',x:155,y:100,vx:0,vy:0,
+      ttl:start.profile.gatlingTtl,safeTicks:start.profile.gatlingSafeTicks,ownerArmed:true});
+    const timer=doN(start,Math.ceil(hz*2/25));
+    assert.equal(timer.state.tanks[1].alive,true);
+    const ready=step(timer.state,{});
+    assert.equal(ready.events.find(e=>e.type==='hit')?.tankId,'B');
+  }
 });
 
 test('Gatling pellets and fragments use their own narrower hit radii',()=>{
@@ -80,14 +109,14 @@ test('Gatling pellets and fragments use their own narrower hit radii',()=>{
 test('releasing gatling cancels an incomplete burst and requires spin-down before normal fire',()=>{
   const s=fixture(25);
   equip(s,'gatling',20);
-  let r=doN(s,10,{A:action(true)});
-  assert.equal(r.state.bullets.length,3);
+  let r=doN(s,12,{A:action(true)});
+  assert.equal(r.state.bullets.length,1);
   r=step(r.state,{A:action(false)});
   assert.equal(r.state.tanks[0].weaponAmmo,0);
-  assert.equal(r.state.tanks[0].spinDownUntil,56);
-  r=doN(r.state,44,{A:action(true)});
+  assert.equal(r.state.tanks[0].spinDownUntil,57);
+  r=doN(r.state,43,{A:action(true)});
   assert.equal(r.state.tanks[0].weapon,'gatling');
-  assert.equal(r.state.bullets.length,0);
+  assert.equal(r.state.bullets.length,1);
   r=step(r.state,{A:action(true)});
   assert.equal(r.state.tanks[0].weapon,null);
   r=step(step(r.state,{}).state,{A:action(true)});

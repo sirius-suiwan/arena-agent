@@ -15,7 +15,7 @@ const validProfile=profile=>['tickRate','forwardSpeed','reverseSpeed','turnSpeed
   .every(key=>Number.isFinite(profile?.[key])&&profile[key]>0);
 function kinetics(profile) {
   const {tickRate,forwardSpeed:f,reverseSpeed:b,turnSpeed:turn}=profile;
-  return {f,b,turn,ticks:n=>Math.max(1,Math.round(n*tickRate/60)),
+  return {f,b,turn,muzzle:profile.muzzleOffset??18,ticks:n=>Math.max(1,Math.round(n*tickRate/60)),
     routeTicks:n=>Math.max(1,Math.ceil(n*ROUTE_REFERENCE_STEP/f))};
 }
 const stepDistance=(throttle,physics)=>throttle*(throttle<0?physics.b:physics.f);
@@ -177,12 +177,15 @@ function hazardTrack(me,projectiles,walls,physics,arc) {
       :segments(b.x,b.y,b.vx,b.vy,life,walls,radius,b.kind==='shrapnel'?0:3);
     let t=0;
     for (const s of path) {
-      if(b.owner!==me.id||b.ownerArmed||s.bounced) tracks.push({...s,start:t});
+      const warmup=Math.max(0,Math.ceil(b.safeTicks??0)-t);
+      if(b.owner!==me.id||b.ownerArmed||s.bounced) {
+        if(warmup<s.t) tracks.push({...s,x:s.x+warmup*s.vx,y:s.y+warmup*s.vy,t:s.t-warmup,start:t+warmup});
+      }
       // Newly fired own shell: measure once its center leaves its owner's launch overlap.
       else {
         const speed=Math.hypot(s.vx,s.vy);
         if(speed>0.1) {
-          const clear=Math.max(0,(16-Math.sqrt(d2(b,me)))/speed);
+          const clear=Math.max(warmup,(16-Math.sqrt(d2(b,me)))/speed);
           if(clear<s.t) tracks.push({...s,x:s.x+clear*s.vx,y:s.y+clear*s.vy,t:s.t-clear,start:t+clear});
         }
       }
@@ -195,7 +198,7 @@ function hazardTrack(me,projectiles,walls,physics,arc) {
 // Combat defense runs a separate high-accuracy sweep on already observed
 // rounds. The muzzle/aim heuristic stays cheap; evasion cares about the
 // rounded wall ends and the judge's move-tank-before-moving-shell timing.
-function sweptWall(x,y,vx,vy,limit,walls,radius) {
+function sweptWall(x,y,vx,vy,limit,walls,radius,axisBounce=false) {
   let time=limit,nx=0,ny=0,corner=false,found=false;
   function add(t,px,py) {
     if(t< -EPS||t>time+EPS||vx*px+vy*py>=-EPS) return;
@@ -228,6 +231,7 @@ function sweptWall(x,y,vx,vy,limit,walls,radius) {
     }
   }
   if(corner) return {time,found,vx:-vx,vy:-vy};
+  if(axisBounce) return {time,found,vx:Math.abs(nx)>EPS?-vx:vx,vy:Math.abs(ny)>EPS?-vy:vy};
   const dot=2*(vx*nx+vy*ny);
   return {time,found,vx:vx-dot*nx,vy:vy-dot*ny};
 }
@@ -248,7 +252,7 @@ function candidateDefenseFrames(me,bullets,walls,horizon,physics,profile,arc) {
       // Approximate own-shell protection until it clears its initial firing
       // hull or hits its first wall. All other projectiles are already armed.
       const clear=armed?0:Math.max(0,(safeRadius+1-Math.sqrt(d2(b,me)))/speed);
-      const first=Math.max(start,clear);
+      const first=Math.max(start,clear,Math.ceil(b.safeTicks??0));
       for(let i=Math.max(0,Math.floor(first));i<horizon&&i<end-EPS;i++) {
         const from=Math.max(first,i)-start,to=Math.min(end,i+1)-start;
         if(from>=to) continue;
@@ -270,7 +274,8 @@ function candidateDefenseFrames(me,bullets,walls,horizon,physics,profile,arc) {
     }
     let x=b.x,y=b.y,vx=b.vx,vy=b.vy,start=0;
     for(let segment=0;segment<7&&start<life-EPS;segment++) {
-      const hit=sweptWall(x,y,vx,vy,life-start,affected,radius),end=start+hit.time;
+      const hit=sweptWall(x,y,vx,vy,life-start,affected,radius,b.kind==='shell'||b.kind==='gatling');
+      const end=start+hit.time;
       addTrack(x,y,vx,vy,start,end,armed);
       if(!hit.found||b.kind==='shrapnel') break;
       x+=vx*hit.time+hit.vx*EPS;
@@ -348,11 +353,15 @@ function safeShellRelease(me,action,walls,others,physics,speed) {
   const span=(horizon+1)*Math.max(physics.f,physics.b)+R+4;
   const local=nearWalls(me,walls,span);
   const launch=predictEscapeStep({x:me.x,y:me.y,a:me.angle},action,[],local,others,physics);
-  const dx=Math.cos(launch.a)*speed,dy=Math.sin(launch.a)*speed;
+  const ux=Math.cos(launch.a),uy=Math.sin(launch.a);
+  const dx=ux*speed,dy=uy*speed;
+  const muzzle=sweptWall(launch.x,launch.y,ux,uy,physics.muzzle,local,3);
+  const offset=muzzle.found?Math.max(0,muzzle.time-EPS):physics.muzzle;
+  const x=launch.x+ux*offset,y=launch.y+uy*offset;
   // Almost all shots never hit a wall in the preview, so avoid building a
   // prediction frame or trying alternate inputs for those shots.
-  if(!sweptWall(launch.x,launch.y,dx,dy,horizon,nearWalls(launch,walls,speed*horizon+4),3).found) return true;
-  const bullet={x:launch.x,y:launch.y,vx:dx,vy:dy,owner:me.id,kind:'shell',ownerArmed:false,ttl:horizon};
+  if(!sweptWall(x,y,dx,dy,horizon,nearWalls({x,y},walls,speed*horizon+4),3,true).found) return true;
+  const bullet={x,y,vx:dx,vy:dy,owner:me.id,kind:'shell',ownerArmed:offset>=R+3,ttl:horizon};
   const frames=candidateDefenseFrames(me,[bullet],walls,horizon,physics,{});
   let hull={x:me.x,y:me.y,a:me.angle};
   for(let i=0;i<horizon;i++){

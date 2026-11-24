@@ -259,6 +259,18 @@ function wallHit(x,y,dx,dy,walls,radius=BULLET_RADIUS) {
   return best;
 }
 
+function muzzle(s,t,radius=0) {
+  const dx=Math.cos(t.angle)*s.profile.muzzleOffset,dy=Math.sin(t.angle)*s.profile.muzzleOffset;
+  const crossing=wallHit(t.x,t.y,dx,dy,s.walls,radius);
+  const length=crossing?Math.max(0,crossing.t-EPS):1;
+  return {x:t.x+dx*length,y:t.y+dy*length};
+}
+
+function bounceAxes(b,normals) {
+  if(normals.some(n=>Math.abs(n.nx)>EPS)) b.vx=-b.vx;
+  if(normals.some(n=>Math.abs(n.ny)>EPS)) b.vy=-b.vy;
+}
+
 function bounceVelocity(b, normals) {
   // Combine tied perpendicular hits, e.g. an exact inner corner.
   if (normals.some(a => normals.some(c => Math.abs(a.nx*c.ny-a.ny*c.nx)>EPS))) {
@@ -312,9 +324,10 @@ function moveTanks(s, actions, events) {
   s.tanks = proposed;
 }
 
-function shell(s, events, { owner, x, y, angle, speed, ttl, kind, sourceId=null }) {
+function shell(s, events, { owner, x, y, angle, speed, ttl, kind, sourceId=null, ownerArmed=kind==='shrapnel', safeTicks=0 }) {
   const b={id:'b'+s.nextBullet++,owner,x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,ttl,
-    kind,sourceId,ownerArmed:kind==='shrapnel'};
+    kind,sourceId,ownerArmed};
+  if(safeTicks>0) b.safeTicks=safeTicks;
   s.bullets.push(b);
   events.push({type:'shot',bulletId:b.id,tankId:owner,x,y,vx:b.vx,vy:b.vy,kind,sourceId});
   return b;
@@ -415,7 +428,7 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
     }
     if (t.weapon==='gatling') {
       const spinDown=()=>{
-        t.spinDownUntil=s.tick+p.gatlingSpinDown+t.weaponCharge;
+        t.spinDownUntil=s.tick+p.gatlingSpinDown+t.weaponCharge-1;
         t.weaponAmmo=0;t.weaponGap=0;
         delete t.burstTick;
       };
@@ -428,22 +441,20 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
         continue;
       }
       if (t.burstTick===undefined) {
-        t.weaponCharge=1;t.burstTick=s.tick+p.gatlingSpin-1;
+        if(!pressed) continue;
+        t.weaponCharge=1;t.burstTick=s.tick+p.gatlingSpin+p.gatlingGap-p.tickRate/CLASSIC_FRAME_RATE-1;
         events.push({type:'weapon-charge',tankId:t.id,weapon:t.weapon,x:t.x,y:t.y});
       } else t.weaponCharge=Math.min(Math.ceil(p.gatlingSpin),t.weaponCharge+1);
       t.weaponGap=Math.max(0,Math.ceil(t.burstTick-s.tick-EPS));
       if (s.tick+EPS<t.burstTick) continue;
       if (t.weaponAmmo>0) {
         const rng={value:s.rng};
-        for(let i=0;i<p.gatlingPellets;i++) {
-          // One deterministic random pellet per cone band avoids collapsing a
-          // burst into three nearly coincident dots.
-          const spread=(2*(i+next(rng))/p.gatlingPellets-1)*p.gatlingSpread;
-          shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle+spread,speed:p.gatlingSpeed,ttl:p.gatlingTtl,kind:'gatling'});
-        }
+        const spread=(2*next(rng)-1)*p.gatlingSpread;
+        shell(s,events,{owner:t.id,...muzzle(s,t,p.gatlingRadius),angle:t.angle+spread,speed:p.gatlingSpeed,
+          ttl:p.gatlingTtl,kind:'gatling',ownerArmed:true,safeTicks:p.gatlingSafeTicks});
         s.rng=rng.value;
         t.weaponAmmo--;
-      } else events.push({type:'shot-blocked',tankId:t.id,reason:'magazine-empty',weapon:'gatling'});
+      }
       t.burstTick+=p.gatlingGap;
       t.weaponGap=Math.max(0,Math.ceil(t.burstTick-s.tick-EPS));
       continue;
@@ -488,7 +499,11 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
       events.push({type:'shot-blocked',tankId:t.id,reason:'shell-limit'});
       continue;
     }
-    shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:p.shellSpeed,ttl:p.shellTtl,kind:'shell'});
+    const origin=muzzle(s,t,BULLET_RADIUS);
+    // A clipped muzzle may lie inside the tank's own hull. Don't count
+    // its launch overlap; the first bounce or clear step arms self-hits.
+    const ownerArmed=Math.hypot(origin.x-t.x,origin.y-t.y)>=TANK_RADIUS+BULLET_RADIUS;
+    shell(s,events,{owner:t.id,...origin,angle:t.angle,speed:p.shellSpeed,ttl:p.shellTtl,kind:'shell',ownerArmed});
   }
 }
 
@@ -546,7 +561,7 @@ function advanceShell(b, s, events, impacts, deferred) {
     const wall=wallHit(b.x,b.y,dx,dy,s.walls,radius);
     let target = null;
     for (const t of s.tanks) {
-      if (!vulnerable(s,t,b.owner) || (t.id===b.owner && !b.ownerArmed)) continue;
+      if (b.safeTicks>EPS || !vulnerable(s,t,b.owner) || (t.id===b.owner && !b.ownerArmed)) continue;
       const targetRadius=TANK_RADIUS+radius;
       const overlapping=(b.x-t.x)**2+(b.y-t.y)**2<targetRadius**2-EPS;
       const f=overlapping?0:circleHit(b.x,b.y,dx,dy,t.x,t.y,targetRadius);
@@ -565,7 +580,8 @@ function advanceShell(b, s, events, impacts, deferred) {
     }
     b.x+=dx*wall.t; b.y+=dy*wall.t;
     if(b.kind==='shrapnel') return expire('wall');
-    bounceVelocity(b,wall.normals);
+    if(b.kind==='shell'||b.kind==='gatling') bounceAxes(b,wall.normals);
+    else bounceVelocity(b,wall.normals);
     b.ownerArmed=true;
     events.push({type:'bounce',bulletId:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy});
     b.x+=b.vx*EPS; b.y+=b.vy*EPS;
@@ -573,6 +589,10 @@ function advanceShell(b, s, events, impacts, deferred) {
     if (i===7 && remaining>EPS) {
       return expire('bounce-limit');
     }
+  }
+  if(b.safeTicks!==undefined) {
+    b.safeTicks--;
+    if(b.safeTicks<=EPS) delete b.safeTicks;
   }
   if(b.kind==='missile') b.age++;
   b.ttl--;

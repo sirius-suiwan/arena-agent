@@ -28,11 +28,12 @@
   },
   "shell": {
     "pixelsPerSourceFrame": 4.5,
+    "muzzleCells": 0.28125,
     "lifeSourceFrames": 250,
     "arenaLiveShells": 10
   },
   "weapons": {
-    "gatling": { "pixelsPerSourceFrame": 5.5, "lifeSourceFrames": 45, "ammo": 20, "spinSourceFrames": 10, "gapSourceFrames": 3, "spinDownBaseSourceFrames": 35, "spreadDegrees": 18, "pelletsPerBurst": 3, "collisionRadius": 1.35 },
+    "gatling": { "pixelsPerSourceFrame": 5.5, "lifeSourceFrames": 125, "ammo": 20, "spinSourceFrames": 10, "gapSourceFrames": 3, "spinDownBaseSourceFrames": 35, "spreadDegrees": 5.5, "safeSourceFrames": 2, "collisionRadius": 1.35 },
     "laser": { "pixelsPerSourceFrame": 70, "lifeSourceFrames": 8, "guideCells": 4, "bendDegreesPerSecond": 180, "maxSegmentPixels": 12, "trailPoints": 18 },
     "deathRay": { "chargeSourceFrames": 15, "activeSourceFrames": 30 },
     "missile": { "pixelsPerSourceFrame": 4.5, "lifeSourceFrames": 250, "homingDelaySourceFrames": 30, "remoteDegreesPerSourceFrame": 15 },
