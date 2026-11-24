@@ -1,6 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile,realpath} from 'node:fs/promises';
 import {basename,extname,join,resolve} from 'node:path';
+import {performance} from 'node:perf_hooks';
 import {normalizePlayerName} from '../../protocol/bot/player-name.js';
 import {runMatch} from '../../core/match.js';
 import {LocalBot} from '../../runners/local-process/index.js';
@@ -78,10 +79,12 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks,timeoutM
     const fallback=plan.human?id:id==='B'?'Laika（复刻）':'GPT-dots';
     return [id,{name:normalizePlayerName(names[id])??fallback,status:plan.human?'ready':'pending'}];
   }));
-  return {directory,matchId,startupSeats,async run({signal,onSeatReady,beforeStart}={}) {
+  return {directory,matchId,startupSeats,async run({signal,onSeatReady,beforeStart,diagnostics}={}) {
     const seats = {}, localBots = {};
     try {
+      const setupAt=diagnostics&&performance.now();
       for (const plan of plans) {
+        diagnostics?.prepareSeat(plan.id,plan.human?'human':'bot',plan.version.id);
         if (plan.human) seats[plan.id]=human[plan.id];
         else {
           const bot=new LocalBot(plan.command,[plan.path]);
@@ -89,15 +92,17 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks,timeoutM
           seats[plan.id]=plan.insight?withLaikaInsight(bot):bot;
         }
       }
+      diagnostics?.startup('processSetupMs',performance.now()-setupAt);
       const checkBots=readiness=>{
         for(const [id,bot] of Object.entries(localBots)) {
           if(readiness[id]!=='ready'||!bot.dead||signal?.aborted) continue;
           readiness[id]='process_exit';
+          diagnostics?.ready(id,'process_exit');
           onSeatReady?.(id,{name:normalizePlayerName(names[id])??id,status:'process_exit'});
         }
       };
       return await runMatch({
-        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,signal,onSeatReady,
+        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,signal,onSeatReady,diagnostics,
         beforeStart:beforeStart?async readiness=>{
           checkBots(readiness);
           const outcome=await beforeStart(readiness);

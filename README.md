@@ -47,6 +47,15 @@ node apps/cli/arena.js run --seed 42 --rounds 10
 - `match.jsonl.gz` 是 gzip 压缩的 JSON Lines。每 tick 只存提交及采纳的动作、回退原因、事件和状态 SHA-256；不重复存地图、帧状态或各席观测。浏览器在本机解压并用当前规则生成画面，不上传文件、不运行 bot。CLI `verify` 逐 tick 核对哈希及事件，首处分歧会报出 tick。旧格式不迁移、不兼容。
 - `report` 在验证后输出精简 JSON，包含版本、比分、回退、墙碰、命中和道具等统计与关键事件。分享给 Agent 时通常只需报告，不用给整局录像。加 `--tick` 可附上指定动作 tick 前后约两秒的上下文；原始日志可用 `gzip -dc` 查看。
 
+### 判断 bot 是否在抢资源
+
+网页实时对局结束时，在本工程根目录写入一份 `log/<对局 ID>.perf.json`；准备失败或取消也会写摘要。它独立于回放目录，不包含提交动作、观测内容、bot 源码或路径；`log/` 不纳入 Git。对局进行时只在内存中累积有限大小的统计，不逐 tick 写日志。若日志目录不可写，宿主会在终端提示，对局和回放仍照常完成。
+
+- **先看时间预算。** `host.dispatchBudgetMs.p05/min` 是同一 tick 交给各席的共同预算下尾，`budgetFloorTicks` 统计分发前已不足 1 ms 的 tick。再用 `observationMs`、`stepMs`、`hashMs`、`recordAndPublishMs` 和 `publishDeadlineOverrunMs` 查宿主开销。录制项包含回放压缩/写入和 SSE 发布，不含浏览器实际绘制。
+- **再看是哪一席。** `seats[席位].fallbacks / responses` 是该席回退率。`fallbackReasons.timeout` 只数动作超时，协议错误、进程退出、输入过大等另列。`responseMs` 是宿主发起调用到收到结果的时间，包括序列化、IPC、调度和内置加强层，不是 bot 独占 CPU 时间；`dispatchOffsetMs` 是该席开始投递相对共同预算计算时刻的偏移。`overBudgetResponses`／`overBudgetAccepted` 是测得耗时超过该 tick 共同预算的响应／仍被采纳的响应数，不改变裁判结果。`host.timeoutTicks`、`host.multiSeatTimeoutTicks` 分别数至少一席／至少两席同时超时的 tick，并可查看每席最长连续超时。
+- **区分启动与交战。** `seats[席位].startup.handshakeMs` 自宿主发起握手算起，`sinceSpawnMs` 是从启动本地进程到收到握手结果；`startup.countdownMs` 独立，不占动作预算。`host.wholeMatch`、`host.combat` 的 CPU 仅指整个 Node 宿主进程，不含子进程，100% 相当于一个逻辑核心。`host.eventLoopDelayMs` 是交战窗口内 10 ms 采样的事件循环间隔；p50 接近 10 ms 属于采样基线，不表示额外卡了 10 ms。
+- 每项分布附采样数 `count`、毫秒单位的近似分位数（无样本则为 `null`）。常规结束时，`host.ticks` 是已录制的交战 tick，席位动作分母通常相同；间隔样本从第二 tick 开始。比较少席和满席时尽量固定 bot、地图、种子、帧率和观看条件；同时超时和预算缩短能提供定位线索，但单场日志不能证明某个 bot 抢走了 CPU。
+
 ## 接入 bot 或游戏
 
 - [Bot JSONL 协议](protocol/bot/README.md)：每局一个常驻进程。支持受信任的本地 `.py`、`.js` 或 `.mjs` 脚本。内置 GPT-dots 和 Laika，可通过 `--bot-a` 和 `--bot-b` 替换。**本地进程不是安全沙箱。**

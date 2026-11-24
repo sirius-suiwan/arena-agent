@@ -10,6 +10,7 @@ import {botCatalog,loadBotRegistry} from './bot-registry.js';
 import {applyTankOptions,tankOptions} from './tank-options.js';
 import {randomMatchSeed} from './seed.js';
 import {openReplayStorage} from './replay-storage.js';
+import {createMatchPerformance,saveMatchPerformance} from './match-performance.js';
 
 const COUNTDOWN_MS=3000;
 const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8',json:'application/json; charset=utf-8'};
@@ -71,7 +72,8 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
     const failed=Object.keys(readiness).filter(id=>readiness[id]!=='ready');
     if(failed.length) return {winner:null,reason:'startup_failed'};
     session.phase='countdown';
-    session.deadline=performance.now()+COUNTDOWN_MS;
+    const at=performance.now();
+    session.deadline=at+COUNTDOWN_MS;
     publishStartup(session);
     try {
       for(let remaining; (remaining=session.deadline-performance.now())>0;) {
@@ -79,7 +81,7 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
       }
     } catch(error) {
       if(!signal.aborted) throw error;
-    }
+    } finally {session.diagnostics.startup('countdownMs',performance.now()-at);}
     return signal.aborted?stopped:null;
   }
   const human = id => ({act:() => {
@@ -198,11 +200,13 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
               publish(event.state&&selectedGame.spectateState
                 ? {...event,state:selectedGame.spectateState(event.state)} : event);
             }});
-          const session={id:match.matchId,controller,game:selectedGame,mode,phase:'waiting',seats:match.startupSeats};
+          const diagnostics=createMatchPerformance({matchId:match.matchId,game:selectedGame.id,
+            rulesVersion:selectedGame.version,tickRate:selectedGame.tickRate,mode,seatIds:Object.keys(match.startupSeats)});
+          const session={id:match.matchId,controller,game:selectedGame,mode,phase:'waiting',seats:match.startupSeats,diagnostics};
           currentMatch=session;
           publishStartup(session);
           session.done=match.run({
-            signal:controller.signal,
+            signal:controller.signal,diagnostics,
             onSeatReady(id,{name,status}) {
               if(controller.signal.aborted) return;
               const next=status==='ready'?{name,status:'ready'}:
@@ -213,7 +217,8 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
               publishStartup(session);
             },
             beforeStart:readiness=>gate(session,readiness)
-          }).then(result=>{
+          }).then(async result=>{
+            await saveMatchPerformance(root,diagnostics.finish(result.reason));
             active=false;
             if(session.phase==='running') {
               session.phase='finished';
@@ -224,7 +229,8 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
               publishStartup(session);
             }
             return {result};
-          },error=>{
+          },async error=>{
+            await saveMatchPerformance(root,diagnostics.finish('error'));
             active=false;
             if(session.phase==='running') session.phase='finished';
             else {
