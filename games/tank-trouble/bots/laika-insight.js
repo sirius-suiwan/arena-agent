@@ -186,7 +186,7 @@ function makeWallRecovery() {
 export function withLaikaInsight(seat) {
   const recovery=makeWallRecovery();
   return {
-    start(message) { recovery.reset();return seat.start?.(message); },
+    start(message,options) { recovery.reset();return seat.start?.(message,options); },
     async act(message,budget) {
       const began=performance.now();
       const {pickupForecast,shrinkDestination,...ordinaryMessage}=message;

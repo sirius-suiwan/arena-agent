@@ -10,6 +10,7 @@ import {recorder,REPLAY_FILENAME,verifyReplay,readReplay} from '../replay/index.
 import {makeMatch} from '../apps/cli/match-options.js';
 import {LocalBot} from '../runners/local-process/index.js';
 import {game} from '../games/tank-trouble/adapter/index.js';
+import {withLaikaInsight} from '../games/tank-trouble/bots/laika-insight.js';
 import {normalizePlayerName} from '../protocol/bot/player-name.js';
 import {jumpGame} from './fixtures/jump-game.js';
 
@@ -101,4 +102,17 @@ test('local transport discards stale tick replies and bounds action timeout',asy
     assert.deepEqual(await bot.act({type:'observe',tick:0},40),{error:'timeout'});
     assert.deepEqual(await bot.act({type:'observe',tick:1},1000),{value:{jump:true}});
   } finally {bot.close();}
+});
+
+test('stopping during startup through the built-in wrapper closes the child and records no game ticks',async t=>{
+  const bot=new LocalBot(process.execPath,[join(root,'tests/fixtures/slow-jsonl-seat.mjs')]);
+  t.after(()=>bot.close());
+  const controller=new AbortController(), recorded=[];
+  const closed=runMatch({game:jumpGame,seed:17,maxTicks:3,seats:{A:withLaikaInsight(bot)},signal:controller.signal,
+    record:r=>recorded.push(r)});
+  controller.abort();
+  assert.deepEqual(await closed,{winner:null,reason:'stopped'});
+  assert.deepEqual(recorded.map(r=>r.type),['start','end']);
+  assert.deepEqual(recorded[0].readiness,{A:'startup_aborted'});
+  assert.equal(bot.dead,true);
 });

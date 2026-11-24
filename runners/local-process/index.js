@@ -1,6 +1,9 @@
 import {spawn} from 'node:child_process';
 
 const MAX = 64 * 1024;
+// Starting a process can involve interpreter/module initialization and
+// disk/cache contention across up to eight seats. This is not a tick budget.
+const STARTUP_TIMEOUT_MS = 15_000;
 
 export class LocalBot {
   constructor(command, args = []) {
@@ -69,10 +72,20 @@ export class LocalBot {
     });
   }
 
-  async start(message) {
-    const result = await this.request(message, 'ready', 2000);
-    if (result.error) this.close();
-    return result;
+  async start(message,{signal}={}) {
+    const abort = () => this.settle({error:'startup_aborted'});
+    if (signal?.aborted) {
+      this.close();
+      return {error:'startup_aborted'};
+    }
+    signal?.addEventListener('abort',abort,{once:true});
+    try {
+      const result = await this.request(message, 'ready', STARTUP_TIMEOUT_MS);
+      if (result.error) this.close();
+      return result.error==='timeout'?{error:'startup_timeout'}:result;
+    } finally {
+      signal?.removeEventListener('abort',abort);
+    }
   }
 
   act(message, timeoutMs) { return this.request(message, 'action', timeoutMs); }

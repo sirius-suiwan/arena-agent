@@ -71,3 +71,20 @@ test('sparse mixed roster keeps bot and human seat identity at 30 Hz',async t=>{
   assert.equal((await verifyReplay(join(match.directory,REPLAY_FILENAME),{[selected.id+'@'+selected.version]:selected})).ticks,15);
 
 });
+
+test('seven slow process startups do not disable seats or extend their normal action timeout',async t=>{
+  const base=await mkdtemp(join(tmpdir(),'arena-seven-delayed-'));
+  t.after(()=>rm(base,{recursive:true,force:true}));
+  const ids=seatIds.slice(0,7);
+  const game=gameForRate(60);
+  const path=join(root,'tests/fixtures/slow-jsonl-seat.mjs');
+  const match=await makeMatch({game,root,base,seed:123,maxTicks:8,timeoutMs:50,
+    paths:Object.fromEntries(ids.map(id=>[id,path])),recorder});
+  const result=await match.run();
+  const [start,...rows]=await readLog(match.directory);
+  const ticks=rows.filter(row=>row.type==='tick');
+  assert.deepEqual(start.readiness,Object.fromEntries(ids.map(id=>[id,'ready'])));
+  assert.ok(ids.every(id=>ticks[1].input[id].fallback==='timeout'));
+  assert.ok(ids.every(id=>ticks.slice(2).some(r=>r.input[id].accepted.throttle===1)));
+  assert.deepEqual(await verifyReplay(join(match.directory,REPLAY_FILENAME),{[game.id]:game}),{ticks:8,result});
+});

@@ -36,7 +36,7 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
     let state = game.init({seed,config,players});
     const starts = await Promise.all(players.map(playerId => seats[playerId].start?.({
       type:'start', protocol:1, game:game.id, rulesVersion:game.version, playerId, tickRate:game.tickRate, config
-    })));
+    },{signal})));
     manifest.playerNames=Object.fromEntries(players.map((id,i)=>[
       id,normalizePlayerName(Object.hasOwn(playerNames,id)?playerNames[id]:null) ??
         normalizePlayerName(starts[i]?.name) ?? id
