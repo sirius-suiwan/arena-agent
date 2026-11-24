@@ -39,3 +39,8 @@ test('a cosmetic shard fades after a wall stop without needing a live projectile
   assert.equal(drawn(15),true);
   assert.equal(drawn(48),false);
 });
+
+test('remote missile is drawn pointing towards its nose instead of its current velocity',()=> {
+  const operations=draw([{kind:'remote',x:20,y:30,vx:3,vy:0,heading:0.75}]);
+  assert.deepEqual(operations.filter(([op])=>op==='rotate'),[['rotate',0.75]]);
+});

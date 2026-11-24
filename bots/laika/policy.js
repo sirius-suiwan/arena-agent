@@ -178,7 +178,8 @@ export function createLaikaPolicy() {
       :['frag','missile','remote'].includes(me.weapon)?profile.missileSpeed:profile.shellSpeed;
     const range=me.weapon==='death-ray'?Math.hypot(obs.width,obs.height)
       :me.weapon==='laser'?profile.laserSpeed*profile.laserTtl:shotSpeed*physics.ticks(106);
-    const bank=target&&(ammo||me.weapon)?chooseAim(me,ordered,board.walls,range,tick,physics):null;
+    const armedSpecial=me.weapon&&!(['frag','missile','remote'].includes(me.weapon)&&me.fragId);
+    const bank=target&&(armedSpecial||!me.weapon&&ammo)?chooseAim(me,ordered,board.walls,range,tick,physics):null;
 
     // Policy port: candidate scores compete each tick, with incumbent decay.
     // Source: Killfield laika.rs, make_decisions_and_update_goal.
@@ -242,7 +243,7 @@ export function createLaikaPolicy() {
     if(me.weapon==='remote'&&me.fragId) {
       const missile=obs.bullets.find(b=>b.id===me.fragId);
       if(missile&&target) {
-        const diff=deltaAngle(Math.atan2(target.y-missile.y,target.x-missile.x),Math.atan2(missile.vy,missile.vx));
+        const diff=deltaAngle(Math.atan2(target.y-missile.y,target.x-missile.x),missile.heading??Math.atan2(missile.vy,missile.vx));
         action={...NEUTRAL,turn:Math.abs(diff)>profile.remoteTurn/2?Math.sign(diff):0};
       }
     }

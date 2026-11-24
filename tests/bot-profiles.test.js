@@ -39,4 +39,13 @@ for (const [name,policy] of bots) {
     const me={...A,weapon:'death-ray',weaponCharge:3,fireHeld:false};
     assert.equal(policy()(observe(25,me)).fire,false);
   });
+  test(`${name} steers RC by nose direction and pursues while a homing missile owns its slot`,()=>{
+    const remote={...A,weapon:'remote',fragId:'rc',fireHeld:true};
+    const missile={id:'rc',kind:'remote',owner:'A',x:110,y:70,vx:5.76,vy:0,heading:Math.PI/2,ttl:200,ownerArmed:true};
+    const target={...B,x:110,y:155};
+    assert.deepEqual(policy()(observe(25,remote,target,[missile])),{throttle:0,turn:0,fire:false});
+    const homing={...A,weapon:'missile',fragId:'own'};
+    assert.equal(policy()(observe(25,homing)).fire,false);
+  });
+
 }

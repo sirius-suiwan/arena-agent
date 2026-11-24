@@ -68,8 +68,14 @@ export function keySeat(mode, code) {
 const angleError = (target, current) => Math.atan2(Math.sin(target - current), Math.cos(target - current));
 
 /** The pointer seat's adapter creates ordinary steering intents, not teleportation or direct position changes. */
-export function pointerAction(tank, target, fire = false) {
+export function pointerAction(tank, target, fire = false, remote = null, remoteTurn = 0.13) {
   if (!tank || tank.alive === false || !target) return { throttle: 0, turn: 0, fire };
+  if (tank.weapon === 'remote' && tank.fragId && remote?.id === tank.fragId && Number.isFinite(remote.heading)) {
+    const dx = target.x - remote.x, dy = target.y - remote.y;
+    const error = angleError(Math.atan2(dy, dx), remote.heading);
+    const turn = Math.hypot(dx, dy) < 6 || Math.abs(error) <= remoteTurn / 2 ? 0 : Math.sign(error);
+    return { throttle: 0, turn, fire };
+  }
   const dx = target.x - tank.x, dy = target.y - tank.y;
   if (Math.hypot(dx, dy) < 6) return { throttle: 0, turn: 0, fire };
   const error = angleError(Math.atan2(dy, dx), tank.angle);

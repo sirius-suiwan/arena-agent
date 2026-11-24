@@ -274,7 +274,7 @@ function candidateDefenseFrames(me,bullets,walls,horizon,physics,profile,arc) {
     }
     let x=b.x,y=b.y,vx=b.vx,vy=b.vy,start=0;
     for(let segment=0;segment<7&&start<life-EPS;segment++) {
-      const hit=sweptWall(x,y,vx,vy,life-start,affected,radius,b.kind==='shell'||b.kind==='gatling');
+      const hit=sweptWall(x,y,vx,vy,life-start,affected,radius,b.kind!=='shrapnel');
       const end=start+hit.time;
       addTrack(x,y,vx,vy,start,end,armed);
       if(!hit.found||b.kind==='shrapnel') break;
@@ -666,7 +666,7 @@ export function makePolicy() {
       :['frag','missile','remote'].includes(weapon)?profile.missileSpeed:profile.shellSpeed;
     const laserRange=profile.laserSpeed*profile.laserTtl;
     const ready=weapon?!(weapon==='gatling'&&(me.weaponGap>0||me.weaponAmmo===0)):armed;
-    const canUse=ready&&weapon!=='mine'&&!(weapon==='frag'&&me.fragId);
+    const canUse=ready&&weapon!=='mine'&&!(['frag','missile','remote'].includes(weapon)&&me.fragId);
     if(!zonePressure&&canUse&&nearbyEnemies.length&&tick>=navUntil) {
       const beam=weapon==='laser'||weapon==='death-ray';
       const canPress=!me.fireHeld;
@@ -751,7 +751,7 @@ export function makePolicy() {
     if(weapon==='remote'&&me.fragId) {
       const missile=obs.bullets.find(b=>b.id===me.fragId);
       if(missile&&nearest) {
-        const error=wrap(heading(missile,nearest)-Math.atan2(missile.vy,missile.vx));
+        const error=wrap(heading(missile,nearest)-(missile.heading??Math.atan2(missile.vy,missile.vx)));
         preferred={throttle:0,turn:Math.abs(error)>profile.remoteTurn/2?Math.sign(error):0,fire:false};
         navigating=false;
       }

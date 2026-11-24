@@ -468,7 +468,9 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
     if (['laser', 'missile', 'remote'].includes(bullet.kind) && Number.isFinite(speed) && speed > 0) {
       ctx.save();
       ctx.translate(bullet.x, bullet.y);
-      ctx.rotate(Math.atan2(bullet.vy, bullet.vx));
+      const direction = bullet.kind === 'remote' && Number.isFinite(bullet.heading)
+        ? bullet.heading : Math.atan2(bullet.vy, bullet.vx);
+      ctx.rotate(direction);
       if (bullet.kind === 'laser') {
         ctx.moveTo(-7, 0); ctx.lineTo(2, 0);
         ctx.lineCap = 'round';

@@ -115,7 +115,7 @@ function forecast(me,obs,physics,horizon) {
         if(!w) {if(sq(me,{x,y})>(HULL+r)**2) armed=true;break;}
         if(b.kind==='shrapnel') {stopped=true;break;}
         if(w.corner) {vx=-vx;vy=-vy;}
-        else if(b.kind==='shell'||b.kind==='gatling') {
+        else if(b.kind!=='shrapnel') {
           if(Math.abs(w.nx)>EPS) vx=-vx;
           if(Math.abs(w.ny)>EPS) vy=-vy;
         } else {

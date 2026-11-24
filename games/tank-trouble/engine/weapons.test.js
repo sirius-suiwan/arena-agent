@@ -319,23 +319,89 @@ test('hidden mine activates on contact (including owner), waits for everyone to 
   }
 });
 
-test('homing starts after 1.2 seconds and ignores the shooter; remote turns independently',()=>{
-  const homing=fixture(25);
-  equip(homing,'missile');
-  let r=step(homing,{A:action(true)});
-  r=doN(r.state,29);
-  assert.equal(r.state.bullets[0].targetId,null);
-  assert.equal(r.state.bullets[0].vy,0);
-  r=step(r.state,{});
-  assert.equal(r.state.bullets[0].targetId,'C');
-  assert.ok(r.state.bullets[0].vy!==0);
+test('homing reserves its slot but not its hull; navigation starts after two seconds at all rates',()=>{
+  for(const rate of [25,30,60]) {
+    const s=fixture(rate);
+    Object.assign(s.tanks[1],{x:369,y:190});
+    equip(s,'missile');
+    let r=step(s,{A:action(true)});
+    const shot=r.events.find(e=>e.kind==='missile');
+    assert.equal(shot.x,88);
+    assert.equal(r.state.tanks[0].weapon,'missile');
+    assert.equal(r.state.tanks[0].fragId,shot.bulletId);
+    assert.equal(r.state.bullets[0].ownerArmed,true);
+    r=step(r.state,{A:action(false,0,-1)});
+    assert.ok(r.state.tanks[0].x<70);
+    r=doN(r.state,2*rate-2);
+    assert.equal(r.state.bullets[0].targetId,null);
+    assert.equal(r.state.bullets[0].vy,0);
+    r=step(r.state,{});
+    assert.equal(r.state.bullets[0].targetId,'B');
+    assert.ok(r.state.bullets[0].vy>0);
+    assert.ok(Math.hypot(r.state.bullets[0].vx,r.state.bullets[0].vy)<=144/rate+1e-12);
+  }
+});
+
+test('homing chooses maze distance, uses the next cell, and prefers a non-owner only on a tie',()=>{
+  const s=fixture(25);
+  s.walls=[{x1:128,y1:0,x2:128,y2:192}];
+  Object.assign(s.tanks[0],{x:600,y:630,weapon:'missile',fragId:'homing'});
+  Object.assign(s.tanks[1],{x:162,y:95});
+  Object.assign(s.tanks[2],{x:97,y:225});
+  s.bullets=[{id:'homing',owner:'A',kind:'missile',x:115,y:95,vx:0,vy:0,ttl:20,age:50,ownerArmed:true}];
+  const tracked=step(s,{}).state.bullets[0];
+  assert.equal(tracked.targetId,'C'); // B is closer on screen, behind the long wall.
+  assert.ok(tracked.vx<0&&tracked.vy>0); // Aim at the next cell centre, behind its x.
+  const ties={...s,walls:[],tanks:[
+    {...s.tanks[0],x:86,y:85},{...s.tanks[1],x:86,y:110},{...s.tanks[2]}
+  ]};
+  assert.equal(step(ties,{}).state.bullets[0].targetId,'B');
+  const team={...ties,teams:{A:'1',B:'1',C:'2'},friendlyFire:false};
+  assert.equal(step(team,{}).state.bullets[0].targetId,'A');
+  const farther={...ties,tanks:[ties.tanks[0],{...ties.tanks[1],x:40},ties.tanks[2]]};
+  assert.equal(step(farther,{}).state.bullets[0].targetId,'A');
+});
+
+test('remote hull stays locked, steering changes heading before velocity, and walls reflect both',()=>{
   const remote=fixture(25);
   equip(remote,'remote');
-  r=step(remote,{A:action(true)});
+  let r=step(remote,{A:action(true)});
+  assert.equal(r.events.find(e=>e.kind==='remote').x,88);
   r=step(r.state,{A:action(false,1,1)});
   assert.equal(r.state.tanks[0].x,70);
   assert.equal(r.state.tanks[0].angle,0);
   const b=r.state.bullets[0];
-  assert.equal(b.kind,'remote');
-  assert.ok(Math.abs(Math.atan2(b.vy,b.vx)-375*Math.PI/180/25)<1e-12);
+  const travel=Math.atan2(b.vy,b.vx);
+  assert.ok(Math.abs(b.heading-375*Math.PI/180/25)<1e-12);
+  assert.ok(travel>0&&travel<b.heading);
+  assert.ok(Math.hypot(b.vx,b.vy)<=5.76+1e-12);
+
+  const wall={...r.state,walls:[{x1:140,y1:64,x2:140,y2:160}],
+    bullets:[{...b,x:135,y:100,vx:5,vy:0,heading:0.4}]};
+  const reflected=step(wall,{});
+  assert.ok(reflected.events.some(e=>e.type==='bounce'&&e.bulletId===b.id));
+  const after=reflected.state.bullets[0];
+  assert.ok(after.vx<0&&Math.abs(after.heading-(Math.PI-0.4))<1e-12);
+  const dead={...reflected.state,tanks:[{...reflected.state.tanks[0],alive:false},...reflected.state.tanks.slice(1)]};
+  assert.equal(step(dead,{A:action(false,1)}).state.bullets[0].heading,after.heading);
+});
+
+test('a guided missile returns the slot on either impact or expiry, without a duplicate shot',()=>{
+  for(const weapon of ['missile','remote']){
+    const s=fixture(25);
+    equip(s,weapon);
+    let r=step(s,{A:action(true)});
+    r=step(r.state,{A:action(false)});
+    r=step(r.state,{A:action(true)});
+    assert.equal(r.events.some(e=>e.type==='shot'),false);
+    const waits=r.state;
+    r=step({...waits,bullets:[{...waits.bullets[0],ttl:1}]},{});
+    assert.equal(r.state.tanks[0].weapon,null);
+    assert.equal(r.events.find(e=>e.type==='shell-expired').reason,'ttl');
+    const hit=step({...waits,tanks:[waits.tanks[0],{...waits.tanks[1],x:waits.bullets[0].x+17,
+      y:waits.bullets[0].y},waits.tanks[2]]},{});
+    assert.equal(hit.state.tanks[0].weapon,null);
+    assert.equal(hit.state.tanks[1].alive,false);
+    assert.equal(hit.events.find(e=>e.type==='shell-expired').reason,'impact');
+  }
 });

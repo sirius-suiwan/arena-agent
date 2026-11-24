@@ -1,5 +1,6 @@
 import {CLASSIC_DATA,CLASSIC_FRAME_RATE,classicProfile} from './profile.js';
 import {traceLaser} from './laser-geometry.js';
+import {accelerateMissile,homingWaypoint} from './missile-guidance.js';
 
 const CELL = 64, TANK_RADIUS = 12, BULLET_RADIUS = 3;
 const EPS = 1e-7, TAU = 2 * Math.PI;
@@ -369,29 +370,15 @@ function detonateFrag(b,s,events,deferred) {
 
 function projectileByOwner(s,t) { return s.bullets.find(b=>b.id===t.fragId); }
 
-function guideClassicMissiles(s,actions) {
+function guideClassicRemotes(s,actions) {
   const p=s.profile;
   for (const b of s.bullets) {
-    if (b.kind!=='missile'&&b.kind!=='remote') continue;
-    const old=Math.atan2(b.vy,b.vx);
-    let delta=0;
-    if (b.kind==='remote') {
-      const owner=s.tanks.find(t=>t.id===b.owner);
-      const turn=Object.hasOwn(actions,b.owner)?actions[b.owner].turn:0;
-      if (owner?.alive&&owner.fragId===b.id) delta=turn*p.remoteTurn;
-    } else if ((b.age??0)>=p.missileDelay) {
-      let target=null,nearest=Infinity;
-      for (const t of s.tanks) if (t.id!==b.owner&&vulnerable(s,t,b.owner)) {
-        const d=(t.x-b.x)**2+(t.y-b.y)**2;
-        if(d<nearest) {nearest=d;target=t;}
-      }
-      b.targetId=target?.id??null;
-      if(target) {
-        const to=Math.atan2(target.y-b.y,target.x-b.x);
-        delta=between(Math.atan2(Math.sin(to-old),Math.cos(to-old)),-p.missileTurn,p.missileTurn);
-      }
-    }
-    if(delta!==0) {b.vx=Math.cos(old+delta)*p.missileSpeed;b.vy=Math.sin(old+delta)*p.missileSpeed;}
+    if (b.kind!=='remote') continue;
+    const owner=s.tanks.find(t=>t.id===b.owner);
+    const turn=owner?.alive&&owner.fragId===b.id&&Object.hasOwn(actions,b.owner)?actions[b.owner].turn:0;
+    const angle=(b.heading??Math.atan2(b.vy,b.vx))+turn*p.remoteTurn;
+    b.heading=Math.atan2(Math.sin(angle),Math.cos(angle));
+    accelerateMissile(b,Math.cos(angle)*p.remoteAcceleration,Math.sin(angle)*p.remoteAcceleration,p.missileSpeed);
   }
 }
 
@@ -491,11 +478,11 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
     }
     if (t.weapon==='frag'||t.weapon==='remote'||t.weapon==='missile') {
       if (t.fragId===null) {
-        const position=t.weapon==='frag'?muzzle(s,t,BULLET_RADIUS):t;
-        const b=shell(s,events,{owner:t.id,x:position.x,y:position.y,angle:t.angle,speed:p.missileSpeed,ttl:p.missileTtl,kind:t.weapon});
-        if(t.weapon==='frag') b.ownerArmed=true;
-        if(t.weapon==='missile') {b.age=0;b.targetId=null;resetClassicWeapon(t);}
-        else {t.fragId=b.id;t.weaponAmmo=0;}
+        const b=shell(s,events,{owner:t.id,...muzzle(s,t,BULLET_RADIUS),angle:t.angle,speed:p.missileSpeed,
+          ttl:p.missileTtl,kind:t.weapon,ownerArmed:true});
+        t.fragId=b.id;t.weaponAmmo=0;
+        if(t.weapon==='missile') {b.age=0;b.targetId=null;}
+        if(t.weapon==='remote') b.heading=t.angle;
       } else if (t.weapon==='frag') {
         const b=projectileByOwner(s,t);
         if (b) {
@@ -554,7 +541,7 @@ function advanceShell(b, s, events, impacts, deferred) {
   function expire(reason) {
     if (b.kind==='frag') {
       detonateFrag(b,s,events,deferred);
-    } else if (b.kind==='remote') {
+    } else if (b.kind==='remote'||b.kind==='missile') {
       const owner=s.tanks.find(t=>t.id===b.owner);
       if (owner?.fragId===b.id) resetClassicWeapon(owner);
     }
@@ -563,43 +550,58 @@ function advanceShell(b, s, events, impacts, deferred) {
     return false;
   }
   const fragment=b.kind==='shrapnel';
-  if (!fragment && b.ttl<=0) return b.kind==='frag'?expire('ttl'):false;
-  let remaining = fragment?1:Math.min(1,b.ttl);
+  if (!fragment && b.ttl<=0) return ['frag','missile','remote'].includes(b.kind)?expire('ttl'):false;
+  const homing=b.kind==='missile'&&(b.age??0)+EPS>=s.profile.missileDelay;
+  const waypoint=homing?homingWaypoint(s,b,CELL,t=>vulnerable(s,t,b.owner)):null;
+  const substeps=homing?s.profile.missileSubsteps:1;
+  const dt=(fragment?1:Math.min(1,b.ttl))/substeps;
   const radius=b.kind==='gatling'?s.profile.gatlingRadius:b.kind==='shrapnel'?s.profile.fragmentRadius:BULLET_RADIUS;
-  // Sweep through the remaining fraction after each bounce; hard cap guarantees
-  // bounded work in degenerate geometry.
-  for (let i=0;i<8 && remaining>EPS;i++) {
-    const dx=b.vx*remaining, dy=b.vy*remaining;
-    const wall=wallHit(b.x,b.y,dx,dy,s.walls,radius);
-    let target = null;
-    for (const t of s.tanks) {
-      if (b.safeTicks>EPS || !vulnerable(s,t,b.owner) || (t.id===b.owner && !b.ownerArmed)) continue;
-      const targetRadius=TANK_RADIUS+radius;
-      const overlapping=(b.x-t.x)**2+(b.y-t.y)**2<targetRadius**2-EPS;
-      const f=overlapping?0:circleHit(b.x,b.y,dx,dy,t.x,t.y,targetRadius);
-      if (f!==null && (!target || f<target.f-EPS)) target={t,f};
+  for(let substep=0;substep<substeps;substep++) {
+    let remaining=dt;
+    // Sweep through the remaining fraction after each bounce; hard cap guarantees
+    // bounded work in degenerate geometry.
+    for (let i=0;i<8 && remaining>EPS;i++) {
+      const dx=b.vx*remaining, dy=b.vy*remaining;
+      const wall=wallHit(b.x,b.y,dx,dy,s.walls,radius);
+      let target = null;
+      for (const t of s.tanks) {
+        if (b.safeTicks>EPS || !vulnerable(s,t,b.owner) || (t.id===b.owner && !b.ownerArmed)) continue;
+        const targetRadius=TANK_RADIUS+radius;
+        const overlapping=(b.x-t.x)**2+(b.y-t.y)**2<targetRadius**2-EPS;
+        const f=overlapping?0:circleHit(b.x,b.y,dx,dy,t.x,t.y,targetRadius);
+        if (f!==null && (!target || f<target.f-EPS)) target={t,f};
+      }
+      if (target && (!wall || target.f < wall.t-EPS)) {
+        b.x+=dx*target.f; b.y+=dy*target.f;
+        impacts.push({bullet:b,tankId:target.t.id,x:b.x,y:b.y});
+        return b.kind==='frag'||b.kind==='remote'||b.kind==='missile'?expire('impact'):false;
+      }
+      if (!wall) {
+        b.x+=dx; b.y+=dy;
+        const owner=s.tanks.find(t=>t.id===b.owner);
+        if (Math.hypot(b.x-owner.x,b.y-owner.y)>TANK_RADIUS+radius+EPS) b.ownerArmed=true;
+        break;
+      }
+      b.x+=dx*wall.t; b.y+=dy*wall.t;
+      if(b.kind==='shrapnel') return expire('wall');
+      bounceAxes(b,wall.normals);
+      if(b.kind==='remote') {
+        const angle=b.heading??Math.atan2(dy,dx);
+        const direction={vx:Math.cos(angle),vy:Math.sin(angle)};
+        bounceAxes(direction,wall.normals);
+        b.heading=Math.atan2(direction.vy,direction.vx);
+      }
+      b.ownerArmed=true;
+      events.push({type:'bounce',bulletId:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy});
+      b.x+=b.vx*EPS; b.y+=b.vy*EPS;
+      remaining*=1-wall.t;
+      if (i===7 && remaining>EPS) {
+        return expire('bounce-limit');
+      }
     }
-    if (target && (!wall || target.f < wall.t-EPS)) {
-      b.x+=dx*target.f; b.y+=dy*target.f;
-      impacts.push({bullet:b,tankId:target.t.id,x:b.x,y:b.y});
-      return b.kind==='frag'||b.kind==='remote'?expire('impact'):false;
-    }
-    if (!wall) {
-      b.x+=dx; b.y+=dy;
-      const owner=s.tanks.find(t=>t.id===b.owner);
-      if (Math.hypot(b.x-owner.x,b.y-owner.y)>TANK_RADIUS+radius+EPS) b.ownerArmed=true;
-      break;
-    }
-    b.x+=dx*wall.t; b.y+=dy*wall.t;
-    if(b.kind==='shrapnel') return expire('wall');
-    if(b.kind==='shell'||b.kind==='gatling') bounceAxes(b,wall.normals);
-    else bounceVelocity(b,wall.normals);
-    b.ownerArmed=true;
-    events.push({type:'bounce',bulletId:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy});
-    b.x+=b.vx*EPS; b.y+=b.vy*EPS;
-    remaining*=1-wall.t;
-    if (i===7 && remaining>EPS) {
-      return expire('bounce-limit');
+    if(waypoint) {
+      const impulse=s.profile.missileAcceleration*dt;
+      accelerateMissile(b,waypoint.x<b.x?-impulse:impulse,waypoint.y<b.y?-impulse:impulse,s.profile.missileSpeed);
     }
   }
   if(b.safeTicks!==undefined) {
@@ -607,7 +609,7 @@ function advanceShell(b, s, events, impacts, deferred) {
     if(b.safeTicks<=EPS) delete b.safeTicks;
   }
   if(fragment) return true;
-  if(b.kind==='missile') b.age++;
+  if(b.kind==='missile') b.age=(b.age??0)+1;
   b.ttl--;
   return b.ttl>0 || expire('ttl');
 }
@@ -802,7 +804,7 @@ export function step(state, actions) {
     mines:state.mines.map(m=>({...m}))};
   const events=[], impacts=[], deferred=[];
   moveTanks(s,actions,events);
-  guideClassicMissiles(s,actions);
+  guideClassicRemotes(s,actions);
   fireClassicWeapons(s,actions,events,impacts,deferred);
   s.bullets=s.bullets.filter(b=>advanceShell(b,s,events,impacts,deferred));
   advanceClassicMines(s,events,deferred);

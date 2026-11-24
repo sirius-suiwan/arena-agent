@@ -36,7 +36,7 @@
     "gatling": { "pixelsPerSourceFrame": 5.5, "lifeSourceFrames": 125, "ammo": 20, "spinSourceFrames": 10, "gapSourceFrames": 3, "spinDownBaseSourceFrames": 35, "spreadDegrees": 5.5, "safeSourceFrames": 2, "collisionRadius": 1.35 },
     "laser": { "pixelsPerSourceFrame": 70, "lifeSourceFrames": 8, "guideCells": 4, "bendDegreesPerSecond": 180, "maxSegmentPixels": 12, "trailPoints": 18 },
     "deathRay": { "chargeSourceFrames": 15, "activeSourceFrames": 30 },
-    "missile": { "pixelsPerSourceFrame": 4.5, "lifeSourceFrames": 250, "homingDelaySourceFrames": 30, "remoteDegreesPerSourceFrame": 15 },
+    "missile": { "pixelsPerSourceFrame": 4.5, "lifeSourceFrames": 250, "homingDelaySourceFrames": 50, "guidanceIntervals": 5, "homingSourceImpulse": 0.12, "remoteSourceImpulseRatio": 0.35, "remoteDegreesPerSourceFrame": 15 },
     "mine": { "ammo": 3, "armSourceFrames": 20, "fuseSourceFrames": 6, "pixelsPerSourceFrame": 5.5, "dampingPerSourceFrame": 0.75, "stopSourcePixelsPerFrame": 0.6, "contactRadiusCells": 0.125, "visibilityStepPerSourceFrame": 0.1 },
     "fragment": { "count": 40, "basePixelsPerSourceFrame": 4, "spreadPixelsPerSourceFrame": 4.5, "fadeSourceFrames": 20 }
   },
@@ -47,8 +47,7 @@
   "arena": {
     "settlementSeconds": 3,
     "intermissionSeconds": 1,
-    "zoneGraceSeconds": 2,
-    "homingSteerDegreesPerSecond": 165
+    "zoneGraceSeconds": 2
   },
   "render": {
     "tankScale": 1,

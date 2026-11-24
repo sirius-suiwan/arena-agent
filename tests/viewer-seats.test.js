@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {humanControls,humanHelp,keyboardAction,keySeat,pointerSeat} from '../viewer/input.js';
+import {humanControls,humanHelp,keyboardAction,keySeat,pointerAction,pointerSeat} from '../viewer/input.js';
 import {tankSeatColor} from '../games/tank-trouble/renderer/index.js';
 
 test('control routing follows assignments rather than fixed seat letters',()=>{
@@ -28,4 +28,12 @@ test('all eight HUD colors are distinct and seats keep their color in a sparse l
   const colors=[...'ABCDEFGH'].map((id,index)=>tankSeatColor(index,'custom',id));
   assert.equal(new Set(colors).size,8);
   assert.equal(tankSeatColor(0,'custom','H'),colors[7]);
+});
+
+
+test('pointer turns the remote missile relative to its nose, not its parked hull',()=>{
+  const parked={x:100,y:80,angle:Math.PI,alive:true,weapon:'remote',fragId:'r'};
+  const missile={id:'r',x:160,y:80,heading:0};
+  assert.deepEqual(pointerAction(parked,{x:200,y:110},false,missile,0.12),{throttle:0,turn:1,fire:false});
+  assert.deepEqual(pointerAction(parked,{x:200,y:81},true,missile,0.12),{throttle:0,turn:0,fire:true});
 });

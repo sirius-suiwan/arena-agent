@@ -331,7 +331,8 @@ function renderScoreboard(match, state, renderer, kills = {}) {
     if (weapon || shield) {
       const quantity = Number.isSafeInteger(tank?.weaponAmmo) && tank.weaponAmmo > 0 ? ` ×${tank.weaponAmmo}`
         : equipped === 'frag' && tank?.fragId ? ' · 可引爆'
-        : equipped === 'remote' && tank?.fragId ? ' · 转向操控' : '';
+        : equipped === 'remote' && tank?.fragId ? ' · 转向操控'
+        : equipped === 'missile' && tank?.fragId ? ' · 导弹飞行中' : '';
       setText(row.weaponText, [weapon ? `${weapon}${quantity}` : '', shield ? '护盾 ×1' : ''].filter(Boolean).join(' · '));
       row.equip.title = [weapon ? `已装备${weapon}` : '', shield ? '护盾可抵消一次伤害' : ''].filter(Boolean).join('，');
       const badge = weapon ? equipped : 'shield';
@@ -1204,7 +1205,9 @@ function updatePointer() {
   if (!seat || (!pointerTarget && !pointerPressed && !lastInput.has(seat))) return;
   const state = live.frames.at(-1)?.state;
   const tank = state?.tanks?.find(({ id }) => id === seat);
-  sendInput(seat, pointerAction(tank, pointerTarget, pointerPressed));
+  const remote = tank?.weapon === 'remote' && tank.fragId
+    ? state.bullets?.find(({ id }) => id === tank.fragId) : null;
+  sendInput(seat, pointerAction(tank, pointerTarget, pointerPressed, remote, state?.profile?.remoteTurn));
 }
 
 function setPointerTarget(event) {
