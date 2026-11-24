@@ -13,7 +13,7 @@ test('chooses true rate-specific profiles and equal wall-time movement and turni
   const seed=44;
   for(const g of variants){
     const hz=g.tickRate;
-    assert.equal(g.version,'9-'+hz);
+    assert.equal(g.version,'10-'+hz);
     const base=g.init({seed,players,config:{pickups:false}});
     assert.equal(base.config.maxTicks,60*hz);
     assert.equal(base.shellLimit,10);
@@ -106,7 +106,7 @@ test('honors exact pickup interval and shell speed overrides, reschedules at cap
   assert.equal(after.state.nextPickupAt,1);
 });
 
-test('all seven standard Classic crate categories are reachable in seeded normal play',()=>{
+test('all eight standard Arena crate categories are reachable in seeded normal play',()=>{
   const kinds=new Set();
   for(let seed=0;seed<100;seed++){
     const start=gameForRate(25).init({seed,players,config:{pickupInterval:1}});

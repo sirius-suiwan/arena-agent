@@ -202,7 +202,8 @@ export function createLaikaPolicy() {
       }
       if(retreat>=0) offer('flee',0.7,board.center(paths.first[retreat]));
     }
-    if(!me.weapon&&target) for(const p of obs.pickups??[]) {
+    if(target) for(const p of obs.pickups??[]) {
+      if(p.type==='shield'?me.shield:me.weapon) continue;
       const dest=board.cell(p), hops=paths.d[dest];
       if(hops>=0&&hops<=4) offer('crate',0.37-hops*0.04,hops===0?p:board.center(paths.first[dest]));
     }

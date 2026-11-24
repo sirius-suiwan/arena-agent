@@ -1,6 +1,6 @@
 {
   "source": {
-    "description": "Classic v4.03 and archived 4399 v4.0; tank movement from Classic GameTank. Arena uses its own engine.",
+    "description": "Archived 4399 v4.0 weapon behavior, cross-checked with Classic v4.03; tank movement from Classic GameTank. Arena uses its own engine.",
     "classicGame": "https://classic.tanktrouble.com/includes/TankTrouble_v4.03.swf",
     "classicTank": "https://classic.tanktrouble.com/Assets/GameTank.swf",
     "archive4399": "https://github.com/ruffle-rs/ruffle/issues/15017",

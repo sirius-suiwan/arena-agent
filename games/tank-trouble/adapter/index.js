@@ -52,7 +52,7 @@ function makeClassic(tickRate) {
   const profile=classicProfile(tickRate);
   const round=Object.freeze({
     id:'tank-trouble',
-    version:'9-'+tickRate,
+    version:'10-'+tickRate,
     tickRate,
     init:input=>classic.init(input,tickRate),
     observe,

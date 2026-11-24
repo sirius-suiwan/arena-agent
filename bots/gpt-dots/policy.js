@@ -586,7 +586,8 @@ export function makePolicy() {
     const safe=zoneNavigation(obs.zone,me,map,costs,tick,physics),zonePressure=safe?.pressure===true;
     // Empty weapon slot: gather a reachable crate before chasing. A slightly
     // longer path to a strong weapon beats an equally close mine, not all mines.
-    const supplies=me.weapon||zonePressure?[]:(obs.pickups??[]).filter(p=>{
+    const supplies=zonePressure?[]:(obs.pickups??[]).filter(p=>{
+      if(p.type==='shield'?me.shield:me.weapon) return false;
       const cost=costs[map.index(p)];
       return cost>=0&&cost<=8&&(!safe||safe.crateSafe(p,cost*physics.routeTicks(45)+physics.ticks(35)));
     }).sort((a,b)=>{
