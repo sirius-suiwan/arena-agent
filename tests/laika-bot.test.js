@@ -75,3 +75,32 @@ test('bot returns a safe neutral action without its declared simulation profile'
     assert.deepEqual(createLaikaPolicy()(ob({profile})),{throttle:0,turn:0,fire:false});
   }
 });
+
+test('Laika steers around a wall end before crossing an otherwise open cell edge',()=>{
+  const policy=createLaikaPolicy(),profile=classicProfile(60);
+  const wall={x1:64,y1:64,x2:64,y2:128};
+  const target={x:96,y:32};
+  const distant={...enemy,x:580,y:235};
+  let tank={...me,x:51,y:61,angle:Math.atan2(target.y-61,target.x-51)};
+  for(let i=0;i<100&&tank.x<75;i++) {
+    const action=policy(ob({tick:i,roundTick:i,width:640,profile,tanks:[tank,distant],walls:[wall],pickups:[target]}));
+    if(i===0) assert.deepEqual(action,{throttle:0,turn:-1,fire:false});
+    const angle=tank.angle+action.turn*profile.turnSpeed;
+    const distance=action.throttle*(action.throttle<0?profile.reverseSpeed:profile.forwardSpeed);
+    const x=tank.x+distance*Math.cos(angle),y=tank.y+distance*Math.sin(angle);
+    assert.ok((x-64)**2+(y-Math.min(128,Math.max(64,y)))**2>=12**2);
+    tank={...tank,x,y,angle};
+  }
+  assert.ok(tank.x>=75,'bot should cross the opening, not just stop safely');
+});
+
+test('Laika sidesteps a far incoming laser but keeps the same shot if it is moving away',()=>{
+  const profile=classicProfile(60);
+  const hull={...me,x:220,y:100,angle:Math.PI/2};
+  const other={...enemy,x:220,y:230};
+  const beam={kind:'laser',owner:'B',x:20,y:100,heading:0,vx:profile.laserSpeed,vy:0,ttl:19};
+  const state=ob({width:384,tanks:[hull,other],profile,bullets:[beam]});
+  assert.deepEqual(createLaikaPolicy()(state),{throttle:1,turn:0,fire:false});
+  const away={...beam,heading:Math.PI,vx:-beam.vx};
+  assert.deepEqual(createLaikaPolicy()({...state,bullets:[away]}),{throttle:0,turn:0,fire:true});
+});

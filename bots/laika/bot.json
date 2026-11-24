@@ -5,5 +5,5 @@
   "name": "Laika（复刻）",
   "game": "tank-trouble",
   "entry": "bot.js",
-  "files": ["policy.js"]
+  "files": ["policy.js", "motion.js"]
 }

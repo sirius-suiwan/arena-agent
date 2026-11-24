@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Adapted from Cichlider's Killfield Laika at 0ccc4ab15fa9888687e743574e0258260ee00e77.
 // See LICENSE for the original notice and limitations. This is not Sublab's Laika.
+import {clearDrive,dodgeMotion,escapeMotion,legalPose} from './motion.js';
+
 const TAU = 2 * Math.PI;
 const CELL = 64;
 const RADIUS = 12;
 const EPS = 1e-5;
-const LOOKAHEAD = 16;
 const NEUTRAL = { throttle:0,turn:0,fire:false };
 const deltaAngle = (target, now) => ((target-now + Math.PI + TAU) % TAU) - Math.PI;
 const sqDist = (a,b) => (a.x-b.x)**2 + (a.y-b.y)**2;
@@ -51,10 +52,6 @@ function routes(board,home) {
     }
   }
   return {d,first};
-}
-
-function validPose(p,walls) {
-  return !walls.some(w=>(p.x-clamp(p.x,w.x1,w.x2))**2+(p.y-clamp(p.y,w.y1,w.y2))**2 < RADIUS**2);
 }
 
 // Fast point-ray approximation for choosing shots and predicting danger. It
@@ -112,60 +109,12 @@ function shotTrace(me,angle,enemies,walls,range,{radius=3,through=false}={}) {
   return {};
 }
 
-function dangerSamples(me,bullets,walls,physics) {
-  const threats=bullets.filter(b=>sqDist(me,b)<162**2&&Number.isFinite(b.vx)&&Number.isFinite(b.vy))
-    .sort((a,b)=>sqDist(me,a)-sqDist(me,b)).slice(0,12);
-  const horizon=physics.ticks(LOOKAHEAD);
-  const samples=Array.from({length:horizon},()=>[]);
-  for (const b of threats) {
-    let p=b, vx=b.vx,vy=b.vy,armed=b.owner!==me.id||b.ownerArmed===true;
-    const speed=Math.hypot(vx,vy);
-    if (speed<EPS) continue;
-    for (let i=0;i<horizon&&i<(b.ttl??horizon);i++) {
-      let dx=vx/speed,dy=vy/speed;
-      const radius=b.kind==='laser'?0:3;
-      const w=wallCross(p,dx,dy,speed,walls,radius);
-      if(w.flipX||w.flipY) {
-        if(b.kind==='shrapnel') break;
-        p={x:p.x+dx*w.distance,y:p.y+dy*w.distance};
-        if(w.flipX) vx=-vx;
-        if(w.flipY) vy=-vy;
-        dx=vx/speed;dy=vy/speed;
-        p={x:p.x+dx*(speed-w.distance+EPS*2),y:p.y+dy*(speed-w.distance+EPS*2)};
-        armed=true;
-      } else p={x:p.x+vx,y:p.y+vy};
-      if (sqDist(p,me)>15**2) armed=true;
-      if(armed) samples[i].push(p);
-    }
-  }
-  return samples;
-}
-
-function safestMotion(me,walls,samples,goal,physics) {
-  let best=null;
-  for (const [throttle,turn] of [[1,0],[-1,0],[1,-1],[1,1],[-1,-1],[-1,1],[0,-1],[0,1],[0,0]]) {
-    let p=me,heading=me.angle,risk=0;
-    for(let i=0;i<samples.length;i++) {
-      const reaction=i<physics.ticks(8);
-      if (reaction) {
-        heading+=physics.turn*turn;
-        const step=stepDistance(throttle,physics);
-        const q={x:p.x+step*Math.cos(heading),y:p.y+step*Math.sin(heading)};
-        if(validPose(q,walls)) p=q;
-      }
-      for (const b of samples[i]) {
-        const d=Math.sqrt(sqDist(p,b));
-        risk+=Math.max(0,31-d)/(i+4) + (d<17?4:0);
-      }
-    }
-    const cost=risk+(goal ? Math.sqrt(sqDist(p,goal))*0.0008 : 0) + (throttle===0?0.02:0);
-    if (!best||cost<best.cost) best={throttle,turn,cost};
-  }
-  return best;
-}
-
-function drive(me,goal,walls,physics) {
+function drive(me,goal,board,home,obs,physics,recovery) {
+  const walls=board.walls;
   if (!goal||sqDist(me,goal)<9**2) return {...NEUTRAL};
+  const center=board.center(home);
+  if(board.cell(goal)!==home&&sqDist(me,center)>7**2&&!clearDrive(me,goal,walls)) goal=center;
+  if(recovery) return escapeMotion(me,sqDist(me,center)>7**2?center:goal,obs,physics,recovery.turn);
   const desired=Math.atan2(goal.y-me.y,goal.x-me.x);
   let diff=deltaAngle(desired,me.angle),throttle=1;
   if(Math.abs(diff)>Math.PI*0.58) {
@@ -174,7 +123,8 @@ function drive(me,goal,walls,physics) {
   const turn=Math.abs(diff)<Math.max(0.035,physics.turn/2)?0:Math.sign(diff);
   const heading=me.angle+physics.turn*turn, step=stepDistance(throttle,physics);
   const next={x:me.x+step*Math.cos(heading),y:me.y+step*Math.sin(heading)};
-  if(Math.abs(diff)>0.34||!validPose(next,walls)) throttle=0;
+  if(Math.abs(diff)>0.34) throttle=0;
+  else if(!legalPose(next,walls)) return escapeMotion(me,goal,obs,physics);
   return {throttle,turn,fire:false};
 }
 
@@ -198,20 +148,27 @@ function chooseAim(me,enemies,walls,range,tick,physics) {
 }
 
 export function createLaikaPolicy() {
-  let round=-1,board=null,prior=null,blocked=0,unwedge=0,incumbent=null,aggression=0.5;
+  let round=-1,board=null,prior=null,blocked=0,unwedge=null,incumbent=null,aggression=0.5;
   return (obs) => {
     if (!Array.isArray(obs?.tanks)||!Array.isArray(obs.walls)||!Array.isArray(obs.bullets)||!validProfile(obs.profile)) return {...NEUTRAL};
     if (obs.round!==round||!board) {
-      round=obs.round;board=newBoard(obs);prior=null;blocked=0;unwedge=0;incumbent=null;aggression=0.5;
+      round=obs.round;board=newBoard(obs);prior=null;blocked=0;unwedge=null;incumbent=null;aggression=0.5;
     }
     const tick=obs.roundTick??obs.tick??0;
     const me=obs.tanks.find(t=>t.id===obs.playerId&&t.alive);
     if (!me||obs.phase==='intermission') return {...NEUTRAL};
     const profile=obs.profile, physics=kinetics(profile);
     const enemies=obs.tanks.filter(t=>t.alive&&t.id!==me.id);
-    if(prior?.throttle) blocked=sqDist(prior,me)<0.2?blocked+1:0;
-    else blocked=0;
-    if(blocked>=physics.ticks(4)){unwedge=physics.ticks(10);blocked=0;}
+    // Only count genuine attempts that failed; waiting to shoot or rotate
+    // does not imply a wall stop. Hold a local escape temporarily rather
+    // than alternating reverse turns by global tick parity.
+    if(prior?.throttle&&sqDist(prior,me)<0.2) blocked++;
+    else if(prior&&sqDist(prior,me)>1) blocked=0;
+    else blocked=Math.max(0,blocked-1);
+    if(unwedge&&(tick>=unwedge.until||sqDist(me,unwedge.origin)>=12**2)) unwedge=null;
+    if(!unwedge&&blocked>=Math.max(3,physics.ticks(6))) {
+      unwedge={origin:me,until:tick+physics.ticks(20),turn:0};blocked=0;
+    }
     const home=board.cell(me),paths=routes(board,home);
     const liveShells=obs.bullets.filter(b=>b.owner===me.id&&b.kind==='shell').length;
     const ammo=liveShells<profile.shellLimit;
@@ -254,7 +211,8 @@ export function createLaikaPolicy() {
     }
     goals.sort((a,b)=>b.priority-a.priority);
     const goal=goals[0];incumbent=goal;
-    let action=drive(me,goal?.point,board.walls,physics);
+    let action=drive(me,goal?.point,board,home,obs,physics,unwedge);
+    if(unwedge&&action.turn) unwedge.turn=action.turn;
     if (goal?.kind==='shoot') {
       const diff=deltaAngle(goal.aim,me.angle), turn=Math.abs(diff)<Math.max(0.03,physics.turn/2)?0:Math.sign(diff);
       action={throttle:0,turn,fire:false};
@@ -276,15 +234,9 @@ export function createLaikaPolicy() {
       action.fire=Boolean(!me.fireHeld&&target&&sqDist(me,target)<110**2&&
         Math.abs(deltaAngle(Math.atan2(target.y-me.y,target.x-me.x),me.angle))>Math.PI*0.53);
     }
-    if(unwedge>0) {
-      unwedge--;
-      action={...NEUTRAL,throttle:-1,turn:tick%physics.ticks(20)<physics.ticks(10)?1:-1};
-    }
-    const samples=dangerSamples(me,obs.bullets,board.walls,physics);
-    if (samples.some(row=>row.some(b=>sqDist(me,b)<27**2))) {
-      const dodge=safestMotion(me,board.walls,samples,goal?.point,physics);
-      action={throttle:dodge.throttle,turn:dodge.turn,fire:false};
-    }
+    const hullLocked=me.weapon==='remote'&&me.fragId!=null ||
+      me.weapon==='death-ray'&&(me.weaponCharge>0&&me.beamUntil===undefined||me.beamUntil>tick);
+    if(!hullLocked) action=dodgeMotion(me,obs,action,physics);
     if(action.fire&&me.fireHeld&&!sustainingGatling) action.fire=false;
     if(me.weapon==='gatling'&&me.weaponAmmo===0) action.fire=false;
     if(me.weapon==='remote'&&me.fragId) {
