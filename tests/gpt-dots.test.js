@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {makePolicy} from '../bots/gpt-dots/policy.js';
-import {game} from '../games/tank-trouble/adapter/index.js';
+import {game,gameForRate} from '../games/tank-trouble/adapter/index.js';
 import {classicProfile} from '../games/tank-trouble/engine/profile.js';
 
 const A={id:'A',x:60,y:60,angle:0,alive:true,weapon:null};
@@ -173,4 +173,39 @@ test('GPT-dots projects the new laser arc through an interior wall',()=>{
 test('an alone invulnerable survivor without crates or hazards stays neutral',()=>{
   const obs=observation({tanks:[{...A,invulnerable:true},{...B,alive:false}]});
   assert.deepEqual(makePolicy()(obs),{throttle:0,turn:0,fire:false});
+});
+
+test('GPT-dots vetoes a round-wall-tip ricochet before firing but keeps steering',()=>{
+  const rate=gameForRate(60);
+  const start=rate.init({seed:53,players:['A','B'],config:{cols:4,rows:4}});
+  // The line prediction sees a bank shot but the rounded wall endpoint
+  // sends the shell back across the launch hull before it can escape.
+  start.walls=[{x1:64,y1:0,x2:64,y2:64}];
+  Object.assign(start.tanks[0],{x:50,y:68,angle:-Math.PI/36});
+  Object.assign(start.tanks[1],{x:113,y:52});
+  const decision=makePolicy()(rate.observe(start,'A'));
+  assert.deepEqual(decision,{throttle:0,turn:1,fire:false});
+  let old=start;const impacts=[];
+  for(let i=0;i<7;i++){
+    const n=rate.step(old,{A:{throttle:0,turn:0,fire:i===0}});
+    old=n.state;impacts.push(...n.events);
+  }
+  assert.ok(impacts.some(e=>e.type==='destroyed'&&e.tankId==='A'&&e.ownerId==='A'));
+  const clean=rate.observe(start,'A');
+  clean.walls=[];
+  clean.tanks[0].angle=0;
+  clean.tanks[1].y=68;
+  assert.equal(makePolicy()(clean).fire,true);
+});
+
+test('GPT-dots waits before exposing its own hull to an airburst',()=>{
+  const profile=classicProfile(60);
+  const me={...A,x:24,y:96,weapon:'frag',fragId:'frag-a'};
+  const state=observation({
+    profile,tanks:[me,{...B,x:128,y:112}],
+    bullets:[{id:'frag-a',owner:'A',kind:'frag',x:111,y:96,vx:2.4,vy:0,ttl:100,ownerArmed:true}],
+  });
+  assert.equal(makePolicy()(state).fire,false);
+  const behindWall={...state,walls:[{x1:64,y1:64,x2:64,y2:128}]};
+  assert.equal(makePolicy()(behindWall).fire,true);
 });

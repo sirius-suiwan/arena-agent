@@ -340,6 +340,42 @@ function tacticalDodge(me,preferred,bullets,mapWalls,enemies,zone,physics,profil
   return beam[0]?.first??null;
 }
 
+// The aiming ray is approximate; before committing an ordinary shot, check
+// its rounded-wall ricochet against the hull's intended short follow-through.
+// This only vetoes the trigger, not movement or the normal defensive search.
+function safeShellRelease(me,action,walls,others,physics,speed) {
+  const horizon=physics.ticks(30),stride=physics.ticks(6);
+  const span=(horizon+1)*Math.max(physics.f,physics.b)+R+4;
+  const local=nearWalls(me,walls,span);
+  const launch=predictEscapeStep({x:me.x,y:me.y,a:me.angle},action,[],local,others,physics);
+  const dx=Math.cos(launch.a)*speed,dy=Math.sin(launch.a)*speed;
+  // Almost all shots never hit a wall in the preview, so avoid building a
+  // prediction frame or trying alternate inputs for those shots.
+  if(!sweptWall(launch.x,launch.y,dx,dy,horizon,nearWalls(launch,walls,speed*horizon+4),3).found) return true;
+  const bullet={x:launch.x,y:launch.y,vx:dx,vy:dy,owner:me.id,kind:'shell',ownerArmed:false,ttl:horizon};
+  const frames=candidateDefenseFrames(me,[bullet],walls,horizon,physics,{});
+  let hull={x:me.x,y:me.y,a:me.angle};
+  for(let i=0;i<horizon;i++){
+    hull=predictEscapeStep(hull,i<stride?action:{...action,turn:0},frames[i],local,others,physics);
+    if(hull.hit) return false;
+  }
+  return true;
+}
+
+// Fragments are launched in a full circle. Prefer detonating from cover or
+// far enough away to have time to react, not merely behind the warhead.
+function coveredFromFrag(bomb,me,walls,physics,profile) {
+  const radius=profile.fragmentRadius??3;
+  const flight=profile.fragmentSpeed??300/profile.tickRate;
+  const exposure=R+radius+flight*physics.ticks(23);
+  const dx=me.x-bomb.x,dy=me.y-bomb.y,distance=Math.hypot(dx,dy);
+  if(distance>=exposure) return true;
+  const beforeHull=Math.max(0,1-(R+radius+3)/distance);
+  if(beforeHull<=0) return false;
+  const local=nearWalls(bomb,walls,distance+radius);
+  return sweptWall(bomb.x,bomb.y,dx,dy,beforeHull,local,radius).found;
+}
+
 function routeAction(me,goal,walls,physics) {
   if(!goal||d2(me,goal)<8**2) return neutral();
   let da=wrap(heading(me,goal)-me.angle),throttle=1;
@@ -442,7 +478,7 @@ function aimPlan(me,enemies,walls,weapon,speed,tick,physics,laserRange,arc) {
 // A ready cannon doesn't need a dedicated stop-and-aim phase when the next
 // legal pose already has a clean close shot. Steering and displacement happen
 // before firing in Classic; trace from that pose, not from the observed barrel.
-function closeAttack(me,preferred,enemies,walls,obstacles,physics,speed,pursuingCrate) {
+function closeAttack(me,preferred,enemies,walls,obstacles,physics,speed,pursuingCrate,allowShot) {
   const close=enemies.filter(enemy=>d2(me,enemy)<150**2);
   if(!close.length) return null;
   const options=[preferred];
@@ -460,7 +496,7 @@ function closeAttack(me,preferred,enemies,walls,obstacles,physics,speed,pursuing
     if(!hit||hit.hit===me.id||!close.some(t=>t.id===hit.hit)) continue;
     // Avoid committing to long speculative banks or stopping for crate-side pokes.
     if(hit.bounced&&hit.travel>physics.ticks(36) || pursuingCrate&&!a.throttle&&preferred.throttle&&hit.travel>physics.ticks(30)) continue;
-    return {...a,fire:true};
+    if(allowShot(a)) return {...a,fire:true};
   }
   return null;
 }
@@ -618,14 +654,20 @@ export function makePolicy() {
     if(weapon==='gatling'&&me.weaponCharge>0&&(me.weaponAmmo??1)>0&&!zonePressure) preferred={...preferred,fire:true};
     if(!zonePressure&&weapon==='frag'&&me.fragId&&!me.fireHeld) {
       const bomb=obs.bullets.find(b=>b.id===me.fragId);
-      if(bomb&&d2(me,bomb)>75**2&&enemies.some(e=>d2(e,bomb)<70**2)) preferred.fire=true;
+      if(bomb&&d2(me,bomb)>75**2&&enemies.some(e=>d2(e,bomb)<70**2)&&
+        coveredFromFrag(bomb,me,map.walls,physics,profile)) preferred.fire=true;
     }
     if(!zonePressure&&weapon==='mine'&&!me.fireHeld&&enemies[0]&&d2(me,enemies[0])<110**2&&
       Math.abs(wrap(heading(me,enemies[0])-me.angle))>2.0) preferred.fire=true;
     if(escape&&tick>=escape.until) escape=null;
     if(escape) {preferred=escape.action;navigating=false;}
+    const allowShot=action=>safeShellRelease(me,action,map.walls,nearbyEnemies,physics,profile.shellSpeed);
+    if(preferred.fire&&!weapon&&!allowShot(preferred)) {
+      // Don't retry a known bad firing pose or wait out the aim timer.
+      preferred={...route};navigating=hasRoute;
+    }
     if(!preferred.fire&&!weapon&&armed&&!me.fireHeld&&!escape&&!zonePressure&&nearbyEnemies.length) {
-      const window=closeAttack(me,preferred,nearbyEnemies,map.walls,obstacles,physics,profile.shellSpeed,Boolean(supply));
+      const window=closeAttack(me,preferred,nearbyEnemies,map.walls,obstacles,physics,profile.shellSpeed,Boolean(supply),allowShot);
       if(window) {preferred=window;navigating=Boolean(window.throttle)&&hasRoute;}
     }
     const mineThreat=(obs.mines??[]).filter(m=>d2(me,m)<65**2);
