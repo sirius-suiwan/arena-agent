@@ -39,7 +39,7 @@ export function parseReplayLine(line) {
 }
 
 export function createReplayReconstructor(resolveGame,{mode='strict'}={}) {
-  let state, game, manifest, expected, tick = 0, ended = false;
+  let state, game, manifest, expected, failedReadiness, tick = 0, ended = false;
   const check = (condition,message) => { if (!condition) throw new Error(`tick ${tick}: ${message}`); };
   return {
     push(record) {
@@ -59,6 +59,8 @@ export function createReplayReconstructor(resolveGame,{mode='strict'}={}) {
         check(isHash(record.hash),'invalid state hash');
         const {seed,config,players} = manifest;
         state = game.init({seed,config,players});
+        failedReadiness=players.every(id=>typeof record.readiness?.[id]==='string')
+          &&players.some(id=>record.readiness[id]!=='ready');
         return {...record,state};
       }
       if (record.type === 'tick') {
@@ -84,7 +86,8 @@ export function createReplayReconstructor(resolveGame,{mode='strict'}={}) {
       }
       check(record.type === 'end','unexpected record type');
       expected ??= tick === manifest.maxTicks ? {winner:null,reason:'tick_limit'}
-        : record.result?.reason === 'stopped' ? {winner:null,reason:'stopped'} : undefined;
+        : record.result?.reason === 'stopped' ? {winner:null,reason:'stopped'}
+        : tick===0&&failedReadiness&&record.result?.reason==='startup_failed' ? {winner:null,reason:'startup_failed'} : undefined;
       check(expected && same(expected,record.result),'result differs');
       ended = true;
       return record;

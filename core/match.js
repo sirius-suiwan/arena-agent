@@ -17,7 +17,7 @@ function accept(game,submission) {
   return {submitted:value ?? null,accepted,fallback};
 }
 
-export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3600,timeoutMs=50,realtime=false,record,botVersions={},matchId,signal,playerNames={},humanControls,privilegedSeats=[]}) {
+export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3600,timeoutMs=50,realtime=false,record,botVersions={},matchId,signal,playerNames={},humanControls,privilegedSeats=[],onSeatReady,beforeStart}) {
   const players = playerIds(seats);
   if (!Number.isSafeInteger(seed) || !Number.isSafeInteger(maxTicks) || maxTicks < 1 ||
       maxTicks > MAX_MATCH_TICKS || !Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error('invalid match limits');
@@ -34,14 +34,32 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
   };
   try {
     let state = game.init({seed,config,players});
-    const starts = await Promise.all(players.map(playerId => seats[playerId].start?.({
-      type:'start', protocol:1, game:game.id, rulesVersion:game.version, playerId, tickRate:game.tickRate, config
-    },{signal})));
-    manifest.playerNames=Object.fromEntries(players.map((id,i)=>[
-      id,normalizePlayerName(Object.hasOwn(playerNames,id)?playerNames[id]:null) ??
-        normalizePlayerName(starts[i]?.name) ?? id
-    ]));
-    await record({type:'start',manifest,state,hash:stateHash(state),readiness:Object.fromEntries(players.map((id,i)=>[id,starts[i]?.error ?? 'ready']))});
+    const starts = Object.fromEntries(await Promise.all(players.map(async playerId=>{
+      let response;
+      try {
+        response=await seats[playerId].start?.({
+          type:'start', protocol:1, game:game.id, rulesVersion:game.version, playerId, tickRate:game.tickRate, config
+        },{signal});
+      } catch(error) {
+        // CLI callers keep the existing throw contract. Interactive startup
+        // reports a failed seat rather than waiting on unexplained silence.
+        if(!beforeStart) throw error;
+        response={error:'startup_error'};
+      }
+      const name=normalizePlayerName(Object.hasOwn(playerNames,playerId)?playerNames[playerId]:null)
+        ??normalizePlayerName(response?.name)??playerId;
+      const status=response?.error??'ready';
+      onSeatReady?.(playerId,{name,status});
+      return [playerId,{name,status}];
+    })));
+    manifest.playerNames=Object.fromEntries(players.map(id=>[id,starts[id].name]));
+    const readiness=Object.fromEntries(players.map(id=>[id,starts[id].status]));
+    const startupResult=beforeStart?await beforeStart(readiness):null;
+    await record({type:'start',manifest,state,hash:stateHash(state),readiness});
+    if(startupResult) {
+      await record({type:'end',result:startupResult});
+      return startupResult;
+    }
     const period = 1000 / game.tickRate;
     let deadline = performance.now() + period;
     for (let tick = 0; tick < maxTicks; tick++) {

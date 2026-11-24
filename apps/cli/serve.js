@@ -1,6 +1,8 @@
 import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
+import {performance} from 'node:perf_hooks';
+import {setTimeout as delay} from 'node:timers/promises';
 import {recorder} from '../../replay/index.js';
 import {countKills,emptyKillTotals} from '../../viewer/score-data.js';
 import {humansForMode,makeMatch,parseCustomSeats,playersForMode,seatIds} from './match-options.js';
@@ -9,6 +11,7 @@ import {applyTankOptions,tankOptions} from './tank-options.js';
 import {randomMatchSeed} from './seed.js';
 import {openReplayStorage} from './replay-storage.js';
 
+const COUNTDOWN_MS=3000;
 const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8',json:'application/json; charset=utf-8'};
 const json = (res,status,data) => { res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data)); };
 async function requestBody(req) {
@@ -32,7 +35,7 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
   ]);
   const storage=await openReplayStorage(root,base);
   const clients = new Set();
-  let active=false, first, latest, terminal, epoch=0, currentMatch;
+  let active=false, first, latest, terminal, currentMatch;
   let inputs=new Map(), kills={};
   const send = (res,event) => {
     if (!event || res.destroyed) return;
@@ -51,6 +54,34 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
     if (event.type==='end' || event.type==='error') terminal=event;
     for (const res of clients) send(res,event);
   };
+  const startupSnapshot=session=>{
+    if(!session||session.phase==='running'||session.phase==='finished') return null;
+    const {id:matchId,mode,phase,seats,message,deadline}=session;
+    return {type:'startup',matchId,mode,phase,seats,countdownMs:COUNTDOWN_MS,
+      ...(phase==='countdown'?{remainingMs:Math.max(0,Math.ceil(deadline-performance.now()))}:{}),
+      ...(message?{message}:{})};
+  };
+  const publishStartup=session=>publish(startupSnapshot(session));
+  const stopped={winner:null,reason:'stopped'};
+  const failureMessage=session=>'未能启动：'+Object.entries(session.seats)
+    .filter(([,seat])=>seat.status==='failed').map(([id,seat])=>seat.name+'（'+id+'）').join('、');
+  async function gate(session,readiness) {
+    const {signal}=session.controller;
+    if(signal.aborted) return stopped;
+    const failed=Object.keys(readiness).filter(id=>readiness[id]!=='ready');
+    if(failed.length) return {winner:null,reason:'startup_failed'};
+    session.phase='countdown';
+    session.deadline=performance.now()+COUNTDOWN_MS;
+    publishStartup(session);
+    try {
+      for(let remaining; (remaining=session.deadline-performance.now())>0;) {
+        await delay(Math.ceil(remaining),undefined,{signal});
+      }
+    } catch(error) {
+      if(!signal.aborted) throw error;
+    }
+    return signal.aborted?stopped:null;
+  }
   const human = id => ({act:() => {
     const input=inputs.get(id);
     const value={...input.held,fire:input.held.fire || input.fireQueued};
@@ -88,7 +119,7 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
         res.write(': connected\n\n');
         clients.add(res);
         res.on('close',()=>clients.delete(res));
-        for (const event of [first,latest,terminal]) send(res,event);
+        for (const event of [startupSnapshot(currentMatch),first,latest,terminal]) send(res,event);
         return;
       }
       if (req.method==='POST' && path==='/api/stop') {
@@ -102,12 +133,15 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
         return json(res,200,{matchId,stopped:completed.result.reason==='stopped',result:completed.result});
       }
       if (req.method==='POST' && path==='/api/input') {
-        const requestEpoch=epoch;
+        const session=currentMatch;
+        const runningAtArrival=active&&session?.phase==='running';
         const {playerId='A',matchId,...action}=await requestBody(req);
-        if (!active || !currentMatch || epoch!==requestEpoch || !inputs.has(playerId) ||
-            (matchId!==undefined && matchId!==currentMatch?.id)) return json(res,409,{error:'no human seat in this match'});
-        if (currentMatch?.controller.signal.aborted) return json(res,200,{ok:true,ignored:true});
-        const value=currentMatch.game.validateAction(action);
+        if (!runningAtArrival || !active || session!==currentMatch || session.phase!=='running' ||
+            !inputs.has(playerId) || (matchId!==undefined && matchId!==session.id)) {
+          return json(res,409,{error:'no human seat in live combat'});
+        }
+        if (session.controller.signal.aborted) return json(res,409,{error:'no human seat in live combat'});
+        const value=session.game.validateAction(action);
         const input=inputs.get(playerId);
         if (value.fire && !input.held.fire) input.fireQueued=true;
         input.held=value;
@@ -142,29 +176,63 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
           return json(res,400,{error:'invalid player names'});
         }
         if (active) return json(res,409,{error:'match already in progress'});
-        active=true;epoch++;first=latest=terminal=currentMatch=undefined;
+        active=true;first=latest=terminal=currentMatch=undefined;
         const seed=data.seed ?? randomMatchSeed();
         const localSeats=custom?Object.keys(custom.humanControls):humansForMode(mode);
         inputs=new Map(localSeats.map(id=>[id,{held:selectedGame.neutralAction(),fireQueued:false}]));
         try {
           const {directory:replayDirectory}=await storage.current();
           let finished;
+          const controller=new AbortController();
           const match=await makeMatch({game:selectedGame,root,base:replayDirectory,config:matchConfig,seed,mode,paths,roster:data.seats,registry,playerNames:names,realtime:true,human:Object.fromEntries([...inputs.keys()].map(id=>[id,human(id)])),recorder,
             onRecord:event=>{
-              if (event.type==='end') finished=event;
-              else publish(event.state&&selectedGame.spectateState
+              if (event.type==='end') { finished=event; return; }
+              if (event.type==='start') {
+                // The disk keeps this zero-tick record on failure/cancel.
+                // The Web only publishes an authoritative start after a
+                // successful full countdown and never opens input otherwise.
+                if(session.phase!=='countdown'||controller.signal.aborted||
+                    Object.values(event.readiness).some(status=>status!=='ready')) return;
+                session.phase='running';
+              }
+              publish(event.state&&selectedGame.spectateState
                 ? {...event,state:selectedGame.spectateState(event.state)} : event);
             }});
-          const controller=new AbortController();
-          const session={id:match.matchId,controller,game:selectedGame};
+          const session={id:match.matchId,controller,game:selectedGame,mode,phase:'waiting',seats:match.startupSeats};
           currentMatch=session;
-          session.done=match.run({signal:controller.signal}).then(result=>{
+          publishStartup(session);
+          session.done=match.run({
+            signal:controller.signal,
+            onSeatReady(id,{name,status}) {
+              if(controller.signal.aborted) return;
+              const next=status==='ready'?{name,status:'ready'}:
+                {name:name===id?session.seats[id].name:name,status:'failed',error:status};
+              const previous=session.seats[id];
+              if(previous.name===next.name&&previous.status===next.status&&previous.error===next.error) return;
+              session.seats={...session.seats,[id]:next};
+              publishStartup(session);
+            },
+            beforeStart:readiness=>gate(session,readiness)
+          }).then(result=>{
             active=false;
-            publish(finished??{type:'end',result});
+            if(session.phase==='running') {
+              session.phase='finished';
+              publish({...finished??{type:'end',result},matchId:session.id});
+            } else {
+              session.phase=result.reason==='startup_failed'?'failed':'cancelled';
+              if(session.phase==='failed') session.message=failureMessage(session);
+              publishStartup(session);
+            }
             return {result};
           },error=>{
             active=false;
-            publish({type:'error',message:error.message});
+            if(session.phase==='running') session.phase='finished';
+            else {
+              session.phase='failed';
+              session.message=error.message;
+              publishStartup(session);
+            }
+            publish({type:'error',matchId:session.id,message:error.message});
             return {error:error.message};
           });
           json(res,202,{ok:true,matchId:match.matchId});

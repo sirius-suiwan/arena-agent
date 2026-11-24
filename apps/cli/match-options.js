@@ -1,6 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile,realpath} from 'node:fs/promises';
 import {basename,extname,join,resolve} from 'node:path';
+import {normalizePlayerName} from '../../protocol/bot/player-name.js';
 import {runMatch} from '../../core/match.js';
 import {LocalBot} from '../../runners/local-process/index.js';
 import {LAIKA_INSIGHT_POLICY,withLaikaInsight} from '../../games/tank-trouble/bots/laika-insight.js';
@@ -72,18 +73,40 @@ export async function makeMatch({game,root,base,seed,config={},maxTicks,timeoutM
   const matchId = randomUUID();
   const directory = join(base,game.id,matchId);
   const recording = await recorder(directory,onRecord);
-  return {directory,matchId,async run({signal}={}) {
-    const seats = {};
+  const startupSeats=Object.fromEntries(plans.map(plan=>{
+    const {id}=plan;
+    const fallback=plan.human?id:id==='B'?'Laika（复刻）':'GPT-dots';
+    return [id,{name:normalizePlayerName(names[id])??fallback,status:plan.human?'ready':'pending'}];
+  }));
+  return {directory,matchId,startupSeats,async run({signal,onSeatReady,beforeStart}={}) {
+    const seats = {}, localBots = {};
     try {
       for (const plan of plans) {
         if (plan.human) seats[plan.id]=human[plan.id];
         else {
           const bot=new LocalBot(plan.command,[plan.path]);
+          localBots[plan.id]=bot;
           seats[plan.id]=plan.insight?withLaikaInsight(bot):bot;
         }
       }
+      const checkBots=readiness=>{
+        for(const [id,bot] of Object.entries(localBots)) {
+          if(readiness[id]!=='ready'||!bot.dead||signal?.aborted) continue;
+          readiness[id]='process_exit';
+          onSeatReady?.(id,{name:normalizePlayerName(names[id])??id,status:'process_exit'});
+        }
+      };
       return await runMatch({
-        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,signal,playerNames:names,humanControls,record:message => recording.write(message),
+        game,seats,seed,config,maxTicks,timeoutMs,mode,realtime,matchId,signal,onSeatReady,
+        beforeStart:beforeStart?async readiness=>{
+          checkBots(readiness);
+          const outcome=await beforeStart(readiness);
+          if(outcome) return outcome;
+          checkBots(readiness);
+          return signal?.aborted?{winner:null,reason:'stopped'}
+            : Object.values(readiness).some(status=>status!=='ready')?{winner:null,reason:'startup_failed'}:null;
+        }:undefined,
+        playerNames:names,humanControls,record:message => recording.write(message),
         privilegedSeats:plans.filter(p=>p.insight).map(p=>p.id),
         botVersions:Object.fromEntries(plans.map(p=>[p.id,p.version]))
       });
