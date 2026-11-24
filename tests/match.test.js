@@ -116,3 +116,20 @@ test('stopping during startup through the built-in wrapper closes the child and 
   assert.deepEqual(recorded[0].readiness,{A:'startup_aborted'});
   assert.equal(bot.dead,true);
 });
+
+test('realtime computes the finished tick before the frame wait without publishing it early',async()=>{
+  const order=[];
+  const game={...jumpGame,step(...args){
+    order.push('step');
+    return jumpGame.step(...args);
+  }};
+  const seats=Object.fromEntries([...'ABCDEFG'].map(id=>[id,{act:()=>{
+    order.push(id);
+    if(id==='A') setImmediate(()=>order.push('idle'));
+    return {value:{jump:true}};
+  }}]));
+  await runMatch({game,seats,seed:9,maxTicks:1,realtime:true,record:r=>{
+    if(r.type==='tick') order.push('publish');
+  }});
+  assert.deepEqual(order,[...'ABCDEFG','step','idle','publish']);
+});

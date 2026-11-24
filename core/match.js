@@ -64,17 +64,21 @@ export async function runMatch({game,seats,seed,mode='bots',config={},maxTicks=3
       // input. Every seat is dispatched together with the same full budget.
       const budget=realtime?Math.max(1,Math.min(timeoutMs,deadline-performance.now())):timeoutMs;
       const submissions=await Promise.all(players.map((id,i)=>seats[id].act(messages[i],budget)));
-      if (realtime) {
-        const remaining = deadline - performance.now();
-        if (remaining > 0) await delay(Math.ceil(remaining));
-        deadline += period;
-      }
       const input = Object.fromEntries(players.map((id,i)=>[id,accept(game,submissions[i])]));
       const actions = Object.fromEntries(players.map(id => [id,input[id].accepted]));
       const next = game.step(state,actions);
       if (next.state.tick !== tick + 1) throw new Error('game must advance exactly one tick');
       state = next.state;
-      await record({type:'tick',tick,state,hash:stateHash(state),input,events:next.events});
+      // Use the slack after all replies to step and hash this frame. Holding
+      // the finished frame until its deadline preserves spectator pacing,
+      // while avoiding charging this work to the next shared decision window.
+      const frame={type:'tick',tick,state,hash:stateHash(state),input,events:next.events};
+      if (realtime) {
+        const remaining = deadline - performance.now();
+        if (remaining > 0) await delay(Math.ceil(remaining));
+        deadline += period;
+      }
+      await record(frame);
       if (next.result) {
         await record({type:'end',result:next.result});
         return next.result;
