@@ -67,6 +67,7 @@ let inputEpoch = 0;
 let scoreKey = '';
 let hudRows = [];
 let fieldRatio = '';
+let paintedRecord = null;
 const EFFECT_BASE_TICK_RATE = 60;
 const EFFECT_MAX_AGE_SECONDS = 1;
 
@@ -499,16 +500,20 @@ function render() {
   el.battle.classList.toggle('pointer-control', Boolean(pointerSeat(activeManifest())));
   el['back-live'].hidden = !replay;
   el['timeline-panel'].hidden = !replay;
-  for (const button of el['match-form'].querySelectorAll('button')) {
-    button.disabled = starting || matchActive || (!botCatalog.size && ['bots', 'human'].includes(button.value));
-  }
-  el['custom-start'].disabled = starting || matchActive || Boolean(customError);
   el.seed.disabled = starting || matchActive;
-  const autoMap = el['map-size-mode'].value === 'auto';
-  for (const option of matchOptions) el[option.id].disabled = starting || matchActive
-    || (autoMap && ['cols', 'rows'].includes(option.key));
-  el['reset-setup'].disabled = starting || matchActive;
-  updateMapPreview();
+  if (menuVisible) {
+    // Match setup is hidden during playback. Do not rebuild its preview or
+    // rewrite unrelated controls for each incoming simulation tick.
+    for (const button of el['match-form'].querySelectorAll('button')) {
+      button.disabled = starting || matchActive || (!botCatalog.size && ['bots', 'human'].includes(button.value));
+    }
+    el['custom-start'].disabled = starting || matchActive || Boolean(customError);
+    const autoMap = el['map-size-mode'].value === 'auto';
+    for (const option of matchOptions) el[option.id].disabled = starting || matchActive
+      || (autoMap && ['cols', 'rows'].includes(option.key));
+    el['reset-setup'].disabled = starting || matchActive;
+    updateMapPreview();
+  }
   const zoneText = zoneLabel(record?.state, match.manifest?.tickRate);
   el['arena-zone'].hidden = !zoneText;
   el['arena-zone'].textContent = zoneText;
@@ -530,15 +535,19 @@ function render() {
       fieldRatio = ratio;
       el.stage.style.setProperty('--field-ratio', ratio);
     }
-    el.battle.setAttribute('aria-label', renderer.title);
-    renderer.draw(el.battle, record.state, {
-      mode: match.manifest?.mode,
-      teams: teamsFor(match.manifest, record.state),
-      effects: effectsAt(match.frames, current, match.manifest?.tickRate),
-      lethalRings: replay ? lethalProjectileRings(replay.lethalIndex, record, current) : [],
-    });
-  } else if (!menuVisible) {
-    el.battle.getContext('2d')?.clearRect(0, 0, el.battle.width, el.battle.height);
+    if (paintedRecord !== record) {
+      el.battle.setAttribute('aria-label', renderer.title);
+      renderer.draw(el.battle, record.state, {
+        mode: match.manifest?.mode,
+        teams: teamsFor(match.manifest, record.state),
+        effects: effectsAt(match.frames, current, match.manifest?.tickRate),
+        lethalRings: replay ? lethalProjectileRings(replay.lethalIndex, record, current) : [],
+      });
+      paintedRecord = record;
+    }
+  } else {
+    paintedRecord = null;
+    if (!menuVisible) el.battle.getContext('2d')?.clearRect(0, 0, el.battle.width, el.battle.height);
   }
   if (!menuVisible) {
     renderScoreboard(match, record?.state, renderer, record?.kills);
@@ -1318,7 +1327,10 @@ addEventListener('keyup', (event) => {
 });
 addEventListener('blur', releaseInput);
 document.addEventListener('visibilitychange', () => { if (document.hidden) releaseInput(); });
-new ResizeObserver(() => queueDraw()).observe(el.battle);
+new ResizeObserver(() => {
+  paintedRecord = null;
+  queueDraw();
+}).observe(el.battle);
 rebuildCustomSeats();
 void loadBotCatalog();
 queueDraw();
