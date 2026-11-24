@@ -165,7 +165,7 @@ function initRound({ seed, config, players }, profile) {
   }
   return {
     tick: 0, width, height, walls, config: c, rng: rng.value, nextBullet: 1, nextPickup: 1,nextMine:1,
-    tanks: players.map((id,i) => ({ id, ...spawns[i], alive: true, cooldown: 0, weapon:null,
+    tanks: players.map((id,i) => ({ id, ...spawns[i], alive: true, cooldown: 0, weapon:null, shield:false,
       weaponAmmo:0, weaponCharge:0, weaponGap:0, fragId:null, fireHeld:false, aimAngle:null, aimGuide:null })),
     bullets: [], pickups: [], mines:[], settleUntil:null, result: null,
     pickupBlocks:[],shellLimit:profile.shellLimit
@@ -674,13 +674,15 @@ function awardPickups(s, events, spawn=true) {
       return dx*dx+dy*dy <= (TANK_RADIUS+PICKUP_PADDING)**2;
     };
     const touched=s.tanks.filter(t=>t.alive&&contact(t));
-    const candidates=touched.filter(t=>!t.weapon);
+    const shield=p.type==='shield';
+    const candidates=touched.filter(t=>shield?!t.shield:!t.weapon);
     if (!candidates.length) {
       for (const t of touched) {
         blocked.push({tankId:t.id,pickupId:p.id});
         if (!blockedPreviously?.some(b=>b.tankId===t.id&&b.pickupId===p.id)) {
           events.push({type:'pickup-blocked',tankId:t.id,pickupId:p.id,pickupType:p.type,
-            heldWeapon:t.weapon,reason:'weapon-slot-occupied',x:p.x,y:p.y});
+            ...(shield?{reason:'shield-already-charged'}:{heldWeapon:t.weapon,reason:'weapon-slot-occupied'}),
+            x:p.x,y:p.y});
         }
       }
       return true;
@@ -689,6 +691,12 @@ function awardPickups(s, events, spawn=true) {
     const minimum=Math.min(...distances);
     const tied=candidates.filter((_t,i)=>Math.abs(distances[i]-minimum)<=EPS);
     const winner=tied.length===1?tied[0]:tied[Math.floor(next(rng)*tied.length)];
+    if (shield) {
+      winner.shield=true;
+      events.push({type:'pickup',tankId:winner.id,pickupId:p.id,pickupType:p.type,x:p.x,y:p.y,
+        activation:'passive',releaseRequired:false});
+      return false;
+    }
     winner.weapon=p.type;
     winner.weaponAmmo=p.type==='gatling'?s.profile.gatlingAmmo:p.type==='mine'?s.profile.mineAmmo:1;
     const requiresPress=p.type!=='gatling';
@@ -756,6 +764,13 @@ function advanceClassicMines(s,events,deferred) {
   });
 }
 
+function blockWithShield(tank,events,damage) {
+  if (!tank.alive||tank.invulnerable||!tank.shield) return false;
+  tank.shield=false;
+  events.push({type:'shield-block',tankId:tank.id,...damage});
+  return true;
+}
+
 function advanceZone(s, events) {
   const zone=s.zone;
   if (s.tick<zone.startTick) return;
@@ -770,6 +785,10 @@ function advanceZone(s, events) {
     const exposure=outside?outsideTicks[tank.id]+1:0;
     outsideTicks[tank.id]=exposure;
     if (exposure>=zone.graceTicks) {
+      if (blockWithShield(tank,events,{kind:'zone',x:tank.x,y:tank.y})) {
+        outsideTicks[tank.id]=0;
+        continue;
+      }
       tank.alive=false;
       events.push({type:'zone-eliminated',tankId:tank.id,x:tank.x,y:tank.y});
     }
@@ -791,7 +810,9 @@ export function step(state, actions) {
   // All impacts are collected against the same pre-damage tank poses.
   for (const impact of impacts) {
     const t=s.tanks.find(t=>t.id===impact.tankId), b=impact.bullet;
-    events.push({type:'hit',bulletId:b.id,tankId:t.id,ownerId:b.owner,x:impact.x,y:impact.y,kind:b.kind});
+    const damage={bulletId:b.id,ownerId:b.owner,x:impact.x,y:impact.y,kind:b.kind};
+    if (blockWithShield(t,events,damage)) continue;
+    events.push({type:'hit',tankId:t.id,...damage});
     if (t.alive) {
       t.alive=false;
       events.push({type:'destroyed',tankId:t.id,bulletId:b.id,ownerId:b.owner,kind:b.kind});

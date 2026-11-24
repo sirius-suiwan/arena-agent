@@ -42,7 +42,7 @@
   },
   "crates": {
     "soloType": "laser",
-    "weights": { "death-ray": 1, "gatling": 1, "mine": 1, "frag": 1, "laser": 1, "missile": 1, "remote": 1 }
+    "weights": { "death-ray": 1, "gatling": 1, "mine": 1, "frag": 1, "laser": 1, "missile": 1, "remote": 1, "shield": 1 }
   },
   "arena": {
     "settlementSeconds": 3,

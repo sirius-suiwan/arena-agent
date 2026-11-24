@@ -6,7 +6,7 @@ const REPORT_EVENT = Object.freeze({
   destroyed:'eliminations','zone-eliminated':'eliminations',
   hit:'hits',
   'pickup-spawn':'crates',pickup:'crates','pickup-blocked':'crates',
-  'mine-activated':'special','mine-trigger':'special','mine-burst':'special','frag-burst':'special','weapon-fired':'special'
+  'shield-block':'special','mine-activated':'special','mine-trigger':'special','mine-burst':'special','frag-burst':'special','weapon-fired':'special'
 });
 const FOCUS_TYPES=new Set([...Object.keys(REPORT_EVENT),'tank-stop','wall-stop','shot-blocked','shot','bounce','shell-expired']);
 const EVENT_FIELDS=['tankId','tankIds','ownerId','bulletId','kind','reason','weapon','pickupType','pickupId','heldWeapon',
@@ -46,7 +46,7 @@ function eventRecord(record,event,order) {
 function seatCounters() {
   return {fallbacks:0,fallbackReasons:counter(),wallStops:0,tankStops:0,longestWallStopStreak:0,
     longestFallbackStreak:0,acceptedMoves:0,acceptedFire:0,shots:counter(),blockedFire:counter(),hitsLanded:0,hitsTaken:0,
-    opposingEliminations:0,teamEliminations:0,selfEliminations:0,zoneDeaths:0,pickups:counter(),blockedPickups:0,
+    opposingEliminations:0,teamEliminations:0,selfEliminations:0,zoneDeaths:0,shieldBlocks:0,pickups:counter(),blockedPickups:0,
     _wallStreak:0,_fallbackStreak:0};
 }
 function readableSeat({ _wallStreak,_fallbackStreak,...rest }) { return rest; }
@@ -86,7 +86,8 @@ function focusSample(record) {
   const tanks=(s?.tanks??[]).slice(0,8).map(t=>({
     id:t.id,x:tidy(t.x),y:tidy(t.y),angle:tidy(t.angle),alive:t.alive,
     ...(t.weapon?{weapon:t.weapon,weaponAmmo:t.weaponAmmo}:{}),
-    ...(t.invulnerable?{invulnerable:true}:{})
+    ...(t.invulnerable?{invulnerable:true}:{}),
+    ...(t.shield?{shield:true}:{})
   }));
   const projectiles=s?.bullets??[];
   // Keep nearest threats and prioritize distance over registration order.
@@ -161,6 +162,7 @@ export async function replayReport(records,{tick}={}) {
               else actor.opposingEliminations++;
             }
             break;
+          case 'shield-block':if(seat) seat.shieldBlocks++;break;
           case 'zone-eliminated':if(seat) seat.zoneDeaths++;break;
           case 'pickup':if(seat) bump(seat.pickups,event.pickupType);break;
           case 'pickup-blocked':if(seat) seat.blockedPickups++;break;

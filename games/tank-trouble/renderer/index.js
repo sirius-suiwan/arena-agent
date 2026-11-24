@@ -13,7 +13,7 @@ const squadColors = Object.freeze({ '1': '#84365c', '2': '#166558', '3': '#315b9
 const graphite = { hull: '#6b7385', turret: '#959dae', track: '#484e5b', outline: '#383e4b' };
 const weapons = {
   'death-ray': '死光', laser: '激光', gatling: '加特林', frag: '破片弹', mine: '地雷',
-  missile: '追踪导弹', remote: '遥控导弹', shell: '炮弹', shrapnel: '破片',
+  missile: '追踪导弹', remote: '遥控导弹', shield: '护盾', shell: '炮弹', shrapnel: '破片',
 };
 
 function team(index, mode, id) {
@@ -100,7 +100,7 @@ function stageTankGlyph(ctx, color) {
 const weaponInks = {
   'death-ray': '#af3952', laser: '#9d396d',
   gatling: '#9b6118', mine: '#564879', frag: '#258170',
-  missile: '#34668c', remote: '#796239',
+  missile: '#34668c', remote: '#796239', shield: '#176987',
 };
 
 // Low, wide silhouette reads as a mine even at HUD size. The placed
@@ -143,6 +143,10 @@ function weaponGlyph(ctx, kind) {
     ctx.stroke();
   } else if (kind === 'mine') {
     mineGlyph(ctx, '#ded7ee', color, '#f5d489');
+  } else if (kind === 'shield') {
+    ctx.moveTo(0, -4.8); ctx.lineTo(4.4, -3.2); ctx.lineTo(4, 1);
+    ctx.quadraticCurveTo(3.4, 3.2, 0, 5); ctx.quadraticCurveTo(-3.4, 3.2, -4, 1);
+    ctx.lineTo(-4.4, -3.2); ctx.closePath(); ctx.stroke();
   } else if (kind === 'frag') {
     for (let i = 0; i < 6; i++) {
       const a = i * Math.PI / 3;
@@ -186,10 +190,12 @@ export function tankWeaponLabel(weapon) {
 
 function pickupHint(event) {
   if (event.type === 'pickup-blocked') {
+    if (event.reason === 'shield-already-charged') return '护盾已充能，不能叠加';
     const name = tankWeaponLabel(event.heldWeapon);
     return name ? `已装备${name}，不能再拾取` : '已有道具，不能再拾取';
   }
   const name = tankWeaponLabel(event.pickupType) || '道具';
+  if (event.pickupType === 'shield') return '护盾 · 自动挡一次伤害';
   const hold = event.activation === 'hold';
   if (event.releaseRequired) return hold ? `${name} · 松开后按住开火` : `${name} · 松开后再按开火`;
   if (event.pickupType === 'remote') return `${name} · 发射后用转向键操控`;
@@ -279,6 +285,13 @@ function drawEffects(ctx, state, effects, mode) {
       ctx.lineWidth = 4.2; ctx.strokeStyle = tint.outline; ctx.stroke();
       ctx.lineWidth = 2.5; ctx.strokeStyle = tint.hull; ctx.stroke();
       ctx.lineWidth = 0.9; ctx.strokeStyle = tint.turret; ctx.stroke();
+    } else if (event.type === 'shield-block') {
+      const tank = state.tanks.find(({id}) => id === event.tankId);
+      const point = pointIsValid(tank) ? tank : event;
+      if (pointIsValid(point)) {
+        ctx.beginPath(); ctx.arc(point.x, point.y, 17 + age * 1.4, 0, Math.PI * 2);
+        ctx.strokeStyle = '#277c96'; ctx.lineWidth = 2; ctx.stroke();
+      }
     } else if (['mine-burst', 'frag-burst', 'destroyed', 'zone-eliminated'].includes(event.type)) {
       const point = pointIsValid(event) ? event : state.tanks.find((tank) => tank.id === event.tankId);
       if (pointIsValid(point)) {
@@ -412,6 +425,12 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
       ctx.lineWidth = 1.8;
       ctx.stroke();
     }
+    if (tank.shield === true) {
+      ctx.beginPath(); ctx.arc(0, 0, 15.5 * tankScale, 0, Math.PI * 2);
+      ctx.setLineDash([5, 2]);
+      ctx.strokeStyle = '#277c96'; ctx.lineWidth = 1.7; ctx.stroke();
+      ctx.setLineDash([]);
+    }
     ctx.rotate(Number.isFinite(tank.angle) ? tank.angle : 0);
     ctx.scale(tankScale, tankScale);
     stageTankGlyph(ctx, color);
@@ -503,7 +522,7 @@ export function drawWeaponIcon(canvas, weapon) {
 
 const eventLabels = {
   shot: '开火', bounce: '弹丸反弹', hit: '命中', pickup: '取得道具',
-  'pickup-blocked': '已有武器，未拾取', 'pickup-spawn': '道具刷新', 'shell-expired': '弹丸消失', 'shot-blocked': '未能开火',
+  'pickup-blocked': '未拾取', 'shield-block': '护盾抵消伤害', 'pickup-spawn': '道具刷新', 'shell-expired': '弹丸消失', 'shot-blocked': '未能开火',
   'wall-stop': '撞墙', 'tank-stop': '坦克碰撞', destroyed: '击毁', ended: '对局结束',
   timeout: '动作超时', 'weapon-fired': '使用武器', 'frag-burst': '破片炸开',
   'weapon-charge': '武器蓄力', 'last-tank-pending': '等待炮火结算', 'mine-placed': '埋设地雷', 'mine-burst': '地雷爆炸', 'round-start': '开局',
@@ -513,7 +532,7 @@ const eventLabels = {
 export function formatTankEvent(event, displayPlayer = (id) => id) {
   const type = event.type || '事件';
   const kind = eventLabels[type] ?? type;
-  const hit = type === 'hit' || type === 'destroyed';
+  const hit = type === 'hit' || type === 'destroyed' || type === 'shield-block';
   const actor = event.playerId ?? event.ownerId ?? (hit ? null : event.tankId);
   const target = hit ? event.tankId : null;
   const shell = event.bulletId;
@@ -523,6 +542,7 @@ export function formatTankEvent(event, displayPlayer = (id) => id) {
   const labels = [kind, event.round == null ? null : `第 ${event.round} 局`,
     actor == null ? null : `选手 ${displayPlayer(actor)}`, target == null ? null : `目标 ${displayPlayer(target)}`,
     shell == null ? null : `弹丸 ${shell}`, weapon == null ? null : weapons[weapon] ?? weapon,
+    type === 'shield-block' && event.kind === 'zone' ? '安全区外伤害' : null,
     event.winnerTeam != null ? `队伍 ${squadLetter(event.winnerTeam)} 获胜` : event.winner == null ? null : `选手 ${displayPlayer(event.winner)} 获胜`,
     position];
   return labels.filter(Boolean).join(' · ');

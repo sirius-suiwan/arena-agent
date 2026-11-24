@@ -308,6 +308,7 @@ function renderScoreboard(match, state, renderer, kills = {}) {
     const ammo = tank ? renderer?.ammo?.(state, row.id) : null;
     const equipped = renderer?.equippedWeapon?.(tank, state) ?? null;
     const weapon = equipped && renderer?.weaponLabel?.(equipped);
+    const shield = tank?.shield === true && !dead;
     const killCount = Number.isSafeInteger(kills[row.id]) ? Math.max(0, kills[row.id]) : 0;
     row.card.classList.toggle('is-destroyed', dead);
     row.rail.classList.toggle('is-destroyed', dead);
@@ -326,17 +327,18 @@ function renderScoreboard(match, state, renderer, kills = {}) {
       }
       row.bars.forEach((bar, index) => bar.classList.toggle('is-free', index < ammo.available));
     }
-    row.equip.hidden = !weapon;
-    if (weapon) {
+    row.equip.hidden = !weapon && !shield;
+    if (weapon || shield) {
       const quantity = Number.isSafeInteger(tank?.weaponAmmo) && tank.weaponAmmo > 0 ? ` ×${tank.weaponAmmo}`
         : equipped === 'frag' && tank?.fragId ? ' · 可引爆'
         : equipped === 'remote' && tank?.fragId ? ' · 转向操控' : '';
-      setText(row.weaponText, `${weapon}${quantity}`);
-      row.equip.title = `已装备${weapon}`;
-      if (row.equipment !== equipped) renderer?.weaponIcon?.(row.weaponIcon, equipped);
-      row.equipment = equipped;
-    } else if (!weapon) row.equipment = undefined;
-    row.card.setAttribute('aria-label', `选手 ${row.player}：${teamIds.includes(teams[row.id]) ? '队伍 ' + teamLetter(teams[row.id]) : score + ' 分'}${dead ? '，本局已击毁' : ''}${ammo ? `，空闲普通弹槽 ${ammo.available}/${ammo.limit}` : ''}${weapon ? `，已装备${weapon}` : ''}`);
+      setText(row.weaponText, [weapon ? `${weapon}${quantity}` : '', shield ? '护盾 ×1' : ''].filter(Boolean).join(' · '));
+      row.equip.title = [weapon ? `已装备${weapon}` : '', shield ? '护盾可抵消一次伤害' : ''].filter(Boolean).join('，');
+      const badge = weapon ? equipped : 'shield';
+      if (row.equipment !== badge) renderer?.weaponIcon?.(row.weaponIcon, badge);
+      row.equipment = badge;
+    } else row.equipment = undefined;
+    row.card.setAttribute('aria-label', `选手 ${row.player}：${teamIds.includes(teams[row.id]) ? '队伍 ' + teamLetter(teams[row.id]) : score + ' 分'}${dead ? '，本局已击毁' : ''}${ammo ? `，空闲普通弹槽 ${ammo.available}/${ammo.limit}` : ''}${weapon ? `，已装备${weapon}` : ''}${shield ? '，护盾剩余一次' : ''}`);
   }
   const round = state?.round ?? 1;
   const fixed = state?.roundLimit ?? match.manifest?.config?.roundLimit;
