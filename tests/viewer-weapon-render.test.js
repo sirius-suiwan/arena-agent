@@ -15,7 +15,7 @@ function draw(bullets, effects = []) {
   return operations;
 }
 
-test('laser uses authored bends, drawing a single trail in active and terminal frames', () => {
+test('laser uses authored reflection corners, drawing a single trail in active and terminal frames', () => {
   const laser = {id:'light',owner:'A',kind:'laser',x:40,y:40,vx:5,vy:3,path};
   for (const projectiles of [[laser], []]) {
     const operations = draw(projectiles, [{event:trail,age:0}]);
@@ -43,4 +43,20 @@ test('a cosmetic shard fades after a wall stop without needing a live projectile
 test('remote missile is drawn pointing towards its nose instead of its current velocity',()=> {
   const operations=draw([{kind:'remote',x:20,y:30,vx:3,vy:0,heading:0.75}]);
   assert.deepEqual(operations.filter(([op])=>op==='rotate'),[['rotate',0.75]]);
+});
+
+test('death ray paints the authoritative curved polyline in its active and fading phases',()=>{
+  const event={type:'death-ray-beam',weapon:'death-ray',tankId:'A',path,continuous:true};
+  for(const beam of [event,{...event,fade:0.5}]) {
+    assert.deepEqual(draw([], [{event:beam,age:0}]).filter(([op,x])=>op==='lineTo'&&[31,40].includes(x)),[
+      ['lineTo',31,33],['lineTo',40,40],
+    ]);
+  }
+  assert.ok(!draw([], [{event,age:1}]).some(([op,x])=>op==='lineTo'&&x===31));
+});
+
+test('an expired reflected laser leaves only a short non-active trail',()=>{
+  const event={...trail,fadeTicks:3};
+  assert.ok(draw([], [{event,age:1}]).some(([op,x])=>op==='lineTo'&&x===40));
+  assert.ok(!draw([], [{event,age:3}]).some(([op,x])=>op==='lineTo'&&x===40));
 });

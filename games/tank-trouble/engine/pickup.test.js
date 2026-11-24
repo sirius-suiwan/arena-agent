@@ -59,7 +59,9 @@ test('an occupied slot reports once per contact, then a used weapon frees its sl
   cleared.state.tanks[0].x=100;
   const again=game.step(cleared.state,{});
   assert.equal(again.events[0].type,'pickup-blocked');
-  const released=game.step(first.state,{amber:act(true)});
+  let released=game.step(first.state,{amber:act(true)});
+  assert.equal(released.state.tanks[0].weapon,'laser');
+  while(released.state.tanks[0].weapon==='laser') released=game.step(released.state,{amber:act(true)});
   const pickup=released.events.find(e=>e.type==='pickup');
   assert.equal(released.state.tanks[0].weapon,'frag');
   assert.equal(pickup.activation,'press');

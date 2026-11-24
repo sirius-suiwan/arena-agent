@@ -123,80 +123,72 @@ test('releasing gatling cancels an incomplete burst and requires spin-down befor
   assert.ok(r.state.bullets.some(b=>b.kind==='shell'));
 });
 
-const curvePoint=(distance,wallDepth=20)=>({
-  x:70+wallDepth+2240/Math.PI*Math.sin(Math.PI*(distance-wallDepth)/2240),
-  y:100+2240/Math.PI*(1-Math.cos(Math.PI*(distance-wallDepth)/2240))
-});
-
-test('laser curves through internal walls for 0.32s at each rate including fractional final advance',()=>{
+test('laser starts at the muzzle and locks hull and weapon slot until 0.32s elapses',()=>{
   for(const hz of [25,30,60]) {
     const s=fixture(hz);
-    s.walls=[{x1:90,y1:32,x2:90,y2:500}];
     equip(s,'laser');
-    const guide=step(s,{}).state.tanks[0].aimGuide;
-    assert.ok(guide.at(-1).x>90&&guide.at(-1).y>100);
+    const aim=step(s,{}).state.tanks[0].aimGuide;
+    assert.deepEqual(aim,[{x:88,y:100},{x:344,y:100}]);
     let r=step(s,{A:action(true)});
-    const b=r.state.bullets[0], expected=curvePoint(2240/hz);
+    const b=r.state.bullets[0];
     assert.equal(b.kind,'laser');
-    assert.equal(b.curved,true);
-    assert.ok(Math.abs(b.x-expected.x)<1e-8);
-    assert.ok(Math.abs(b.y-expected.y)<1e-8);
-    assert.deepEqual(r.events.find(e=>e.type==='laser-path').path,b.path);
-    assert.ok(!r.events.some(e=>e.type==='bounce'));
+    assert.equal(r.state.tanks[0].fragId,b.id);
+    assert.equal(r.state.tanks[0].aimGuide,null);
+    assert.ok(Math.abs(b.x-(88+2240/hz))<1e-8);
     const observed=gameForRate(hz).observe(r.state,'A');
     observed.bullets[0].path[0].x=999;
-    assert.equal(b.path[0].x,70);
+    assert.equal(b.path[0].x,88);
     assert.equal(r.events.find(e=>e.type==='weapon-fired').moving,true);
-    r=doN(r.state,Math.ceil(0.32*hz)-1);
+    r=doN(r.state,Math.ceil(0.32*hz)-1,{A:action(true,1,1)});
     const expired=r.events.find(e=>e.type==='shell-expired');
-    const endpoint=curvePoint(2240*0.32);
     assert.equal(expired.reason,'ttl');
-    assert.ok(Math.abs(expired.x-endpoint.x)<1e-8);
-    assert.ok(Math.abs(expired.y-endpoint.y)<1e-8);
+    assert.ok(Math.abs(expired.x-804.8)<1e-8);
     assert.equal(r.state.bullets.length,0);
+    assert.equal(r.state.tanks[0].weapon,null);
+    assert.equal(r.state.tanks[0].x,70);
+    assert.equal(r.state.tanks[0].angle,0);
+    assert.ok(r.events.find(e=>e.type==='laser-path').fadeTicks>0);
+    assert.ok(step(r.state,{A:action(false,0,1)}).state.tanks[0].x>70);
   }
 });
 
-test('laser only starts to curve after piercing a wall',()=>{
-  const s=fixture(60);
-  s.walls=[{x1:140,y1:64,x2:140,y2:170}];
-  equip(s,'laser');
-  let r=step(s,{A:action(true)});
-  assert.equal(r.state.bullets[0].curved,false);
-  assert.equal(r.state.bullets[0].y,100);
-  r=step(r.state,{});
-  const path=r.events.find(e=>e.type==='laser-path').path;
-  assert.ok(path.some(p=>Math.abs(p.x-140)<1e-12&&p.y===100));
-  assert.equal(r.state.bullets[0].curved,true);
-  assert.ok(r.state.bullets[0].y>100);
+test('laser reflects off an interior or outside wall before it can hit behind it',()=>{
+  for(const exterior of [false,true]) {
+    const s=fixture(25), edge=s.width;
+    const wall=exterior?edge:220;
+    Object.assign(s.tanks[0],{x:wall-56,y:100,angle:0.3});
+    Object.assign(s.tanks[1],{x:wall+16,y:132});
+    Object.assign(s.tanks[2],{x:wall-34,y:128});
+    s.walls=[{x1:wall,y1:0,x2:wall,y2:s.height}];
+    equip(s,'laser');
+    const preview=step(s,{}).state.tanks[0].aimGuide;
+    assert.ok(preview.some(p=>p.x===wall));
+    assert.ok(preview.at(-1).x<wall);
+    let r=step(s,{A:action(true)});
+    const path=r.events.find(e=>e.type==='laser-path').path;
+    assert.ok(path.some(p=>p.x===wall));
+    assert.ok(path.at(-1).x<wall);
+    if(r.state.bullets.length) r=step(r.state,{});
+    const hit=r.events.find(e=>e.type==='hit');
+    assert.equal(hit?.tankId,'C');
+    assert.equal(r.state.tanks[1].alive,true);
+    assert.equal(r.state.tanks[0].weapon,null);
+  }
 });
 
-test('laser segments hit the curved target behind a wall and stop at the arena perimeter',()=>{
+test('returning laser can hit its shooter beyond the brief launch protection',()=>{
   const s=fixture(25);
-  s.walls=[{x1:100,y1:64,x2:100,y2:170}];
-  Object.assign(s.tanks[1],curvePoint(220,30));
+  s.walls=[{x1:91,y1:0,x2:91,y2:200}];
   equip(s,'laser');
-  let r=step(s,{A:action(true)});
-  assert.equal(r.state.tanks[0].alive,true);
-  assert.equal(r.state.tanks[1].alive,true);
-  r=doN(r.state,2);
-  const hit=r.events.find(e=>e.type==='hit'), trace=r.events.find(e=>e.type==='laser-path');
-  assert.equal(hit.tankId,'B');
-  assert.equal(hit.bulletId,trace.bulletId);
-  assert.deepEqual(trace.path.at(-1),{x:hit.x,y:hit.y});
-  assert.equal(r.state.tanks[1].alive,false);
-  assert.equal(r.state.bullets.length,0);
-  const boundary=fixture(25);
-  equip(boundary,'laser');
-  boundary.tanks[0].x=boundary.width-40;
-  const end=step(boundary,{A:action(true)});
-  const terminal=end.events.find(e=>e.type==='shell-expired');
-  assert.equal(terminal.reason,'boundary');
-  assert.equal(terminal.x,boundary.width);
-  assert.equal(end.state.bullets.length,0);
+  const r=step(s,{A:action(true)});
+  const hit=r.events.find(e=>e.type==='hit');
+  assert.equal(hit?.tankId,'A');
+  assert.equal(hit?.ownerId,'A');
+  assert.ok(hit.x<86);
+  assert.equal(r.state.tanks[0].weapon,null);
 });
 
-test('Death Ray autocompletes charge through walls and remains active for 1.2 seconds',()=>{
+test('Death Ray autocompletes charge and remains damaging for 1.2 seconds, then fades without damage',()=>{
   const s=fixture(25);
   Object.assign(s.tanks[1],{x:330,y:100});
   s.walls=[{x1:220,y1:64,x2:220,y2:160}];
@@ -212,9 +204,39 @@ test('Death Ray autocompletes charge through walls and remains active for 1.2 se
   assert.equal(r.state.tanks[0].beamUntil,45);
   r=doN(r.state,29);
   assert.equal(r.events.find(e=>e.type==='death-ray-beam')?.weapon,'death-ray');
+  Object.assign(r.state.tanks[2],{x:400,y:100});
   r=step(r.state,{});
+  assert.equal(r.events.find(e=>e.type==='death-ray-beam').fade,1);
+  assert.equal(r.state.tanks[2].alive,true);
+  assert.ok(!r.events.some(e=>e.type==='hit'));
+  r=doN(r.state,2);
   assert.equal(r.state.tanks[0].weapon,null);
   assert.equal(r.events.some(e=>e.type==='death-ray-beam'),false);
+});
+
+test('Death Ray curves either way without a wall, pierces walls, and freezes its targeting path',()=>{
+  for(const hz of [25,30,60]) for(const sign of [-1,1]) {
+    const s=fixture(hz);
+    s.tanks[0].y=300;
+    Object.assign(s.tanks[1],{x:450,y:300+sign*44});
+    Object.assign(s.tanks[2],{x:710,y:300+sign*115});
+    equip(s,'death-ray');
+    const wall={x1:240,y1:200,x2:240,y2:400};
+    const bare=doN(s,Math.ceil(s.profile.deathRayCharge),{A:action(true)});
+    const r=doN({...s,walls:[wall]},Math.ceil(s.profile.deathRayCharge),{A:action(true)});
+    const ray=r.events.find(e=>e.type==='weapon-fired');
+    assert.deepEqual(ray.path,bare.events.find(e=>e.type==='weapon-fired').path);
+    assert.deepEqual(ray.path[0],{x:88,y:300});
+    assert.ok(ray.path.some(p=>p.x<240&&(p.y-300)*sign>1)); // bends before the wall
+    assert.deepEqual(r.events.filter(e=>e.type==='hit').map(e=>e.tankId),['B','C']);
+    const after=step(r.state,{});
+    assert.deepEqual(after.events.find(e=>e.type==='death-ray-beam').path,ray.path);
+    const observed=gameForRate(hz).observe(r.state,'A').tanks[0].beamPath;
+    assert.ok(observed.length<=64);
+    assert.deepEqual(observed.at(-1),ray.path.at(-1));
+    observed[0].x=999;
+    assert.equal(r.state.tanks[0].beamPath[0].x,88);
+  }
 });
 
 test('frag detonates on a fresh press into 40 independent, deterministic fragments',()=>{

@@ -10,7 +10,8 @@ const cross=(ax,ay,bx,by)=>ax*by-ay*bx;
 const validAction=a=>a&&[-1,0,1].includes(a.throttle)&&[-1,0,1].includes(a.turn)&&typeof a.fire==='boolean';
 const teamMate=(obs,a,b)=>obs.teams?.[a.id]!==undefined&&obs.teams[a.id]===obs.teams[b.id];
 const hullLocked=(t,obs)=>t.weapon==='remote'&&t.fragId!=null ||
-  t.weapon==='death-ray'&&(t.weaponCharge>0&&t.beamUntil===undefined||t.beamUntil>(obs.roundTick??obs.tick));
+  t.weapon==='laser'&&t.fragId!=null || t.weapon==='death-ray'&&t.weaponCharge>0&&
+  (t.beamUntil===undefined||t.beamUntil+(obs.profile.deathRayFade??0)>(obs.roundTick??obs.tick));
 
 function segmentDistance2(p,a,b) {
   const dx=b.x-a.x,dy=b.y-a.y,len=dx*dx+dy*dy;
@@ -46,10 +47,8 @@ function pose(t,a,obs) {
 }
 
 function laserPath(obs,start,range) {
-  if(![obs.width,obs.height,obs.profile.laserSpeed,obs.profile.laserMaxSegment,range]
-    .every(n=>Number.isFinite(n)&&n>0)||!Number.isFinite(obs.profile.laserBendPerTick)||
-    !Number.isFinite(start.heading)) return null;
-  return traceLaser(obs,start,range).path;
+  if(![obs.width,obs.height,obs.profile.laserSpeed,range].every(n=>Number.isFinite(n)&&n>0)) return null;
+  return traceLaser(obs,{...start,heading:start.heading??Math.atan2(start.vy,start.vx)},range).path;
 }
 
 // Recovery cares whether a projectile can intersect its current or proposed

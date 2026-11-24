@@ -235,7 +235,7 @@ export function createLaikaPolicy() {
       action.fire=Boolean(!me.fireHeld&&target&&sqDist(me,target)<110**2&&
         Math.abs(deltaAngle(Math.atan2(target.y-me.y,target.x-me.x),me.angle))>Math.PI*0.53);
     }
-    const hullLocked=me.weapon==='remote'&&me.fragId!=null ||
+    const hullLocked=['remote','laser'].includes(me.weapon)&&me.fragId!=null ||
       me.weapon==='death-ray'&&(me.weaponCharge>0&&me.beamUntil===undefined||me.beamUntil>tick);
     if(!hullLocked) action=dodgeMotion(me,obs,action,physics);
     if(action.fire&&me.fireHeld&&!sustainingGatling) action.fire=false;
@@ -247,7 +247,7 @@ export function createLaikaPolicy() {
         action={...NEUTRAL,turn:Math.abs(diff)>profile.remoteTurn/2?Math.sign(diff):0};
       }
     }
-    if(me.weapon==='death-ray'&&me.weaponCharge>0) action={...NEUTRAL};
+    if(me.weapon==='death-ray'&&me.weaponCharge>0||me.weapon==='laser'&&me.fragId) action={...NEUTRAL};
     prior={x:me.x,y:me.y,...action};
     return action;
   };

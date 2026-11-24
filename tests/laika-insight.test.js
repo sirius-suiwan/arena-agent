@@ -74,12 +74,13 @@ test('a passing shell does not keep the bot stuck in a wall',async()=>{
   assert.deepEqual((await seat.act(wallCase(3,{bullets:[passing]}))).value,{...neutral,throttle:-1});
 });
 
-test('an active curved laser can veto a recovery even when its tangent misses',async()=>{
+test('a reflected laser can veto recovery even when initially moving away',async()=>{
   const seat=wrap(moving);
   for(let tick=0;tick<3;tick++) assert.deepEqual((await seat.act(wallCase(tick))).value,moving);
   const {laserSpeed}=classicProfile(25);
-  const curved={kind:'laser',owner:'B',x:195,y:118,heading:Math.PI,curved:true,vx:-laserSpeed,vy:0,ttl:8};
-  assert.deepEqual((await seat.act(wallCase(3,{bullets:[curved]}))).value,moving);
+  const reflected={kind:'laser',owner:'B',x:103,y:96,heading:0,vx:laserSpeed,vy:0,ttl:8};
+  const walls=[...wallCase(3).observation.walls,{x1:128,y1:0,x2:128,y2:128}];
+  assert.deepEqual((await seat.act(wallCase(3,{bullets:[reflected],walls}))).value,moving);
 });
 
 function crateCase(me=tank('A',106,96,0),ticksUntil=40,overrides={}) {

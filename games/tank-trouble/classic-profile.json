@@ -34,8 +34,8 @@
   },
   "weapons": {
     "gatling": { "pixelsPerSourceFrame": 5.5, "lifeSourceFrames": 125, "ammo": 20, "spinSourceFrames": 10, "gapSourceFrames": 3, "spinDownBaseSourceFrames": 35, "spreadDegrees": 5.5, "safeSourceFrames": 2, "collisionRadius": 1.35 },
-    "laser": { "pixelsPerSourceFrame": 70, "lifeSourceFrames": 8, "guideCells": 4, "bendDegreesPerSecond": 180, "maxSegmentPixels": 12, "trailPoints": 18 },
-    "deathRay": { "chargeSourceFrames": 15, "activeSourceFrames": 30 },
+    "laser": { "pixelsPerSourceFrame": 70, "lifeSourceFrames": 8, "guideCells": 4, "launchSafePixels": 7, "guideSafePixels": 14, "trailPoints": 18, "fadeSourceFrames": 8 },
+    "deathRay": { "chargeSourceFrames": 15, "activeSourceFrames": 30, "fadeSourceFrames": 2, "minRadiusCells": 13, "segmentCells": 0.0625, "boundaryInsetCells": 0.06, "maxWidthSourcePixels": 5 },
     "missile": { "pixelsPerSourceFrame": 4.5, "lifeSourceFrames": 250, "homingDelaySourceFrames": 50, "guidanceIntervals": 5, "homingSourceImpulse": 0.12, "remoteSourceImpulseRatio": 0.35, "remoteDegreesPerSourceFrame": 15 },
     "mine": { "ammo": 3, "armSourceFrames": 20, "fuseSourceFrames": 6, "pixelsPerSourceFrame": 5.5, "dampingPerSourceFrame": 0.75, "stopSourcePixelsPerFrame": 0.6, "contactRadiusCells": 0.125, "visibilityStepPerSourceFrame": 0.1 },
     "fragment": { "count": 40, "basePixelsPerSourceFrame": 4, "spreadPixelsPerSourceFrame": 4.5, "fadeSourceFrames": 20 }

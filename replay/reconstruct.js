@@ -7,10 +7,10 @@ const same = (a,b) => canonical(a) === canonical(b);
 
 // Browser and recorder Math implementations can differ by a few ULPs.
 // Only allow tiny drift in spatial event fields, never in IDs, ticks or scores.
-const SPATIAL_FIELDS = new Set(['x','y','vx','vy','endX','endY']);
+const SPATIAL_FIELDS = new Set(['x','y','vx','vy','endX','endY','width']);
 const POSITION_TOLERANCE = 1e-7;
 const nearPosition=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<=POSITION_TOLERANCE;
-function equivalentLaserPath(actual,recorded) {
+function equivalentBeamPath(actual,recorded) {
   return Array.isArray(actual)&&Array.isArray(recorded)&&actual.length===recorded.length&&actual.every((p,i)=>{
     const q=recorded[i];
     return q&&typeof q==='object'&&!Array.isArray(q)&&Object.keys(q).length===2&&
@@ -26,7 +26,8 @@ function equivalentPlaybackEvents(actual,recorded) {
       if (!Object.hasOwn(other,key)) return false;
       const a=event[key], b=other[key];
       return same(a,b) || (SPATIAL_FIELDS.has(key)&&nearPosition(a,b)) ||
-        (event.type==='laser-path'&&key==='path'&&equivalentLaserPath(a,b));
+        (key==='path'&&(event.type==='laser-path'||event.type==='death-ray-beam'||
+          event.type==='weapon-fired'&&event.weapon==='death-ray')&&equivalentBeamPath(a,b));
     });
   });
 }

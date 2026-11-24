@@ -1,5 +1,5 @@
 import {CLASSIC_DATA,CLASSIC_FRAME_RATE,classicProfile} from './profile.js';
-import {traceLaser} from './laser-geometry.js';
+import {traceDeathRay,traceLaser} from './laser-geometry.js';
 import {accelerateMissile,homingWaypoint} from './missile-guidance.js';
 
 const CELL = 64, TANK_RADIUS = 12, BULLET_RADIUS = 3;
@@ -290,7 +290,8 @@ function moveTanks(s, actions, events) {
     if (!t.alive) return { ...t };
     const a = Object.hasOwn(actions,t.id) ? actions[t.id] : { throttle: 0, turn: 0, fire: false };
     const locked=t.weapon==='remote'&&t.fragId!=null ||
-      t.weapon==='death-ray'&&(t.weaponCharge>0&&t.beamUntil===undefined||t.beamUntil>s.tick);
+      t.weapon==='laser'&&t.fragId!=null ||
+      t.weapon==='death-ray'&&t.weaponCharge>0&&(t.beamUntil===undefined||t.beamUntil+s.profile.deathRayFade>s.tick);
     const turnRate=s.profile.turnSpeed;
     const moveRate=a.throttle<0?s.profile.reverseSpeed:s.profile.forwardSpeed;
     const angle = ((t.angle+(locked?0:a.turn*turnRate))%TAU+TAU)%TAU;
@@ -344,6 +345,7 @@ function resetClassicWeapon(t) {
   delete t.spinDownUntil;
   delete t.beamUntil;
   delete t.beamId;
+  delete t.beamPath;
 }
 
 function burst(b,s,events,type,deferred) {
@@ -382,24 +384,28 @@ function guideClassicRemotes(s,actions) {
   }
 }
 
+const immutablePath=path=>Object.freeze(path.map(p=>Object.freeze(p)));
+
 function emitClassicBeam(t,s,events,impacts,firingTick) {
-  const dx=Math.cos(t.aimAngle),dy=Math.sin(t.aimAngle);
-  // Stop at the outside perimeter, not at interior walls. This reconstruction
-  // keeps the beam straight; it does not reproduce original bending.
-  const length=Math.min(dx>EPS?(s.width-t.x)/dx:dx<-EPS?-t.x/dx:Infinity,
-    dy>EPS?(s.height-t.y)/dy:dy<-EPS?-t.y/dy:Infinity);
-  const endX=t.x+dx*length,endY=t.y+dy*length;
+  const path=t.beamPath,start=path[0],end=path.at(-1);
+  const elapsed=s.tick-(t.beamUntil-s.profile.deathRayActive);
+  const width=s.profile.deathRayWidth*Math.min(1,(elapsed+s.profile.tickRate/CLASSIC_FRAME_RATE)/s.profile.deathRayWidthRamp);
+  const reach=TANK_RADIUS+width/2;
   const beam={id:t.beamId,owner:t.id,kind:'death-ray'};
   events.push({type:firingTick?'weapon-fired':'death-ray-beam',tankId:t.id,weapon:'death-ray',bulletId:beam.id,
-    x:t.x,y:t.y,endX,endY,continuous:true});
+    x:start.x,y:start.y,endX:end.x,endY:end.y,path,width,continuous:true});
   for(const target of s.tanks) {
     if (target.id===t.id||!vulnerable(s,target,t.id)) continue;
-    const f=circleHit(t.x,t.y,dx*length,dy*length,target.x,target.y,TANK_RADIUS);
-    if (f!==null) impacts.push({bullet:beam,tankId:target.id,x:t.x+dx*length*f,y:t.y+dy*length*f});
+    for(let i=1;i<path.length;i++){
+      const a=path[i-1],b=path[i],dx=b.x-a.x,dy=b.y-a.y;
+      const overlap=(a.x-target.x)**2+(a.y-target.y)**2<reach**2-EPS;
+      const f=overlap?0:circleHit(a.x,a.y,dx,dy,target.x,target.y,reach);
+      if(f===null) continue;
+      impacts.push({bullet:beam,tankId:target.id,x:a.x+dx*f,y:a.y+dy*f});
+      break;
+    }
   }
 }
-
-
 
 function fireClassicWeapons(s,actions,events,impacts,deferred) {
   const p=s.profile;
@@ -411,7 +417,11 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
     if (t.weapon==='death-ray') {
       if (t.beamUntil!==undefined) {
         if (s.tick<t.beamUntil) emitClassicBeam(t,s,events,impacts,false);
-        else resetClassicWeapon(t);
+        else if(s.tick<t.beamUntil+p.deathRayFade) {
+          events.push({type:'death-ray-beam',weapon:'death-ray',tankId:t.id,bulletId:t.beamId,
+            path:t.beamPath,continuous:true,width:p.deathRayWidth,
+            fade:(t.beamUntil+p.deathRayFade-s.tick)/p.deathRayFade});
+        } else resetClassicWeapon(t);
         continue;
       }
       if (!t.weaponCharge) {
@@ -422,6 +432,8 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
       if (++t.weaponCharge+EPS<p.deathRayCharge) continue;
       t.beamId='b'+s.nextBullet++;
       t.beamUntil=s.tick+p.deathRayActive;
+      t.beamPath=immutablePath(traceDeathRay(s,{...muzzle(s,t),heading:t.aimAngle},
+        s.tanks.filter(target=>target.id!==t.id&&vulnerable(s,target,t.id))));
       emitClassicBeam(t,s,events,impacts,true);
       continue;
     }
@@ -460,11 +472,11 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
     }
     if (!pressed) continue;
     if (t.weapon==='laser') {
-      const b=shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:p.laserSpeed,ttl:p.laserTtl,kind:'laser'});
-      b.heading=t.angle;b.curved=false;
-      events.push({type:'weapon-fired',tankId:t.id,weapon:'laser',bulletId:b.id,x:t.x,y:t.y,
-        endX:t.x,endY:t.y,moving:true});
-      resetClassicWeapon(t);
+      if(t.fragId!=null) continue;
+      const b=shell(s,events,{owner:t.id,...muzzle(s,t),angle:t.angle,speed:p.laserSpeed,ttl:p.laserTtl,kind:'laser'});
+      b.heading=t.angle;b.safeDistance=p.laserLaunchSafe;t.fragId=b.id;t.weaponAmmo=0;t.aimGuide=null;
+      events.push({type:'weapon-fired',tankId:t.id,weapon:'laser',bulletId:b.id,x:b.x,y:b.y,
+        endX:b.x,endY:b.y,moving:true});
       continue;
     }
     if (t.weapon==='mine') {
@@ -506,34 +518,38 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
   }
 }
 
+function laserTarget(s,owner,x,y,dx,dy) {
+  let target=null;
+  for (const tank of s.tanks) {
+    if (!vulnerable(s,tank,owner)) continue;
+    const f=(x-tank.x)**2+(y-tank.y)**2<TANK_RADIUS**2-EPS?0:circleHit(x,y,dx,dy,tank.x,tank.y,TANK_RADIUS);
+    if(f!==null&&(!target||f<target.f-EPS)) target={tank,f};
+  }
+  return target;
+}
+
 function advanceLaser(b,s,events,impacts) {
   if (b.ttl<=0) return false;
   const owner=s.tanks.find(t=>t.id===b.owner);
-  const trace=traceLaser(s,b,s.profile.laserSpeed*Math.min(1,b.ttl),(x,y,dx,dy,edge,crossing)=>{
-    if (!b.ownerArmed&&Math.hypot(x-owner.x,y-owner.y)>TANK_RADIUS+EPS) b.ownerArmed=true;
-    let target=null;
-    for (const tank of s.tanks) {
-      if (!vulnerable(s,tank,b.owner)||tank.id===b.owner&&!b.ownerArmed) continue;
-      const f=(x-tank.x)**2+(y-tank.y)**2<TANK_RADIUS**2-EPS?0:circleHit(x,y,dx,dy,tank.x,tank.y,TANK_RADIUS);
-      if (f!==null&&f<=crossing&&(edge>1||f<edge-EPS)&&(!target||f<target.f-EPS)) target={tank,f};
-    }
-    return target;
+  const trace=traceLaser(s,b,s.profile.laserSpeed*Math.min(1,b.ttl),{
+    ignoreDistance:b.safeDistance??0,findTarget:(...segment)=>laserTarget(s,b.owner,...segment)
   });
-  const {x,y,heading,curved,path,target,atBoundary}=trace;
-  b.x=x;b.y=y;b.heading=heading;b.curved=curved;
+  const {x,y,heading,path,bounces,target,distance}=trace;
+  b.x=x;b.y=y;b.heading=heading;
   b.vx=Math.cos(heading)*s.profile.laserSpeed;b.vy=Math.sin(heading)*s.profile.laserSpeed;
+  b.safeDistance=Math.max(0,(b.safeDistance??0)-distance);b.ownerArmed=b.safeDistance===0;
+  b.travelled=(b.travelled??0)+distance;
+  for(const bounce of bounces) events.push({type:'bounce',bulletId:b.id,x:bounce.x,y:bounce.y,
+    vx:bounce.dx*s.profile.laserSpeed,vy:bounce.dy*s.profile.laserSpeed});
   b.path=[...(b.path??[]),...(b.path?path.slice(1):path)].slice(-s.profile.laserTrailPoints);
-  events.push({type:'laser-path',bulletId:b.id,ownerId:b.owner,path});
-  if (target) {
-    impacts.push({bullet:b,tankId:target.tank.id,x,y});
-    return false;
-  }
   b.ttl--;
-  if (atBoundary||b.ttl<=0) {
-    events.push({type:'shell-expired',bulletId:b.id,x,y,reason:atBoundary?'boundary':'ttl',kind:b.kind});
-    return false;
-  }
-  return true;
+  const ended=Boolean(target)||b.ttl<=EPS;
+  events.push({type:'laser-path',bulletId:b.id,ownerId:b.owner,path:ended?b.path:path,
+    ...(ended?{fadeTicks:Math.min(s.profile.laserFade,Math.max(1,Math.ceil(b.travelled/s.profile.laserSpeed-EPS)))}:{})});
+  if(target) impacts.push({bullet:b,tankId:target.tank.id,x,y});
+  else if(ended) events.push({type:'shell-expired',bulletId:b.id,x,y,reason:'ttl',kind:b.kind});
+  if(ended&&owner?.fragId===b.id) resetClassicWeapon(owner);
+  return !ended;
 }
 
 function advanceShell(b, s, events, impacts, deferred) {
@@ -817,6 +833,7 @@ export function step(state, actions) {
     events.push({type:'hit',tankId:t.id,...damage});
     if (t.alive) {
       t.alive=false;
+      if(t.weapon==='death-ray') resetClassicWeapon(t);
       events.push({type:'destroyed',tankId:t.id,bulletId:b.id,ownerId:b.owner,kind:b.kind});
     }
   }
@@ -857,9 +874,12 @@ export function step(state, actions) {
     awardPickups(s,events);
     if (s.tick>=s.config.maxTicks) s.result={winner:null,reason:'timeout'};
   }
-  // The guide previews the same curved trajectory without target collisions.
-  for (const t of s.tanks) t.aimGuide=t.alive&&t.weapon==='laser'
-    ? Object.freeze(traceLaser(s,{x:t.x,y:t.y,heading:t.angle},s.profile.laserGuide).path.map(p=>Object.freeze(p))) : null;
+  // The guide runs the same point reflections, with its longer launch
+  // exclusion distance and a shorter lookahead than the live projectile.
+  for (const t of s.tanks) t.aimGuide=t.alive&&t.weapon==='laser'&&t.fragId==null
+    ? immutablePath(traceLaser(s,{...muzzle(s,t),heading:t.angle},s.profile.laserGuide,{
+      ignoreDistance:s.profile.laserGuideSafe,findTarget:(...segment)=>laserTarget(s,t.id,...segment)
+    }).path) : null;
   if (s.result) {
     s.pickupBlocks=[];
     events.push({type:'ended',...s.result});

@@ -14,13 +14,25 @@ function validateAction(action) {
   return {throttle:action.throttle,turn:action.turn,fire:action.fire};
 }
 
+// Keep the bot protocol comfortably below its per-line cap even if all
+// eight tanks activate a death ray together. The exact dense path stays
+// in the state and authoritative events used by rendering/replay.
+function tankObservation({beamPath,...t}) {
+  const view={...t,aimGuide:t.aimGuide?.map(point=>({...point}))??null};
+  if(beamPath) {
+    const stride=Math.max(1,Math.ceil((beamPath.length-1)/63));
+    view.beamPath=beamPath.filter((_,i)=>i===beamPath.length-1||i%stride===0).map(point=>({...point}));
+  }
+  return view;
+}
+
 function observe(state,playerId) {
   if (!state.tanks.some(t=>t.id===playerId)) throw new Error('unknown player ID');
   const {tick,width,height,walls,tanks,bullets,pickups,result,mines,settleUntil,pickupBlocks,shellLimit,zone,friendlyFire,teams,profile}=state;
   return {
     tick,playerId,width,height,
     walls:walls.map(w=>({...w})),
-    tanks:tanks.map(t=>({...t,aimGuide:t.aimGuide?.map(point=>({...point}))??null})),
+    tanks:tanks.map(tankObservation),
     bullets:bullets.map(b=>({...b,...(b.path?{path:b.path.map(point=>({...point}))}:{})})),
     pickups:pickups.map(p=>({...p})),
     result:result?{...result}:null,

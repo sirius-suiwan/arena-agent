@@ -55,38 +55,6 @@ function segments(x,y,vx,vy,time,walls,radius,maxBounces) {
   return out;
 }
 
-function laserProfile(obs,walls) {
-  const p=obs.profile;
-  if(!Number.isFinite(p.laserBendPerTick)||!Number.isFinite(p.laserMaxSegment)||p.laserMaxSegment<=0) return null;
-  return {speed:p.laserSpeed,curvature:p.laserBendPerTick/p.laserSpeed,segment:p.laserMaxSegment,
-    width:obs.width,height:obs.height,interior:walls.filter(w=>w.a>0&&w.a<(w.vert?obs.width:obs.height))};
-}
-
-// Use the observed laser contract rather than the ordinary bounce model.
-// Distances are subdivided into swept chords after the first pierced wall.
-function* laserSegments(x,y,angle,curved,time,arc,speed=arc.speed) {
-  let elapsed=0;
-  for(let n=0;n<256&&elapsed<time-EPS;n++) {
-    const distance=Math.min(arc.segment,(time-elapsed)*speed);
-    const bend=curved?arc.curvature*distance:0;
-    const chord=bend?distance*Math.sin(bend/2)/(bend/2):distance;
-    const dx=Math.cos(angle+bend/2)*chord,dy=Math.sin(angle+bend/2)*chord;
-    const boundary=Math.min(dx>EPS?(arc.width-x)/dx:dx<-EPS?-x/dx:Infinity,
-      dy>EPS?(arc.height-y)/dy:dy<-EPS?-y/dy:Infinity);
-    const crossing=curved?{found:false}:sweptWall(x,y,dx,dy,1,arc.interior,0);
-    const f=clamp(Math.min(boundary,crossing.found?crossing.time:1),0,1);
-    const end=elapsed+distance*f/speed;
-    const dt=end-elapsed;
-    if(dt>EPS){
-      yield {x,y,t:dt,vx:dx*f/dt,vy:dy*f/dt,bounced:false,start:elapsed,curved};
-    }
-    x+=dx*f;y+=dy*f;angle+=bend*f;elapsed=end;
-    if(boundary<=1&&(!crossing.found||boundary<=crossing.time)) break;
-    if(crossing.found) curved=true;
-    else if(dt<=EPS) break;
-  }
-}
-
 function tankIntersection(seg,tank,radius) {
   const dx=tank.x-seg.x,dy=tank.y-seg.y;
   const speed2=seg.vx**2+seg.vy**2;
@@ -98,16 +66,17 @@ function tankIntersection(seg,tank,radius) {
   return t<=seg.t ? t : Infinity;
 }
 
-function shot(me,angle,enemies,walls,weapon,speed,maxTime,arc) {
+function shot(me,angle,enemies,walls,weapon,speed,maxTime,profile) {
   const beam=weapon==='laser'||weapon==='death-ray';
-  const curvedShot=weapon==='laser'&&arc;
-  const parts=curvedShot?laserSegments(me.x,me.y,angle,false,maxTime,arc,1)
-    :segments(me.x,me.y,Math.cos(angle)*speed,Math.sin(angle)*speed,maxTime,
-      weapon==='death-ray'?[]:walls,beam?0:3,beam?5:2);
+  const dx=Math.cos(angle),dy=Math.sin(angle);
+  const distance=profile?.muzzleOffset??(beam?18:0);
+  const muzzle=wallTime(me.x,me.y,dx,dy,distance,walls,0).t;
+  const parts=segments(me.x+Math.max(0,muzzle-EPS)*dx,me.y+Math.max(0,muzzle-EPS)*dy,
+    dx*speed,dy*speed,maxTime,weapon==='death-ray'?[]:walls,beam?0:3,beam?8:2);
   let elapsed=0;
   for (const part of parts) {
     let min=Infinity,hit=null;
-    if(part.bounced||curvedShot&&elapsed>R+6) min=tankIntersection(part,me,beam?R:R+3);
+    if(part.bounced) min=tankIntersection(part,me,beam?R:R+3);
     if(min<Infinity) hit=me;
     for(const e of enemies) {
       const t=tankIntersection(part,e,beam?R:R+3);
@@ -165,7 +134,7 @@ function canOccupy(x,y,walls) {
   return true;
 }
 
-function hazardTrack(me,projectiles,walls,physics,arc) {
+function hazardTrack(me,projectiles,walls,physics) {
   const selected=projectiles.filter(b=>d2(me,b)<180**2)
     .sort((a,b)=>d2(me,a)-d2(me,b)).slice(0,16);
   const tracks=[];
@@ -173,12 +142,14 @@ function hazardTrack(me,projectiles,walls,physics,arc) {
     const horizon=physics.ticks(HORIZON), life=Math.min(horizon,b.ttl??horizon);
     if(!Number.isFinite(b.vx+b.vy)||life<=0) continue;
     const radius=b.kind==='laser'||b.kind==='shrapnel'?0:3;
-    const path=b.kind==='laser'&&arc?laserSegments(b.x,b.y,b.heading??Math.atan2(b.vy,b.vx),Boolean(b.curved),life,arc)
-      :segments(b.x,b.y,b.vx,b.vy,life,walls,radius,b.kind==='shrapnel'?0:3);
+    const path=segments(b.x,b.y,b.vx,b.vy,life,walls,radius,b.kind==='shrapnel'?0:b.kind==='laser'?8:3);
     let t=0;
     for (const s of path) {
       const warmup=Math.max(0,Math.ceil(b.safeTicks??0)-t);
-      if(b.owner!==me.id||b.ownerArmed||s.bounced) {
+      if(b.kind==='laser') {
+        const skip=Math.max(0,(b.safeDistance??0)/Math.hypot(s.vx,s.vy)-t);
+        if(skip<s.t) tracks.push({...s,x:s.x+skip*s.vx,y:s.y+skip*s.vy,t:s.t-skip,start:t+skip});
+      } else if(b.owner!==me.id||b.ownerArmed||s.bounced) {
         if(warmup<s.t) tracks.push({...s,x:s.x+warmup*s.vx,y:s.y+warmup*s.vy,t:s.t-warmup,start:t+warmup});
       }
       // Newly fired own shell: measure once its center leaves its owner's launch overlap.
@@ -236,7 +207,7 @@ function sweptWall(x,y,vx,vy,limit,walls,radius,axisBounce=false) {
   return {time,found,vx:vx-dot*nx,vy:vy-dot*ny};
 }
 
-function candidateDefenseFrames(me,bullets,walls,horizon,physics,profile,arc) {
+function candidateDefenseFrames(me,bullets,walls,horizon,physics,profile) {
   const frames=Array.from({length:horizon},()=>[]);
   const nearest=bullets.flatMap(b=>{
     const speed=Math.hypot(b.vx,b.vy),distance=Math.sqrt(d2(me,b));
@@ -251,7 +222,7 @@ function candidateDefenseFrames(me,bullets,walls,horizon,physics,profile,arc) {
     function addTrack(x,y,vx,vy,start,end,armed) {
       // Approximate own-shell protection until it clears its initial firing
       // hull or hits its first wall. All other projectiles are already armed.
-      const clear=armed?0:Math.max(0,(safeRadius+1-Math.sqrt(d2(b,me)))/speed);
+      const clear=b.kind==='laser'?(b.safeDistance??0)/speed:armed?0:Math.max(0,(safeRadius+1-Math.sqrt(d2(b,me)))/speed);
       const first=Math.max(start,clear,Math.ceil(b.safeTicks??0));
       for(let i=Math.max(0,Math.floor(first));i<horizon&&i<end-EPS;i++) {
         const from=Math.max(first,i)-start,to=Math.min(end,i+1)-start;
@@ -266,14 +237,8 @@ function candidateDefenseFrames(me,bullets,walls,horizon,physics,profile,arc) {
       }
     }
     let armed=b.owner!==me.id||b.ownerArmed;
-    if(b.kind==='laser'&&arc){
-      for(const p of laserSegments(b.x,b.y,b.heading??Math.atan2(b.vy,b.vx),Boolean(b.curved),life,arc)) {
-        addTrack(p.x,p.y,p.vx,p.vy,p.start,p.start+p.t,armed);
-      }
-      continue;
-    }
     let x=b.x,y=b.y,vx=b.vx,vy=b.vy,start=0;
-    for(let segment=0;segment<7&&start<life-EPS;segment++) {
+    for(let segment=0;segment<(b.kind==='laser'?12:7)&&start<life-EPS;segment++) {
       const hit=sweptWall(x,y,vx,vy,life-start,affected,radius,b.kind!=='shrapnel');
       const end=start+hit.time;
       addTrack(x,y,vx,vy,start,end,armed);
@@ -303,10 +268,20 @@ function predictEscapeStep(p,move,frame,walls,enemies,physics) {
   return {x,y,a,hazard,hit};
 }
 
-function tacticalDodge(me,preferred,bullets,mapWalls,enemies,zone,physics,profile,arc) {
+function tacticalDodge(me,preferred,bullets,mapWalls,enemies,zone,physics,profile,beams,tick) {
   const horizon=physics.ticks(32),stride=physics.ticks(6);
   const walls=nearWalls(me,mapWalls,horizon*physics.f+R+4);
-  const frames=candidateDefenseFrames(me,bullets,mapWalls,horizon,physics,profile,arc);
+  const frames=candidateDefenseFrames(me,bullets,mapWalls,horizon,physics,profile);
+  for(const tank of beams) {
+    const end=Math.min(horizon,tank.beamUntil-tick-1);
+    for(let j=1;j<tank.beamPath.length;j++) {
+      const a=tank.beamPath[j-1],b=tank.beamPath[j];
+      const dx=b.x-a.x,dy=b.y-a.y,len=dx*dx+dy*dy;
+      if(len<=EPS||Math.min(d2(me,a),d2(me,b))>(horizon*physics.f+R+Math.sqrt(len))**2) continue;
+      const segment={x0:a.x,y0:a.y,dx,dy,il:1/len,safeRadius:R+(profile.deathRayWidth??0)/2};
+      for(let i=0;i<end;i++) frames[i].push(segment);
+    }
+  }
   if(!frames.some(frame=>frame.length)) return null;
   const start={x:me.x,y:me.y,a:me.angle,cost:0,first:null};
   const limit=(p,i)=>zone&&!insideRect(p,zone)
@@ -450,7 +425,7 @@ function safety(me,action,walls,bullets,mines,enemies,roundTick,physics) {
   return {risk,x,y};
 }
 
-function aimPlan(me,enemies,walls,weapon,speed,tick,physics,laserRange,arc) {
+function aimPlan(me,enemies,walls,weapon,speed,tick,physics,laserRange,profile) {
   const beam=weapon==='laser'||weapon==='death-ray';
   const shotSpeed=beam?1:speed;
   const maxTime=beam ? (weapon==='laser'?laserRange:1000) : physics.ticks(58);
@@ -458,9 +433,7 @@ function aimPlan(me,enemies,walls,weapon,speed,tick,physics,laserRange,arc) {
   const candidates=[me.angle,me.angle-physics.turn,me.angle+physics.turn,...direct];
   // Mirror targets across nearby wall axes for one-bank candidates; actual
   // tracing rejects imaginary shots behind walls or hits on ourselves.
-  if(weapon==='laser'&&arc) {
-    for(const angle of direct) for(const bend of [-0.07,-0.15,-0.23,-0.32,-0.44,0.07]) candidates.push(angle+bend);
-  } else if(weapon!=='death-ray'&&tick%physics.ticks(2)===0) {
+  if(weapon!=='death-ray'&&tick%physics.ticks(2)===0) {
     const axes=new Set();
     for(const w of nearWalls(me,walls,130)) {
       const key=(w.vert?'x':'y')+w.a;
@@ -474,7 +447,7 @@ function aimPlan(me,enemies,walls,weapon,speed,tick,physics,laserRange,arc) {
   }
   let best=null;
   for(const a of candidates) {
-    const h=shot(me,a,enemies,walls,weapon,shotSpeed,maxTime,arc);
+    const h=shot(me,a,enemies,walls,weapon,shotSpeed,maxTime,profile);
     if(!h||h.hit===me.id) continue;
     const err=Math.abs(wrap(a-me.angle));
     let cost=err*18+h.travel*(beam?0.014:0.24)+(h.bounced?5:0);
@@ -588,7 +561,7 @@ function zoneNavigation(zone,me,map,costs,tick,physics) {
 export function makePolicy() {
   let map=null,round=null,oldPose=null,stuck=0,escape=null,waypoint=null,cornerCell=-1,steer=1;
   let lockAim=null,aimStarted=null,navUntil=0;
-  let routeCache=null,routeCell=-1,arc=null,motion=new Map();
+  let routeCache=null,routeCell=-1,motion=new Map();
   return obs=>{
     if (!Array.isArray(obs?.tanks)||!Array.isArray(obs.walls)||!Array.isArray(obs.bullets)||!validProfile(obs.profile)) return neutral();
     const me=obs.tanks.find(t=>t.id===obs.playerId&&t.alive);
@@ -596,7 +569,7 @@ export function makePolicy() {
     if(!map||round!==(obs.round??1)) {
       map=newMap(obs);round=obs.round??1;oldPose=null;stuck=0;escape=null;waypoint=null;cornerCell=-1;steer=1;
       lockAim=null;aimStarted=null;navUntil=0;
-      routeCache=null;routeCell=-1;arc=laserProfile(obs,map.walls);motion=new Map();
+      routeCache=null;routeCell=-1;motion=new Map();
     }
     const tick=obs.roundTick??obs.tick??0;
     const profile=obs.profile, physics=kinetics(profile);
@@ -671,7 +644,7 @@ export function makePolicy() {
       const beam=weapon==='laser'||weapon==='death-ray';
       const canPress=!me.fireHeld;
       const directRange=beam?(weapon==='laser'?laserRange:576):physics.ticks(58);
-      const currentShot=shot(me,me.angle,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange,arc);
+      const currentShot=shot(me,me.angle,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange,profile);
       const immediatelyUseful=currentShot&&currentShot.hit!==me.id&&currentShot.travel<=(beam?12:physics.ticks(12));
       if(supply) {
         // One quick shot is worth taking; waiting or turning repeatedly over a
@@ -684,7 +657,7 @@ export function makePolicy() {
       } else {
         // Keep an aim for a few ticks to avoid oscillating between banks/targets.
         if(!lockAim||tick-lockAim.tick>=physics.ticks(4)) {
-          const plan=aimPlan(me,nearbyEnemies,map.walls,weapon,shotSpeed,tick,physics,laserRange,arc);
+          const plan=aimPlan(me,nearbyEnemies,map.walls,weapon,shotSpeed,tick,physics,laserRange,profile);
           lockAim=plan?{...plan,tick}:null;
         }
         if(lockAim) {
@@ -697,7 +670,7 @@ export function makePolicy() {
               preferred={throttle:0,turn:Math.abs(err)>Math.max(0.03,physics.turn/2)?Math.sign(err):0,fire:false};
               navigating=false;
               if(Math.abs(err)<0.12) {
-                const h=shot(me,me.angle+preferred.turn*physics.turn,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange,arc);
+                const h=shot(me,me.angle+preferred.turn*physics.turn,nearbyEnemies,map.walls,weapon,beam?1:shotSpeed,directRange,profile);
                 preferred.fire=Boolean(h&&h.hit!==me.id&&canPress);
               }
             }
@@ -727,7 +700,7 @@ export function makePolicy() {
       if(intercept) {preferred=intercept;navigating=Boolean(intercept.throttle)&&hasRoute;}
     }
     const mineThreat=(obs.mines??[]).filter(m=>d2(me,m)<65**2);
-    const projectiles=hazardTrack(me,obs.bullets,map.walls,physics,arc);
+    const projectiles=hazardTrack(me,obs.bullets,map.walls,physics);
     if(projectiles.length||mineThreat.length) {
       const before=safety(me,preferred,obstacles,projectiles,mineThreat,nearbyEnemies,tick,physics);
       if(before.risk>2.5) {
@@ -742,8 +715,10 @@ export function makePolicy() {
         preferred={...candidate};
       }
     }
-    if(obs.bullets.length&&!me.invulnerable&&!(weapon==='remote'&&me.fragId)&&!(weapon==='death-ray'&&me.weaponCharge>0)) {
-      const evasive=tacticalDodge(me,preferred,obs.bullets,map.walls,nearbyEnemies,obs.zone,physics,profile,arc);
+    const beams=enemies.filter(t=>Array.isArray(t.beamPath)&&t.beamUntil>tick&&
+      (obs.friendlyFire||obs.teams?.[me.id]===undefined||obs.teams[t.id]!==obs.teams[me.id]));
+    if((obs.bullets.length||beams.length)&&!me.invulnerable&&!(weapon==='remote'&&me.fragId)&&!(weapon==='death-ray'&&me.weaponCharge>0)) {
+      const evasive=tacticalDodge(me,preferred,obs.bullets,map.walls,nearbyEnemies,obs.zone,physics,profile,beams,tick);
       if(evasive&&(evasive.throttle!==preferred.throttle||evasive.turn!==preferred.turn)) {
         preferred={...evasive};navigating=false;
       }
@@ -756,7 +731,7 @@ export function makePolicy() {
         navigating=false;
       }
     }
-    if(weapon==='death-ray'&&me.weaponCharge>0) {preferred=neutral();navigating=false;}
+    if(weapon==='death-ray'&&me.weaponCharge>0||weapon==='laser'&&me.fragId) {preferred=neutral();navigating=false;}
     oldPose={x:me.x,y:me.y,angle:me.angle,throttle:preferred.throttle,turn:preferred.turn,navigating};
     return preferred;
   };

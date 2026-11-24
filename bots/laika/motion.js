@@ -54,38 +54,6 @@ function distanceToPath2(p,x,y,u,v) {
   return (p.x-x-dx*f)**2+(p.y-y-dy*f)**2;
 }
 
-function sampleLaser(b,n,rows,obs,me,travel) {
-  const {profile,width,height}=obs;
-  let x=b.x,y=b.y,heading=b.heading??Math.atan2(b.vy,b.vx),curved=Boolean(b.curved);
-  const speed=profile.laserSpeed,bend=profile.laserBendPerTick??0;
-  const walls=wallsNear(obs.walls,b,speed*n).filter(w=>w.x1!==w.x2?w.y1>0&&w.y1<height:w.x1>0&&w.x1<width);
-  const segment=Math.max(8,profile.laserMaxSegment??12);
-  let armed=b.owner!==me.id||b.ownerArmed===true;
-  for(let t=0;t<n;t++) {
-    let left=speed;
-    for(let i=0;i<20&&left>EPS;i++) {
-      const length=Math.min(segment,left),angle=curved?bend*length/speed:0;
-      const chord=angle?length*Math.sin(angle/2)/(angle/2):length;
-      const dx=chord*Math.cos(heading+angle/2),dy=chord*Math.sin(heading+angle/2);
-      const edge=clamp(Math.min(dx>EPS?(width-x)/dx:dx<-EPS?-x/dx:Infinity,
-        dy>EPS?(height-y)/dy:dy<-EPS?-y/dy:Infinity),0,1);
-      let cross=Infinity;
-      if(!curved) for(const w of walls) {
-        const v=w.x1===w.x2,d=v?dx:dy;
-        if(Math.abs(d)<EPS) continue;
-        const f=(v?w.x1-x:w.y1-y)/d,along=v?y+f*dy:x+f*dx;
-        if(f>EPS&&f<=1&&along>=(v?w.y1:w.x1)-EPS&&along<=(v?w.y2:w.x2)+EPS) cross=Math.min(f,cross);
-      }
-      const f=Math.min(edge,cross),u=x+dx*f,v=y+dy*f;
-      if(armed&&distanceToPath2(me,x,y,u,v)<travel**2) rows[t].push([x,y,u,v,HULL]);
-      x=u;y=v;heading+=angle*f;
-      if(sq(me,{x,y})>HULL**2) armed=true;
-      if(edge<1&&edge<=cross) return;
-      if(cross<=edge) {curved=true;left-=f*length;} else left-=length;
-    }
-  }
-}
-
 function forecast(me,obs,physics,horizon) {
   const rows=Array.from({length:horizon},()=>[]);
   const travel=physics.f*horizon+HULL+8;
@@ -100,17 +68,22 @@ function forecast(me,obs,physics,horizon) {
   }
   candidates.sort((a,b)=>a.bound-b.bound);
   for(const {b,speed,ticks} of candidates.slice(0,20)) {
-    if(b.kind==='laser') {sampleLaser(b,ticks,rows,obs,me,travel);continue;}
-    const r=b.kind==='gatling'?(obs.profile.gatlingRadius??3)
+    const r=b.kind==='laser'?0:b.kind==='gatling'?(obs.profile.gatlingRadius??3)
       :b.kind==='shrapnel'?(obs.profile.fragmentRadius??3):3;
     const walls=wallsNear(obs.walls,b,speed*ticks+r);
-    let {x,y,vx,vy}=b,armed=b.owner!==me.id||b.ownerArmed===true;
+    let {x,y,vx,vy}=b,armed=b.owner!==me.id||b.ownerArmed===true,safeDist=b.safeDistance??0;
     for(let t=0;t<ticks;t++) {
       let left=Math.min(1,ticks-t),stopped=false;
       for(let k=0;k<4&&left>EPS;k++) {
         const dx=vx*left,dy=vy*left,w=wallContact(x,y,dx,dy,walls,r);
         const f=w?.f??1,u=x+dx*f,v=y+dy*f;
-        if(t>=Math.ceil(b.safeTicks??0)&&armed&&distanceToPath2(me,x,y,u,v)<travel**2) rows[t].push([x,y,u,v,HULL+r]);
+        if(b.kind==='laser') {
+          const span=speed*left*f;
+          const cut=Math.min(1,span>EPS?safeDist/span:1);
+          const a=x+(u-x)*cut,c=y+(v-y)*cut;
+          if(cut<1&&distanceToPath2(me,a,c,u,v)<travel**2) rows[t].push([a,c,u,v,HULL]);
+          safeDist=Math.max(0,safeDist-span);
+        } else if(t>=Math.ceil(b.safeTicks??0)&&armed&&distanceToPath2(me,x,y,u,v)<travel**2) rows[t].push([x,y,u,v,HULL+r]);
         x=u;y=v;
         if(!w) {if(sq(me,{x,y})>(HULL+r)**2) armed=true;break;}
         if(b.kind==='shrapnel') {stopped=true;break;}
@@ -133,10 +106,15 @@ function forecast(me,obs,physics,horizon) {
     const start=t.beamUntil>now?0:
       t.weaponCharge>0&&t.beamUntil===undefined?Math.max(0,(obs.profile.deathRayCharge??Infinity)-t.weaponCharge-1):Infinity;
     if(start>=horizon) continue;
-    const reach=Math.hypot(obs.width,obs.height),u=t.x+Math.cos(t.angle)*reach,v=t.y+Math.sin(t.angle)*reach;
-    if(distanceToPath2(me,t.x,t.y,u,v)>=travel**2) continue;
-    const end=t.beamUntil>now?Math.min(horizon,t.beamUntil-now):horizon;
-    for(let i=start;i<end;i++) rows[i].push([t.x,t.y,u,v,HULL]);
+    const reach=Math.hypot(obs.width,obs.height);
+    const path=t.beamPath??[t,{x:t.x+Math.cos(t.angle)*reach,y:t.y+Math.sin(t.angle)*reach}];
+    const end=t.beamUntil>now?Math.min(horizon,t.beamUntil-now-1):horizon;
+    for(let j=1;j<path.length;j++) {
+      const a=path[j-1],b=path[j];
+      if(distanceToPath2(me,a.x,a.y,b.x,b.y)>=travel**2) continue;
+      const segment=[a.x,a.y,b.x,b.y,HULL+(obs.profile.deathRayWidth??0)/2];
+      for(let i=start;i<end;i++) rows[i].push(segment);
+    }
   }
   return rows;
 }

@@ -161,13 +161,11 @@ test('GPT-dots turns to open an escape alongside a wall before a passing shell p
   assert.deepEqual(makePolicy()(obs),{throttle:0,turn:-1,fire:false});
 });
 
-test('GPT-dots projects the new laser arc through an interior wall',()=>{
+test('GPT-dots shoots an unobstructed laser but does not shoot through an interior wall',()=>{
   const profile=classicProfile(60);
-  const obs=observation({
-    profile,tanks:[{...A,x:32,y:32,angle:0,weapon:'laser'},{...B,x:128,y:35}],
-    walls:[{x1:64,y1:0,x2:64,y2:64}]
-  });
+  const obs=observation({profile,tanks:[{...A,x:32,y:32,angle:0,weapon:'laser'},{...B,x:128,y:35}]});
   assert.equal(makePolicy()(obs).fire,true);
+  assert.equal(makePolicy()({...obs,walls:[{x1:64,y1:0,x2:64,y2:64}]}).fire,false);
 });
 
 test('an alone invulnerable survivor without crates or hazards stays neutral',()=>{

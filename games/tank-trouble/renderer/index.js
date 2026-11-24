@@ -253,6 +253,26 @@ function drawLaserTrail(ctx, path, tint, outline = tint.outline) {
   return true;
 }
 
+function cropTrailStart(path,ratio) {
+  let total=0;
+  const lengths=path.map((point,index)=>{
+    const before=path[index-1];
+    const distance=before?Math.hypot(point.x-before.x,point.y-before.y):0;
+    total+=distance;
+    return distance;
+  });
+  let removed=total*ratio;
+  for(let i=1;i<path.length;i++) {
+    const segment=lengths[i];
+    if(segment>removed) {
+      const p=path[i-1],q=path[i],part=removed/segment;
+      return [{x:p.x+(q.x-p.x)*part,y:p.y+(q.y-p.y)*part},...path.slice(i)];
+    }
+    removed-=segment;
+  }
+  return [];
+}
+
 function drawEffects(ctx, state, effects, mode) {
   for (const { event, age } of effects) {
     if (event.type==='shell-expired'&&event.kind==='shrapnel'&&event.reason==='wall') {
@@ -267,24 +287,30 @@ function drawEffects(ctx, state, effects, mode) {
       continue;
     }
     if (event.type === 'laser-path') {
-      if (age === 0 && !state.bullets.some(bullet => bullet.id === event.bulletId)) {
-        drawLaserTrail(ctx, event.path, teamForOwner(state, mode, event.ownerId));
+      if (!state.bullets.some(bullet => bullet.id === event.bulletId) &&
+          (age === 0 || event.fadeTicks > age)) {
+        ctx.save();
+        if (event.fadeTicks) ctx.globalAlpha = 1 - age / event.fadeTicks;
+        const path=event.fadeTicks&&age>0&&Array.isArray(event.path)
+          ? cropTrailStart(event.path,age/event.fadeTicks) : event.path;
+        drawLaserTrail(ctx, path, teamForOwner(state, mode, event.ownerId));
+        ctx.restore();
       }
       continue;
     }
     const continuous = event.continuous === true || event.type === 'death-ray-beam';
     if (continuous && age !== 0) continue;
-    const alpha = continuous ? 1 : Math.max(0, 1 - age / 10);
+    const alpha = continuous ? (event.fade ?? 1) : Math.max(0, 1 - age / 10);
     if (!alpha) continue;
     ctx.save();
     ctx.globalAlpha = alpha;
     const tint = teamForOwner(state, mode, event.ownerId ?? event.tankId);
-    if (continuous
-        && [event.x, event.y, event.endX, event.endY].every(Number.isFinite)) {
-      ctx.beginPath(); ctx.moveTo(event.x, event.y); ctx.lineTo(event.endX, event.endY);
-      ctx.lineWidth = 4.2; ctx.strokeStyle = tint.outline; ctx.stroke();
-      ctx.lineWidth = 2.5; ctx.strokeStyle = tint.hull; ctx.stroke();
-      ctx.lineWidth = 0.9; ctx.strokeStyle = tint.turret; ctx.stroke();
+    if (continuous && drawPath(ctx,event.path)) {
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      const width=event.width??4.2;
+      ctx.lineWidth = width; ctx.strokeStyle = tint.outline; ctx.stroke();
+      ctx.lineWidth = width*0.60; ctx.strokeStyle = tint.hull; ctx.stroke();
+      ctx.lineWidth = width*0.22; ctx.strokeStyle = tint.turret; ctx.stroke();
     } else if (event.type === 'shield-block') {
       const tank = state.tanks.find(({id}) => id === event.tankId);
       const point = pointIsValid(tank) ? tank : event;
