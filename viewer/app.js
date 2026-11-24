@@ -12,6 +12,8 @@ const el = Object.fromEntries([
   'match-controls', 'stop-match', 'play-replay', 'stop-replay', 'details', 'menu', 'stage', 'return-menu', 'continue-match',
   'scoreboard', 'kill-board', 'arena-round-mode', 'arena-round', 'arena-round-target', 'round-label', 'round-notice', 'canvas-wrap',
   'kill-panel', 'kill-markers', 'kill-status', 'readiness-warning',
+  'live-clock','arena-alive','live-summary','menu-hero','setup-view','menu-start','open-setup','close-setup','setup-inspection','menu-replay','hero-tank-a','hero-tank-b',
+  'startup-panel','startup-title','startup-count','startup-progress','startup-seats','startup-seconds','startup-cancel',
   'custom-seat-list', 'custom-seat-status', 'custom-start',
   'seat-name-A', 'seat-name-B', 'seat-name-C', 'seat-name-D', 'seat-name-E', 'seat-name-F', 'seat-name-G', 'seat-name-H', 'seat-bot-A', 'seat-bot-B', 'seat-bot-C', 'bot-catalog-status',
   'timeline', 'prev', 'next', 'event-count', 'event-hint', 'event-list', 'frame-actions',
@@ -27,11 +29,22 @@ let frameIndex = 0;
 let playback = null;
 let starting = false;
 let startAttempt = null;
+let startupSnapshot = null;
+let startupTimer = null;
+let startupRendered = null;
+let setupVisible = false;
+let menuArtDrawn = false;
+let compactSummary = null;
+let dismissedStartupId = null;
 const loadingMatch = blank();
+const startupDismissed = () => startupSnapshot?.phase === 'failed';
 
 function clearStartAttempt() {
   if (startAttempt) clearTimeout(startAttempt.timer);
   startAttempt = null;
+  startupSnapshot = null;
+  clearTimeout(startupTimer);
+  startupTimer = null;
   starting = false;
 }
 
@@ -282,6 +295,8 @@ function renderScoreboard(match, state, renderer, kills = {}) {
         tag.setAttribute('data-team', team);
         identity.append(tag);
       }
+      const life = makeNode('span', 'score-life');
+      identity.append(life);
       const face = makeNode('div', 'score-face');
       const icon = makeNode('canvas', 'score-icon');
       const number = makeNode('span', 'score-number', '0');
@@ -294,7 +309,10 @@ function renderScoreboard(match, state, renderer, kills = {}) {
       const equip = makeNode('div', 'score-equipment');
       const weaponIcon = makeNode('canvas', 'weapon-badge');
       const weaponText = makeNode('span', 'weapon-text');
-      equip.append(weaponIcon, weaponText);
+      const shieldBadge = makeNode('canvas', 'weapon-badge shield-badge');
+      shieldBadge.setAttribute('aria-hidden', 'true');
+      const shieldText = makeNode('span', 'shield-text', '护盾');
+      equip.append(weaponIcon, weaponText, shieldBadge, shieldText);
       card.append(face, identity, equip);
       card.title = player;
       icon.setAttribute('aria-hidden', 'true');
@@ -307,12 +325,13 @@ function renderScoreboard(match, state, renderer, kills = {}) {
       const railName = makeNode('span', 'kill-name', names[index]);
       railName.dir = 'auto';
       const count = makeNode('strong', 'kill-number', '0');
-      rail.append(railIcon, count, railName);
+      const railScore = makeNode('strong', 'kill-score');
+      rail.append(railIcon, railName, railScore, count);
       rail.title = player;
       items.append(card);
       railItems.append(rail);
-      return { id, player, card, icon, number, ammo, slots, available, equip, weaponIcon,
-        weaponText, rail, railIcon, count, maxAmmo: 0, bars: [], equipment: undefined };
+      return { id, player, card, icon, number, ammo, slots, available, equip, weaponIcon, life, shieldBadge, shieldText, railScore,
+        weaponText, rail, railIcon, count, maxAmmo: 0, bars: [], equipment: undefined, hadShield: false };
     });
     el.scoreboard.replaceChildren(items);
     el['kill-board'].replaceChildren(railItems);
@@ -336,9 +355,14 @@ function renderScoreboard(match, state, renderer, kills = {}) {
     row.rail.classList.toggle('is-destroyed', dead);
     row.number.hidden = teamIds.includes(teams[row.id]);
     setText(row.number, score);
+    setText(row.life, dead ? '已击毁' : '存活');
+    setText(row.railScore, teamIds.includes(teams[row.id]) ? (state?.teamScores?.[teams[row.id]] ?? 0) : score);
+    row.railScore.title = '比分';
+    row.count.title = '击杀';
+    row.ammo.hidden = !ammo || dead;
     setText(row.count, killCount);
     row.rail.setAttribute('aria-label', `${row.player}：${killCount} 次击杀`);
-    row.ammo.hidden = !ammo;
+
     if (ammo) {
       setText(row.available, `${ammo.available}/${ammo.limit}`);
       row.ammo.title = '空闲普通弹槽，开火仍受冷却和特殊武器状态限制';
@@ -355,14 +379,19 @@ function renderScoreboard(match, state, renderer, kills = {}) {
         : equipped === 'frag' && tank?.fragId ? ' · 可引爆'
         : equipped === 'remote' && tank?.fragId ? ' · 转向操控'
         : equipped === 'missile' && tank?.fragId ? ' · 导弹飞行中' : '';
-      setText(row.weaponText, [weapon ? `${weapon}${quantity}` : '', shield ? '护盾 ×1' : ''].filter(Boolean).join(' · '));
+      setText(row.weaponText, weapon ? `${weapon}${quantity}` : '');
       row.equip.title = [weapon ? `已装备${weapon}` : '', shield ? '护盾可抵消一次伤害' : ''].filter(Boolean).join('，');
-      const badge = weapon ? equipped : 'shield';
-      if (row.equipment !== badge) renderer?.weaponIcon?.(row.weaponIcon, badge);
-      row.equipment = badge;
+      if (weapon && row.equipment !== equipped) renderer?.weaponIcon?.(row.weaponIcon, equipped);
+      row.equipment = equipped;
     } else row.equipment = undefined;
+    row.weaponIcon.hidden = row.weaponText.hidden = !weapon;
+    row.shieldBadge.hidden = row.shieldText.hidden = !shield;
+    if (shield && !row.hadShield) renderer?.weaponIcon?.(row.shieldBadge, 'shield');
+    row.hadShield = shield;
     row.card.setAttribute('aria-label', `选手 ${row.player}：${teamIds.includes(teams[row.id]) ? '队伍 ' + teamLetter(teams[row.id]) : score + ' 分'}${dead ? '，本局已击毁' : ''}${ammo ? `，空闲普通弹槽 ${ammo.available}/${ammo.limit}` : ''}${weapon ? `，已装备${weapon}` : ''}${shield ? '，护盾剩余一次' : ''}`);
   }
+  const alive = state?.tanks?.filter(tank => tank.alive !== false).length ?? 0;
+  setText(el['arena-alive'], state?.tanks?.length ? `${alive}/${state.tanks.length} 存活` : '');
   const round = state?.round ?? 1;
   const fixed = state?.roundLimit ?? match.manifest?.config?.roundLimit;
   const target = Number.isSafeInteger(fixed) && fixed > 0 ? `共 ${fixed} 局`
@@ -441,7 +470,7 @@ function zoneLabel(state, tickRate) {
 
 function render() {
   drawPending = false;
-  const match = replay ?? (starting ? loadingMatch : live);
+  const match = replay ?? (starting || startupDismissed() ? loadingMatch : live);
   const current = replay ? frameIndex : match.frames.length - 1;
   const record = match.frames[current];
   const hasFrames = Boolean(record?.state);
@@ -467,11 +496,26 @@ function render() {
   ].filter(Boolean).join('／') || '对局情报';
   setText(el['match-insight'], privileged.length ? `${ability}：${privileged.join('、')}` : '');
   el.menu.hidden = !menuVisible;
+  el['setup-view'].hidden = !setupVisible;
+  el['menu-hero'].hidden = setupVisible;
+  if (menuVisible && !setupVisible && !menuArtDrawn) {
+    const renderer = renderers['tank-trouble'];
+    renderer?.scoreIcon?.(el['hero-tank-a'], 0, 'bots', 'A');
+    renderer?.scoreIcon?.(el['hero-tank-b'], 1, 'bots', 'B');
+    menuArtDrawn = true;
+  }
+  const summaryCompact = globalThis.matchMedia?.('(max-width: 720px)').matches ?? false;
+  if (compactSummary !== summaryCompact) {
+    compactSummary = summaryCompact;
+    el['live-summary'].open = !summaryCompact;
+  }
+  el['live-clock'].hidden = menuVisible || !hasFrames;
+  setText(el['live-clock'], elapsedLabel(frame, match.manifest?.tickRate).replace('对局时间 ', ''));
   el.stage.hidden = menuVisible;
-  renderMatchId(match.manifest);
+  renderMatchId(match.manifest ?? (starting ? { matchId: startAttempt?.matchId } : null));
   el['return-menu'].hidden = menuVisible;
-  el['continue-match'].hidden = (starting || !live.manifest) && !replay;
-  el['continue-match'].textContent = replay ? '返回回放' : '返回对局';
+  el['continue-match'].hidden = (!startAttempt?.matchId && !live.manifest) && !replay;
+  el['continue-match'].textContent = replay ? '返回回放' : starting ? '查看启动进度' : '返回对局';
   const startupMatchId = startAttempt?.matchId;
   const stoppableMatchId = startupMatchId ?? (matchActive ? live.manifest.matchId : null);
   const canStopLive = !menuVisible && !replay && typeof stoppableMatchId === 'string';
@@ -490,11 +534,9 @@ function render() {
   const readiness = match.readiness;
   const unavailable = readiness && match.manifest?.players?.flatMap(id => {
     const reason = readiness[id];
-    const label = { timeout: '握手超时', startup_timeout: '握手超时', startup_aborted: '启动已取消', process_exit: '进程退出', process_unavailable: '进程不可用',
-      line_too_long: '响应超长', invalid_json: '响应不是 JSON', protocol_mismatch: '协议不匹配',
-      backpressure: '输入拥堵' }[reason];
+    const label = startupFailureLabel(reason);
     return typeof reason === 'string' && reason !== 'ready'
-      ? [`${playerLabel(match.manifest, id)}（${typeof label === 'string' ? label : '未就绪'}）`] : [];
+      ? [`${playerLabel(match.manifest, id)}（${label || '未就绪'}）`] : [];
   });
   el['readiness-warning'].hidden = !unavailable?.length;
   setText(el['readiness-warning'], unavailable?.length ? `机器人启动失败：${unavailable.join('、')}。` : '');
@@ -510,7 +552,7 @@ function render() {
     for (const button of el['match-form'].querySelectorAll('button')) {
       button.disabled = starting || matchActive || (!botCatalog.size && ['bots', 'human'].includes(button.value));
     }
-    el['custom-start'].disabled = starting || matchActive || Boolean(customError);
+    el['menu-start'].disabled = el['custom-start'].disabled = starting || matchActive || Boolean(customError);
     const autoMap = el['map-size-mode'].value === 'auto';
     for (const option of matchOptions) el[option.id].disabled = starting || matchActive
       || (autoMap && ['cols', 'rows'].includes(option.key));
@@ -554,13 +596,9 @@ function render() {
   }
   if (!menuVisible) {
     renderScoreboard(match, record?.state, renderer, record?.kills);
-    if (!replay && starting) {
-      const notice = el['round-notice'];
-      notice.hidden = false;
-      setText(notice, startupMatchId && stopping ? '正在取消启动…'
-        : startupMatchId ? '等待机器人就绪…' : '正在启动新对局…');
-    }
+
   }
+  renderStartup();
   if (el.details.open) {
     renderEvents(match, Boolean(replay));
     renderKillMarkers();
@@ -628,10 +666,96 @@ function finishLive(result) {
   live.result = result ?? null;
 }
 
+const startupFailureLabel = reason => Object.hasOwn(startupFailureLabels, reason) ? startupFailureLabels[reason] : '';
+const startupFailureLabels = Object.freeze({
+  timeout: '握手超时', startup_timeout: '握手超时', startup_aborted: '启动已取消',
+  process_exit: '进程退出', process_unavailable: '进程不可用', line_too_long: '响应超长',
+  invalid_json: '响应不是 JSON', protocol_mismatch: '协议不匹配', backpressure: '输入拥堵',
+});
+const startupStatuses = Object.freeze({ pending: '初始化中', ready: '已就绪', failed: '未就绪' });
+function renderStartup() {
+  const panel = el['startup-panel'];
+  panel.hidden = menuVisible || Boolean(replay) || (!starting && !startupDismissed());
+  if (panel.hidden) return;
+  const snapshot = startupSnapshot;
+  const countdown = snapshot?.phase === 'countdown';
+  const failed = snapshot?.phase === 'failed';
+  const seats = snapshot?.seats ?? [];
+  const ready = seats.filter(seat => seat.status === 'ready').length;
+  const stopping = Boolean(stopRequest && stopRequest.matchId === startAttempt?.matchId);
+  setText(el['startup-title'], stopping ? '正在取消启动' : countdown ? '战斗即将开始'
+    : snapshot?.phase === 'failed' ? '初始化失败' : '正在初始化');
+  setText(el['startup-count'], seats.length ? `${ready}/${seats.length} 已就绪` : '等待裁判确认…');
+  el['startup-progress'].max = seats.length || 1;
+  el['startup-progress'].value = ready;
+  el['startup-progress'].hidden = countdown;
+  el['startup-seats'].hidden = countdown;
+  el['startup-seconds'].hidden = !countdown;
+  el['startup-cancel'].disabled = !failed && (el['stop-match'].disabled || el['stop-match'].hidden);
+  setText(el['startup-cancel'], failed ? '返回菜单' : stopping ? '正在取消…' : '取消启动');
+  if (snapshot !== startupRendered) {
+    startupRendered = snapshot;
+    const items = document.createDocumentFragment();
+    for (const seat of seats) {
+      const item = makeNode('li', 'startup-seat');
+      const icon = makeNode('canvas', 'startup-icon');
+      icon.setAttribute('aria-hidden', 'true');
+      const name = makeNode('span', 'startup-name', seat.name);
+      const status = makeNode('span', 'startup-badge', seat.status === 'failed' ? (startupFailureLabel(seat.error) || startupStatuses.failed) : startupStatuses[seat.status]);
+      status.setAttribute('data-status', seat.status);
+      item.append(icon, name, status);
+      items.append(item);
+      // The score icon uses a CSS-sized canvas; draw after insertion.
+      seat.icon = icon;
+    }
+    el['startup-seats'].replaceChildren(items);
+    for (const seat of seats) renderers['tank-trouble']?.scoreIcon?.(seat.icon, 0, snapshot?.mode, seat.id);
+  }
+  clearTimeout(startupTimer);
+  startupTimer = null;
+  if (countdown) {
+    const remaining = Math.max(0, snapshot.endsAt - performance.now());
+    const seconds = Math.ceil(remaining / 1000);
+    setText(el['startup-seconds'], seconds || '即将开始');
+    if (remaining > 0) startupTimer = setTimeout(queueDraw, remaining - (seconds - 1) * 1000 + 15);
+  }
+}
+
+function receiveStartup(record) {
+  const { matchId, phase } = record;
+  if (typeof matchId !== 'string' || !['waiting', 'countdown', 'failed', 'cancelled'].includes(phase)
+      || matchId === live.manifest?.matchId || matchId === dismissedStartupId
+      || (startAttempt?.matchId && startAttempt.matchId !== matchId)) return;
+  if (!startAttempt) {
+    startAttempt = { matchId };
+    if (!replay) menuVisible = false;
+  }
+  startAttempt.matchId = matchId;
+  starting = true;
+  const seats = Object.entries(record.seats ?? {}).filter(([id]) => /^[A-H]$/.test(id)).sort()
+    .map(([id, seat]) => ({ id, name: playerName({ playerNames: { [id]: seat?.name } }, id),
+      status: Object.hasOwn(startupStatuses, seat?.status) ? seat.status : 'pending', error: seat?.error }));
+  const remaining = record.remainingMs ?? record.countdownMs;
+  const endsAt = performance.now() + (Number.isFinite(remaining) ? Math.max(0, Math.min(3000, remaining)) : 0);
+  startupSnapshot = { phase, seats, endsAt, mode: record.mode };
+  if (phase === 'cancelled' || phase === 'failed') {
+    dismissedStartupId = matchId;
+    const failure = startupSnapshot;
+    clearStartAttempt();
+    if (phase === 'failed') {
+      startupSnapshot = failure;
+      if (!replay) setError(record.message || '机器人未能完成初始化。');
+    } else if (!replay) menuVisible = true;
+  }
+  queueDraw(true);
+}
+
 function reduceLive(record) {
+  if (record.type === 'startup') return receiveStartup(record);
+  if (record.matchId && record.matchId === dismissedStartupId) return;
   if (record.type === 'start' && record.state) {
     const id = record.manifest?.matchId;
-    if (id && id === live.manifest?.matchId) return;
+    if (id && (id === live.manifest?.matchId || id === dismissedStartupId)) return;
     if (startAttempt?.matchId && startAttempt.matchId !== id) return;
     clearStartAttempt();
     inputEpoch++;
@@ -696,6 +820,21 @@ async function post(route, body, timeout = 5000) {
   return response.json().catch(() => null);
 }
 
+el['open-setup'].addEventListener('click', () => { setupVisible = true; queueDraw(); });
+el['close-setup'].addEventListener('click', () => { setupVisible = false; queueDraw(); });
+el['setup-inspection'].addEventListener('click', () => {
+  el.details.open = true;
+  el.details.scrollIntoView?.({ block: 'nearest' });
+  el.seed.focus?.();
+});
+el['menu-replay'].addEventListener('click', () => el['replay-file'].click());
+el['startup-cancel'].addEventListener('click', () => {
+  if (startupDismissed()) {
+    startupSnapshot = null;
+    menuVisible = true;
+    queueDraw(true);
+  } else el['stop-match'].click();
+});
 el['play-replay'].addEventListener('click', play);
 el['stop-replay'].addEventListener('click', () => {
   if (!replay) return;
@@ -1102,6 +1241,7 @@ el['match-form'].addEventListener('submit', async (event) => {
   selectedKill = null;
   menuVisible = false;
   starting = true;
+  startupSnapshot = null;
   const attempt = {};
   startAttempt = attempt;
   setError('');
@@ -1246,7 +1386,7 @@ el.details.addEventListener('toggle', () => queueDraw(true));
 
 function activeManifest() {
   const stopping = stopRequest && stopRequest.matchId === live.manifest?.matchId;
-  return !menuVisible && !replay && !live.done && !stopping ? live.manifest : null;
+  return !menuVisible && !replay && !starting && !startupDismissed() && !live.done && !stopping ? live.manifest : null;
 }
 
 function resetInput() {
