@@ -27,7 +27,7 @@ export async function serve({game,selectGame=rate=>rate===game.tickRate?game:nul
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid port');
   const replayModules = new Set([
     'replay/reconstruct.js', 'protocol/game/match-format.js',
-    ...['adapter/index.js','engine/classic.js','engine/profile.js','engine/laser-geometry.js','series/index.js','classic-profile.json']
+    ...['adapter/index.js','engine/classic.js','engine/profile.js','engine/laser-geometry.js','engine/missile-guidance.js','series/index.js','classic-profile.json']
       .map(file=>'games/'+game.id+'/'+file)
   ]);
   const storage=await openReplayStorage(root,base);

@@ -125,6 +125,10 @@ test('web replay directory persists across restarts, applies to future matches o
   const verified=await verifyReplay(join(matchDir,'match.jsonl.gz'),registry);
   assert.ok(verified.ticks>0);
   assert.equal(verified.result.reason,'stopped');
+  const guidance=await restarted.api('/games/tank-trouble/engine/missile-guidance.js');
+  assert.equal(guidance.status,200);
+  assert.match(guidance.headers.get('content-type'),/^text\/javascript/);
+  assert.match(await guidance.text(),/export function homingWaypoint/);
   assert.equal((await restarted.api('/bots/laika/bot.js')).status,404);
   assert.equal((await restarted.api('/tank-trouble/'+second+'/match.jsonl.gz')).status,404);
 
