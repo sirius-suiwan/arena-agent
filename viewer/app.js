@@ -472,14 +472,17 @@ function render() {
   el['return-menu'].hidden = menuVisible;
   el['continue-match'].hidden = (starting || !live.manifest) && !replay;
   el['continue-match'].textContent = replay ? '返回回放' : '返回对局';
-  const canStopLive = !menuVisible && !replay && matchActive && typeof live.manifest.matchId === 'string';
+  const startupMatchId = startAttempt?.matchId;
+  const stoppableMatchId = startupMatchId ?? (matchActive ? live.manifest.matchId : null);
+  const canStopLive = !menuVisible && !replay && typeof stoppableMatchId === 'string';
   const canPlayReplay = !menuVisible && replay?.frames.length > 1;
   const canStopReplay = canPlayReplay && (Boolean(playback) || frameIndex > 0);
-  const stopping = Boolean(stopRequest && stopRequest.matchId === live.manifest?.matchId);
+  const stopping = Boolean(stopRequest && stopRequest.matchId === stoppableMatchId);
   el['match-controls'].hidden = !canStopLive && !canPlayReplay;
   el['stop-match'].hidden = !canStopLive;
-  el['stop-match'].disabled = stopping || !streamOpen || starting;
-  el['stop-match'].textContent = stopping ? '停止中…' : '停止对局';
+  el['stop-match'].disabled = stopping || (!streamOpen && !startupMatchId);
+  el['stop-match'].textContent = startupMatchId ? (stopping ? '正在取消…' : '取消启动')
+    : stopping ? '停止中…' : '停止对局';
   el['play-replay'].hidden = !canPlayReplay;
   el['play-replay'].disabled = Boolean(playback);
   el['play-replay'].textContent = frameIndex === replay?.frames.length - 1 ? '重播' : '播放回放';
@@ -487,7 +490,7 @@ function render() {
   const readiness = match.readiness;
   const unavailable = readiness && match.manifest?.players?.flatMap(id => {
     const reason = readiness[id];
-    const label = { timeout: '握手超时', process_exit: '进程退出', process_unavailable: '进程不可用',
+    const label = { timeout: '握手超时', startup_timeout: '握手超时', startup_aborted: '启动已取消', process_exit: '进程退出', process_unavailable: '进程不可用',
       line_too_long: '响应超长', invalid_json: '响应不是 JSON', protocol_mismatch: '协议不匹配',
       backpressure: '输入拥堵' }[reason];
     return typeof reason === 'string' && reason !== 'ready'
@@ -554,7 +557,8 @@ function render() {
     if (!replay && starting) {
       const notice = el['round-notice'];
       notice.hidden = false;
-      setText(notice, '正在启动新对局…');
+      setText(notice, startupMatchId && stopping ? '正在取消启动…'
+        : startupMatchId ? '等待机器人就绪…' : '正在启动新对局…');
     }
   }
   if (el.details.open) {
@@ -700,8 +704,11 @@ el['stop-replay'].addEventListener('click', () => {
 });
 
 el['stop-match'].addEventListener('click', async () => {
-  const matchId = live.manifest?.matchId;
-  if (replay || menuVisible || live.done || typeof matchId !== 'string' || stopRequest?.matchId === matchId || !streamOpen) return;
+  const attempt = startAttempt;
+  const startupMatchId = attempt?.matchId;
+  const matchId = startupMatchId ?? live.manifest?.matchId;
+  if (replay || menuVisible || typeof matchId !== 'string' || stopRequest?.matchId === matchId
+      || (!startupMatchId && (starting || live.done || !streamOpen))) return;
   const request = { matchId };
   stopRequest = request;
   el['stop-match'].disabled = true;
@@ -711,14 +718,21 @@ el['stop-match'].addEventListener('click', async () => {
   queueDraw();
   try {
     const response = await post('/api/stop', request);
-    if (!live.done && live.manifest?.matchId === request.matchId) {
-      if (response?.matchId !== request.matchId || !response.result) throw new Error('裁判未确认当前对局状态。');
+    if (response?.matchId !== request.matchId || !response.result) throw new Error('裁判未确认当前对局状态。');
+    if (startupMatchId && startAttempt === attempt && live.manifest?.matchId !== startupMatchId) {
+      // Acknowledgement may arrive before the startup's SSE records. Never
+      // attach this terminal result to the previous match.
+      clearStartAttempt();
+      menuVisible = true;
+    } else if (!live.done && live.manifest?.matchId === request.matchId) {
       // The terminal SSE can race its HTTP acknowledgment. Accept remaining ticks
       // of this stopped match so the stage still reaches the last saved frame.
       finishLive(response.result);
     }
   } catch (error) {
-    if (!replay && !live.done && live.manifest?.matchId === request.matchId) {
+    if (!replay && startupMatchId && startAttempt === attempt) {
+      setError(`无法取消启动：${error.message}`);
+    } else if (!replay && !live.done && live.manifest?.matchId === request.matchId) {
       for (const id of Object.keys(humanControls(live.manifest))) sendInput(id, neutral);
       setError(`无法停止对局：${error.message}`);
     }
@@ -1106,6 +1120,7 @@ el['match-form'].addEventListener('submit', async (event) => {
     if (startAttempt !== attempt) return; // SSE can start and even finish before the HTTP response is processed.
     if (typeof response?.matchId !== 'string') throw new Error('裁判未确认新对局。');
     attempt.matchId = response.matchId;
+    queueDraw();
     attempt.timer = setTimeout(() => failStartAttempt(attempt, '等待新对局超时，请检查裁判连接。'), 20_000);
   } catch (error) {
     failStartAttempt(attempt, `开局失败：${error.message}`);
