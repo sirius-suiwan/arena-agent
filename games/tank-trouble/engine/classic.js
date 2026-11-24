@@ -207,7 +207,7 @@ export function init(input,tickRate) {
   const rng={value:state.rng};
   const nextPickupAt=state.config.pickups?classicPickupDelay({...state,profile},rng):null;
   return {...state,friendlyFire,...(teams?{teams:{...teams}}:{}),
-    profile:Object.freeze({...profile,shellSpeed}),rng:rng.value,nextPickupAt};
+    profile:Object.freeze({...profile,shellSpeed}),rng:rng.value,fragmentRng:seedValue("fragment:"+input.seed),nextPickupAt};
 }
 
 function distanceToWallSquared(x, y, w) {
@@ -345,16 +345,26 @@ function resetClassicWeapon(t) {
   delete t.beamId;
 }
 
-function burst(b,s,events,type, angle, deferred) {
-  const count=s.profile.fragmentCount;
+function burst(b,s,events,type,deferred) {
+  const p=s.profile;
+  const rng={value:s.fragmentRng};
   events.push({type,x:b.x,y:b.y,ownerId:b.owner,[type==='mine-burst'?'mineId':'bulletId']:b.id});
-  // Queue bursts after the projectile loop: child objects first advance on
-  // the next tick. They get their own stable IDs and explicit source ID.
-  for (let i=0;i<count;i++) {
-    const heading=angle+i*TAU/count;
-    const x=b.x,y=b.y;
-    deferred.push({owner:b.owner,x,y,angle:heading,speed:s.profile.fragmentSpeed,ttl:s.profile.fragmentTtl,kind:'shrapnel',sourceId:b.id});
+  // Each fragment gets an independent integer direction and two independent
+  // axis speeds. The effect stream must not consume the crate RNG.
+  for (let i=0;i<p.fragmentCount;i++) {
+    const a=Math.floor(next(rng)*360)*TAU/360;
+    const dx=Math.cos(a)*(p.fragmentBaseSpeed+next(rng)*p.fragmentSpreadSpeed);
+    const dy=Math.sin(a)*(p.fragmentBaseSpeed+next(rng)*p.fragmentSpreadSpeed);
+    deferred.push({owner:b.owner,x:b.x,y:b.y,angle:Math.atan2(dy,dx),speed:Math.hypot(dx,dy),
+      ttl:null,kind:'shrapnel',sourceId:b.id});
   }
+  s.fragmentRng=rng.value;
+}
+
+function detonateFrag(b,s,events,deferred) {
+  burst(b,s,events,'frag-burst',deferred);
+  const owner=s.tanks.find(t=>t.id===b.owner);
+  if(owner?.fragId===b.id) resetWeapon(owner);
 }
 
 function projectileByOwner(s,t) { return s.bullets.find(b=>b.id===t.fragId); }
@@ -401,6 +411,8 @@ function emitClassicBeam(t,s,events,impacts,firingTick) {
     if (f!==null) impacts.push({bullet:beam,tankId:target.id,x:t.x+dx*length*f,y:t.y+dy*length*f});
   }
 }
+
+
 
 function fireClassicWeapons(s,actions,events,impacts,deferred) {
   const p=s.profile;
@@ -469,11 +481,9 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
       continue;
     }
     if (t.weapon==='mine') {
-      const dx=Math.cos(t.angle),dy=Math.sin(t.angle);
-      const hit=wallHit(t.x,t.y,-dx*16,-dy*16,s.walls);
-      const dist=hit?Math.max(0,hit.t*16-0.1):16;
-      const mine={id:'m'+s.nextMine++,owner:t.id,x:t.x-dx*dist,y:t.y-dy*dist,
-        armedAt:s.tick+p.mineArm,ownerCleared:false,triggeredAt:null,detonateAt:null};
+      const mine={id:'m'+s.nextMine++,owner:t.id,x:t.x,y:t.y,
+        vx:-Math.cos(t.angle)*p.mineSpeed,vy:-Math.sin(t.angle)*p.mineSpeed,
+        armedAt:s.tick+p.mineArm,activatedAt:null,triggeredAt:null,detonateAt:null,visibility:1};
       s.mines.push(mine);
       events.push({type:'mine-placed',mineId:mine.id,tankId:t.id,x:mine.x,y:mine.y,armedAt:mine.armedAt});
       if (--t.weaponAmmo===0) resetClassicWeapon(t);
@@ -481,14 +491,16 @@ function fireClassicWeapons(s,actions,events,impacts,deferred) {
     }
     if (t.weapon==='frag'||t.weapon==='remote'||t.weapon==='missile') {
       if (t.fragId===null) {
-        const b=shell(s,events,{owner:t.id,x:t.x,y:t.y,angle:t.angle,speed:p.missileSpeed,ttl:p.missileTtl,kind:t.weapon});
+        const position=t.weapon==='frag'?muzzle(s,t,BULLET_RADIUS):t;
+        const b=shell(s,events,{owner:t.id,x:position.x,y:position.y,angle:t.angle,speed:p.missileSpeed,ttl:p.missileTtl,kind:t.weapon});
+        if(t.weapon==='frag') b.ownerArmed=true;
         if(t.weapon==='missile') {b.age=0;b.targetId=null;resetClassicWeapon(t);}
         else {t.fragId=b.id;t.weaponAmmo=0;}
       } else if (t.weapon==='frag') {
         const b=projectileByOwner(s,t);
         if (b) {
           s.bullets=s.bullets.filter(other=>other.id!==b.id);
-          burst(b,s,events,'frag-burst',Math.atan2(b.vy,b.vx),deferred);
+          detonateFrag(b,s,events,deferred);
         }
         resetClassicWeapon(t);
       }
@@ -541,18 +553,18 @@ function advanceShell(b, s, events, impacts, deferred) {
   if(b.kind==='laser') return advanceLaser(b,s,events,impacts);
   function expire(reason) {
     if (b.kind==='frag') {
-      burst(b,s,events,'frag-burst',Math.atan2(b.vy,b.vx),deferred);
-      const owner=s.tanks.find(t=>t.id===b.owner);
-      if (owner?.fragId===b.id) resetWeapon(owner);
+      detonateFrag(b,s,events,deferred);
     } else if (b.kind==='remote') {
       const owner=s.tanks.find(t=>t.id===b.owner);
       if (owner?.fragId===b.id) resetClassicWeapon(owner);
     }
-    events.push({type:'shell-expired',bulletId:b.id,x:b.x,y:b.y,reason,kind:b.kind});
+    events.push({type:'shell-expired',bulletId:b.id,x:b.x,y:b.y,reason,kind:b.kind,
+      ...(b.kind==='shrapnel'?{ownerId:b.owner}:{})});
     return false;
   }
-  if (b.ttl <= 0) return false;
-  let remaining = Math.min(1,b.ttl);
+  const fragment=b.kind==='shrapnel';
+  if (!fragment && b.ttl<=0) return b.kind==='frag'?expire('ttl'):false;
+  let remaining = fragment?1:Math.min(1,b.ttl);
   const radius=b.kind==='gatling'?s.profile.gatlingRadius:b.kind==='shrapnel'?s.profile.fragmentRadius:BULLET_RADIUS;
   // Sweep through the remaining fraction after each bounce; hard cap guarantees
   // bounded work in degenerate geometry.
@@ -594,6 +606,7 @@ function advanceShell(b, s, events, impacts, deferred) {
     b.safeTicks--;
     if(b.safeTicks<=EPS) delete b.safeTicks;
   }
+  if(fragment) return true;
   if(b.kind==='missile') b.age++;
   b.ttl--;
   return b.ttl>0 || expire('ttl');
@@ -688,21 +701,56 @@ function awardPickups(s, events, spawn=true) {
   s.pickupBlocks=blocked;
 }
 
+const contactSamples=Array.from({length:13},(_,i)=>[Math.cos(i*0.5),Math.sin(i*0.5)]);
+
+function advanceMineMotion(m,s) {
+  const p=s.profile;
+  if(!(Math.abs(m.vx)>EPS||Math.abs(m.vy)>EPS)) return;
+  let remaining=p.mineMoveFactor;
+  for(let i=0;i<8&&remaining>EPS;i++) {
+    const dx=m.vx*remaining,dy=m.vy*remaining;
+    const wall=wallHit(m.x,m.y,dx,dy,s.walls,0);
+    const fraction=wall?.t??1;
+    m.x+=dx*fraction;m.y+=dy*fraction;
+    if(!wall) break;
+    bounceVelocity(m,wall.normals);
+    m.x+=m.vx*EPS;m.y+=m.vy*EPS;
+    remaining*=1-fraction;
+  }
+  m.vx*=p.mineDamping;m.vy*=p.mineDamping;
+  if(Math.abs(m.vx)<p.mineStop&&Math.abs(m.vy)<p.mineStop) m.vx=m.vy=0;
+}
+
 function advanceClassicMines(s,events,deferred) {
   s.mines=s.mines.filter(m=>{
-    const owner=s.tanks.find(t=>t.id===m.owner);
-    if (!owner.alive||Math.hypot(owner.x-m.x,owner.y-m.y)>TANK_RADIUS+8) m.ownerCleared=true;
-    if (m.detonateAt!==null) {
+    advanceMineMotion(m,s);
+    if (m.detonateAt!=null) {
+      m.visibility=Math.min(1,(m.visibility??1)+s.profile.mineVisibilityStep);
       if (s.tick+EPS<m.detonateAt) return true;
-      burst(m,s,events,'mine-burst',0,deferred);
+      burst(m,s,events,'mine-burst',deferred);
       return false;
     }
     if (s.tick+EPS<m.armedAt) return true;
-    const victim=s.tanks.find(t=>vulnerable(s,t,m.owner)&&(t.id!==m.owner||m.ownerCleared)&&Math.hypot(t.x-m.x,t.y-m.y)<=TANK_RADIUS+6);
-    if (victim) {
+    const r=s.profile.mineContactRadius;
+    const contact=s.tanks.find(t=>vulnerable(s,t,m.owner)&&
+      (t.x-m.x)**2+(t.y-m.y)**2<=(TANK_RADIUS+r)**2&&contactSamples.some(([x,y])=>
+        (m.x+r*x-t.x)**2+(m.y+r*y-t.y)**2<=TANK_RADIUS**2));
+    if(m.activatedAt==null) {
+      if(!contact) {
+        const visibility=(m.visibility??1)-s.profile.mineVisibilityStep;
+        m.visibility=visibility>EPS?visibility:0;
+        return true;
+      }
+      m.activatedAt=s.tick;
+      m.activatedBy=contact.id;
+      events.push({type:'mine-activated',mineId:m.id,tankId:contact.id,x:m.x,y:m.y});
+    }
+    m.visibility=Math.min(1,(m.visibility??1)+s.profile.mineVisibilityStep);
+    if(!contact) {
       m.triggeredAt=s.tick;
-      m.detonateAt=s.tick+s.profile.mineFuse;
-      events.push({type:'mine-trigger',mineId:m.id,tankId:victim.id,x:m.x,y:m.y,detonateAt:m.detonateAt});
+      // The original consumes the first count on the same update that starts the fuse.
+      m.detonateAt=s.tick+s.profile.mineFuse-s.profile.tickRate/CLASSIC_FRAME_RATE;
+      events.push({type:'mine-trigger',mineId:m.id,tankId:m.activatedBy,x:m.x,y:m.y,detonateAt:m.detonateAt});
     }
     return true;
   });
@@ -750,6 +798,18 @@ export function step(state, actions) {
     }
   }
   advanceZone(s,events);
+  // Direct hits, expiry and manual release already removed their mother shell.
+  // Only still-present shells detonate here, once, even for simultaneous deaths.
+  const deadOwners=new Set(s.tanks.filter(t=>!t.alive).map(t=>t.id));
+  if(deadOwners.size) {
+    const onDeath=[];
+    s.bullets=s.bullets.filter(b=>{
+      if(b.kind!=='frag'||!deadOwners.has(b.owner)) return true;
+      detonateFrag(b,s,events,onDeath);
+      return false;
+    });
+    for(const sp of onDeath) shell(s,events,sp);
+  }
   const alive=s.tanks.filter(t=>t.alive);
   const survivorTeam=alive.length && s.teams && alive.every(t=>s.teams[t.id]===s.teams[alive[0].id])
     ?s.teams[alive[0].id]:null;

@@ -210,7 +210,8 @@ function effectsAt(frames, index, manifestRate) {
     // Visual effects use 1/60-second units, independently of simulation rate.
     const age = (now - tickOf(frames[i])) * EFFECT_BASE_TICK_RATE / rate;
     for (const event of frames[i].events) {
-      if (age < 10 || event.type === 'pickup' || event.type === 'pickup-blocked') effects.push({ event, age });
+      if (age<10 || event.type==='pickup' || event.type==='pickup-blocked' ||
+          event.type==='shell-expired'&&event.kind==='shrapnel'&&event.reason==='wall') effects.push({event,age});
     }
   }
   return effects;

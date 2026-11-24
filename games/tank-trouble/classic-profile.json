@@ -37,8 +37,8 @@
     "laser": { "pixelsPerSourceFrame": 70, "lifeSourceFrames": 8, "guideCells": 4, "bendDegreesPerSecond": 180, "maxSegmentPixels": 12, "trailPoints": 18 },
     "deathRay": { "chargeSourceFrames": 15, "activeSourceFrames": 30 },
     "missile": { "pixelsPerSourceFrame": 4.5, "lifeSourceFrames": 250, "homingDelaySourceFrames": 30, "remoteDegreesPerSourceFrame": 15 },
-    "mine": { "ammo": 3, "armSourceFrames": 20, "fuseSourceFrames": 8 },
-    "fragment": { "count": 40, "collisionRadius": 2.1 }
+    "mine": { "ammo": 3, "armSourceFrames": 20, "fuseSourceFrames": 6, "pixelsPerSourceFrame": 5.5, "dampingPerSourceFrame": 0.75, "stopSourcePixelsPerFrame": 0.6, "contactRadiusCells": 0.125, "visibilityStepPerSourceFrame": 0.1 },
+    "fragment": { "count": 40, "basePixelsPerSourceFrame": 4, "spreadPixelsPerSourceFrame": 4.5, "fadeSourceFrames": 20 }
   },
   "crates": {
     "soloType": "laser",
@@ -48,9 +48,7 @@
     "settlementSeconds": 3,
     "intermissionSeconds": 1,
     "zoneGraceSeconds": 2,
-    "homingSteerDegreesPerSecond": 165,
-    "fragmentPixelsPerSecond": 300,
-    "fragmentLifeSeconds": 1
+    "homingSteerDegreesPerSecond": 165
   },
   "render": {
     "tankScale": 1,

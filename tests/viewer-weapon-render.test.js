@@ -32,3 +32,10 @@ test('Gatling pellets remain smaller than shells in the same frame', () => {
   assert.equal(arcs.find(([,x])=>x===20)[3], 1.35);
   assert.equal(arcs.find(([,x])=>x===40)[3], 3);
 });
+
+test('a cosmetic shard fades after a wall stop without needing a live projectile',()=>{
+  const e={type:'shell-expired',kind:'shrapnel',reason:'wall',ownerId:'A',x:13,y:17};
+  const drawn=age=>draw([], [{event:e,age}]).some(([op,x])=>op==='arc'&&x===13);
+  assert.equal(drawn(15),true);
+  assert.equal(drawn(48),false);
+});

@@ -6,7 +6,7 @@ const REPORT_EVENT = Object.freeze({
   destroyed:'eliminations','zone-eliminated':'eliminations',
   hit:'hits',
   'pickup-spawn':'crates',pickup:'crates','pickup-blocked':'crates',
-  'mine-trigger':'special','mine-burst':'special','frag-burst':'special','weapon-fired':'special'
+  'mine-activated':'special','mine-trigger':'special','mine-burst':'special','frag-burst':'special','weapon-fired':'special'
 });
 const FOCUS_TYPES=new Set([...Object.keys(REPORT_EVENT),'tank-stop','wall-stop','shot-blocked','shot','bounce','shell-expired']);
 const EVENT_FIELDS=['tankId','tankIds','ownerId','bulletId','kind','reason','weapon','pickupType','pickupId','heldWeapon',

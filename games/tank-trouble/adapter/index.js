@@ -24,7 +24,7 @@ function observe(state,playerId) {
     bullets:bullets.map(b=>({...b,...(b.path?{path:b.path.map(point=>({...point}))}:{})})),
     pickups:pickups.map(p=>({...p})),
     result:result?{...result}:null,
-    mines:mines.map(m=>({...m})),
+    mines:mines.filter(m=>m.visibility!==0).map(m=>({...m})),
     settleUntil,
     pickupBlocks:pickupBlocks.map(block=>({...block})),
     shellSpeed:state.config.shellSpeed,

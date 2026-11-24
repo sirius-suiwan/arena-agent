@@ -24,3 +24,15 @@ test('mine icons distinguish the pickup badge, deployed body, and triggered warn
   assert.equal(draw(null),false);
   assert.equal(draw(62),true);
 });
+
+test('hidden ground mines are not drawn even while the pickup glyph remains visible',()=>{
+  const draws=[];
+  const ctx=new Proxy({}, {get:(target,key)=>target[key]??((...args)=>draws.push([key,...args]))});
+  drawTankFrame({getContext:()=>ctx,getBoundingClientRect:()=>({width:800,height:600})},{
+    width:480,height:360,walls:[],tanks:[],bullets:[],tick:80,roundTick:40,
+    pickups:[{x:50,y:50,type:'mine'}],
+    mines:[{x:110,y:110,owner:'A',armedAt:20,visibility:0}],
+  });
+  assert(draws.some(([op,x,y])=>op==='translate'&&x===50&&y===50));
+  assert(!draws.some(([op,x,y])=>op==='translate'&&x===110&&y===110));
+});

@@ -99,7 +99,7 @@ test('Gatling pellets and fragments use their own narrower hit radii',()=>{
   Object.assign(s.tanks[1],{x:100,y:114});
   const shell=kind=>({id:'b1',owner:'A',x:80,y:100,vx:25,vy:0,ttl:5,kind,ownerArmed:false});
   assert.equal(s.profile.gatlingRadius,1.35);
-  assert.equal(s.profile.fragmentRadius,2.1);
+  assert.equal(s.profile.fragmentRadius,0);
   assert.equal(step({...s,bullets:[shell('gatling')]},{}).state.tanks[1].alive,true);
   assert.equal(step({...s,bullets:[shell('shell')]},{}).state.tanks[1].alive,false);
   Object.assign(s.tanks[1],{y:114.5});
@@ -217,38 +217,106 @@ test('Death Ray autocompletes charge through walls and remains active for 1.2 se
   assert.equal(r.events.some(e=>e.type==='death-ray-beam'),false);
 });
 
-test('frag detonates on a new press into 40 fragments that cannot bounce',()=>{
-  const s=fixture(25);
-  s.walls=[{x1:94,y1:64,x2:94,y2:160}];
-  equip(s,'frag');
-  let r=step(s,{A:action(true)});
-  r=step(r.state,{A:action(true)});
-  assert.equal(r.state.bullets[0].kind,'frag');
-  r=step(step(r.state,{}).state,{A:action(true)});
-  assert.equal(r.events.filter(e=>e.type==='shot'&&e.kind==='shrapnel').length,40);
-  assert.ok(r.state.bullets.every(b=>b.kind==='shrapnel'&&b.sourceId==='b1'));
-  r=step(r.state,{});
-  assert.ok(r.events.some(e=>e.kind==='shrapnel'&&e.reason==='wall'));
+test('frag detonates on a fresh press into 40 independent, deterministic fragments',()=>{
+  const run=()=>{
+    const s=fixture(25);
+    s.walls=[{x1:117,y1:64,x2:117,y2:160}];
+    equip(s,'frag');
+    let r=step(s,{A:action(true)});
+    assert.equal(r.events.find(e=>e.type==='shot').x,88);
+    r=step(r.state,{A:action(true)});
+    assert.equal(r.state.bullets[0].kind,'frag');
+    r=step(step(r.state,{}).state,{A:action(true)});
+    return r;
+  };
+  let r=run();
+  assert.deepEqual(r,run());
+  const debris=r.events.filter(e=>e.type==='shot'&&e.kind==='shrapnel');
+  assert.equal(debris.length,40);
+  assert.ok(new Set(debris.map(e=>Math.round(Math.hypot(e.vx,e.vy)*1000))).size>25);
+  assert.ok(r.state.bullets.every(b=>b.kind==='shrapnel'&&b.sourceId==='b1'&&b.ttl===null));
+  r=doN(r.state,2);
   assert.equal(r.events.some(e=>e.type==='bounce'),false);
 });
 
-test('mine arms for 0.8s, visibly triggers, and waits its separate 0.32s fuse',()=>{
+test('mother shell cannot detonate twice when its shot and its owner are killed on the same tick',()=>{
+  for(const impact of [false,true]) {
+    const s=fixture(60);
+    Object.assign(s.tanks[0],{weapon:'frag',fragId:'mother'});
+    Object.assign(s.tanks[1],{x:160,y:100});
+    s.bullets=[
+      {id:'mother',owner:'A',kind:'frag',x:impact?143:115,y:100,vx:3,vy:0,ttl:100,ownerArmed:true},
+      {id:'killer',owner:'B',kind:'shell',x:86,y:100,vx:-6,vy:0,ttl:100,ownerArmed:true},
+    ];
+    const r=step(s,{});
+    assert.equal(r.state.tanks[0].alive,false);
+    assert.equal(r.state.tanks[1].alive,!impact);
+    assert.equal(r.events.filter(e=>e.type==='frag-burst').length,1);
+    assert.equal(r.events.filter(e=>e.type==='shot'&&e.sourceId==='mother').length,40);
+    assert.equal(r.state.rng,s.rng,'fragment RNG must not change pickup stream');
+    assert.ok(!r.state.bullets.some(b=>b.id==='mother'));
+  }
+});
+
+test('shrapnel may outlast one second and stops at a wall without bouncing',()=>{
   const s=fixture(25);
+  s.walls=[{x1:320,y1:32,x2:320,y2:128}];
+  s.bullets=[{id:'b',kind:'shrapnel',owner:'B',ownerArmed:true,x:150,y:60,vx:6,vy:0,ttl:null}];
+  let r=doN(s,26);
+  assert.equal(r.state.bullets[0].id,'b');
+  r=doN(r.state,3);
+  assert.equal(r.state.bullets.length,0);
+  assert(r.events.some(e=>e.type==='shell-expired'&&e.kind==='shrapnel'&&e.reason==='wall'));
+  assert(!r.events.some(e=>e.type==='bounce'));
+});
+
+test('a mine is thrown backwards, bounces, lands, and the third throw releases the slot',()=>{
+  const s=fixture(25);
+  s.walls=[{x1:65,y1:64,x2:65,y2:128}];
   equip(s,'mine',3);
   let r=step(s,{A:action(true)});
-  assert.equal(r.state.tanks[0].weaponAmmo,2);
-  assert.equal(r.state.mines[0].armedAt,21);
-  Object.assign(r.state.tanks[1],{x:r.state.mines[0].x-10,y:r.state.mines[0].y});
-  r=doN(r.state,19);
-  assert.equal(r.state.mines[0].triggeredAt,null);
-  r=step(r.state,{});
-  assert.equal(r.events[0].type,'mine-trigger');
-  assert.equal(r.state.mines[0].detonateAt,29);
-  r=doN(r.state,7);
-  assert.equal(r.state.mines.length,1);
-  r=step(r.state,{});
-  assert.equal(r.events.filter(e=>e.type==='shot'&&e.sourceId==='m1').length,40);
-  assert.equal(r.state.mines.length,0);
+  assert.equal(r.events.find(e=>e.type==='mine-placed').x,70);
+  assert.ok(r.state.mines[0].vx>0&&r.state.mines[0].x>65);
+  for(let n=0;n<2;n++) r=step(step(r.state,{}).state,{A:action(true)});
+  assert.equal(r.state.tanks[0].weapon,null);
+  assert.equal(r.state.mines.length,3);
+  r=doN(r.state,10);
+  assert.ok(r.state.mines.every(m=>m.vx===0&&m.vy===0));
+});
+
+test('hidden mine activates on contact (including owner), waits for everyone to leave, then cannot reset',()=>{
+  for(const hz of [25,30,60]) {
+    const s=fixture(hz);
+    const observer=gameForRate(hz);
+    equip(s,'mine',3);
+    let r=step(s,{A:action(true)});
+    const ready=r.state.mines[0].armedAt;
+    assert.equal(ready,1+hz*0.8);
+    r=doN(r.state,Math.ceil(hz*1.22));
+    const [mine]=r.state.mines;
+    assert.equal(mine.visibility,0);
+    assert.equal(observer.observe(r.state,'A').mines.length,0);
+    Object.assign(r.state.tanks[0],{x:mine.x-13,y:mine.y});
+    Object.assign(r.state.tanks[1],{x:mine.x+13,y:mine.y});
+    r=step(r.state,{});
+    assert.equal(r.events.find(e=>e.type==='mine-activated').tankId,'A');
+    assert.equal(r.state.mines[0].detonateAt,null);
+    Object.assign(r.state.tanks[0],{x:mine.x-45,y:mine.y});
+    r=doN(r.state,Math.ceil(hz*0.3));
+    assert.equal(r.state.mines[0].detonateAt,null);
+    Object.assign(r.state.tanks[1],{x:mine.x+45,y:mine.y});
+    r=step(r.state,{});
+    const fuse=r.events.find(e=>e.type==='mine-trigger').detonateAt;
+    assert.ok(Math.abs(fuse-r.state.tick-hz*0.2)<1e-9);
+    Object.assign(r.state.tanks[1],{x:mine.x+13,y:mine.y});
+    while(r.state.tick+1<Math.ceil(fuse-1e-7)) {
+      r=step(r.state,{});
+      assert.equal(r.state.mines[0].detonateAt,fuse);
+    }
+    r=step(r.state,{});
+    assert.equal(r.events.filter(e=>e.type==='shot'&&e.sourceId==='m1').length,40);
+    assert.equal(r.state.mines.length,0);
+  }
 });
 
 test('homing starts after 1.2 seconds and ignores the shooter; remote turns independently',()=>{

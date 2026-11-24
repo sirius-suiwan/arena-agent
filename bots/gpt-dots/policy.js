@@ -172,7 +172,7 @@ function hazardTrack(me,projectiles,walls,physics,arc) {
   for (const b of selected) {
     const horizon=physics.ticks(HORIZON), life=Math.min(horizon,b.ttl??horizon);
     if(!Number.isFinite(b.vx+b.vy)||life<=0) continue;
-    const radius=b.kind==='laser'?0:3;
+    const radius=b.kind==='laser'||b.kind==='shrapnel'?0:3;
     const path=b.kind==='laser'&&arc?laserSegments(b.x,b.y,b.heading??Math.atan2(b.vy,b.vx),Boolean(b.curved),life,arc)
       :segments(b.x,b.y,b.vx,b.vy,life,walls,radius,b.kind==='shrapnel'?0:3);
     let t=0;
@@ -375,7 +375,7 @@ function safeShellRelease(me,action,walls,others,physics,speed) {
 // far enough away to have time to react, not merely behind the warhead.
 function coveredFromFrag(bomb,me,walls,physics,profile) {
   const radius=profile.fragmentRadius??3;
-  const flight=profile.fragmentSpeed??300/profile.tickRate;
+  const flight=(profile.fragmentBaseSpeed??128/profile.tickRate)+(profile.fragmentSpreadSpeed??144/profile.tickRate);
   const exposure=R+radius+flight*physics.ticks(23);
   const dx=me.x-bomb.x,dy=me.y-bomb.y,distance=Math.hypot(dx,dy);
   if(distance>=exposure) return true;
@@ -442,7 +442,7 @@ function safety(me,action,walls,bullets,mines,enemies,roundTick,physics) {
     }
     x+=dx;y+=dy;
     for(const m of mines) {
-      if((m.armedAt??0)>roundTick+i||(m.owner===me.id&&!m.ownerCleared)) continue;
+      if((m.armedAt??0)>roundTick+i) continue;
       const gap=(m.x-x)**2+(m.y-y)**2;
       if(gap<28**2) risk+=(gap<18**2?75:0)+(28-Math.sqrt(gap))*0.5;
     }

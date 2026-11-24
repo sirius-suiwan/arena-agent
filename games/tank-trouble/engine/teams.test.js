@@ -95,14 +95,14 @@ test('enemy beams can hit through teammates and allied tanks cannot trigger / be
   const beam=roundGame.step(deathray,{A:fire});
   assert.equal(tank(beam.state,'B').alive,true);
   assert.equal(tank(beam.state,'D').alive,false);
-  const setupMine=(config={},positions)=>({...setup(config,positions),mines:[{id:'mine',owner:'A',x:105,y:80,armedAt:1,ownerCleared:true,triggeredAt:null,detonateAt:null}]});
+  const setupMine=(config={},positions)=>({...setup(config,positions),mines:[{id:'mine',owner:'A',x:105,y:80,armedAt:1,activatedAt:null,triggeredAt:null,detonateAt:null,visibility:1}]});
   const off=roundGame.step(setupMine(),{});
   assert.equal(off.state.mines.length,1);
-  assert(!off.events.some(e=>e.type==='mine-trigger'));
+  assert(!off.events.some(e=>e.type==='mine-activated'));
   const on=roundGame.step(setupMine({friendlyFire:true}),{});
-  assert(on.events.some(e=>e.type==='mine-trigger'));
+  assert(on.events.some(e=>e.type==='mine-activated'));
   const foe=roundGame.step(setupMine({},[60,90,120]),{});
-  assert(foe.events.some(e=>e.type==='mine-trigger'));
+  assert(foe.events.some(e=>e.type==='mine-activated'));
 });
 
 test('surviving teammates become invulnerable simultaneously and win after standard settlement',()=>{

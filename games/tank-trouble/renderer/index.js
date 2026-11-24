@@ -249,6 +249,17 @@ function drawLaserTrail(ctx, path, tint, outline = tint.outline) {
 
 function drawEffects(ctx, state, effects, mode) {
   for (const { event, age } of effects) {
+    if (event.type==='shell-expired'&&event.kind==='shrapnel'&&event.reason==='wall') {
+      const lifetime=60*(state.profile?.fragmentFadeSeconds??0.8);
+      if(age<lifetime&&pointIsValid(event)) {
+        ctx.save();
+        ctx.globalAlpha=1-age/lifetime;
+        ctx.fillStyle=teamForOwner(state,mode,event.ownerId).outline;
+        ctx.beginPath(); ctx.arc(event.x,event.y,1.7,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+      }
+      continue;
+    }
     if (event.type === 'laser-path') {
       if (age === 0 && !state.bullets.some(bullet => bullet.id === event.bulletId)) {
         drawLaserTrail(ctx, event.path, teamForOwner(state, mode, event.ownerId));
@@ -372,11 +383,12 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
 
   for (const pickup of state.pickups) if (pointIsValid(pickup)) drawCrate(ctx, pickup, crateScale);
   for (const mine of Array.isArray(state.mines) ? state.mines : []) {
-    if (!pointIsValid(mine)) continue;
+    if (!pointIsValid(mine) || mine.visibility===0) continue;
     const color = teamForOwner(state, mode, mine.owner);
     const triggered = Number.isFinite(mine.detonateAt);
-    const armed = (state.roundTick ?? state.tick) >= mine.armedAt;
+    const armed = mine.activatedAt != null;
     ctx.save();
+    ctx.globalAlpha=mine.visibility??1;
     ctx.translate(mine.x, mine.y);
     mineGlyph(ctx, color.hull, color.outline, triggered ? '#f5ad4b' : armed ? '#f9e4a7' : color.turret, triggered);
     ctx.restore();
@@ -495,7 +507,7 @@ const eventLabels = {
   'wall-stop': '撞墙', 'tank-stop': '坦克碰撞', destroyed: '击毁', ended: '对局结束',
   timeout: '动作超时', 'weapon-fired': '使用武器', 'frag-burst': '破片炸开',
   'weapon-charge': '武器蓄力', 'last-tank-pending': '等待炮火结算', 'mine-placed': '埋设地雷', 'mine-burst': '地雷爆炸', 'round-start': '开局',
-  'round-end': '本局结束', 'death-ray-beam': '死光光束', 'laser-path': '激光轨迹', 'mine-trigger': '地雷触发', 'zone-eliminated': '安全区外淘汰',
+  'round-end': '本局结束', 'death-ray-beam': '死光光束', 'laser-path': '激光轨迹', 'mine-activated': '地雷激活', 'mine-trigger': '地雷开始倒计时', 'zone-eliminated': '安全区外淘汰',
 };
 
 export function formatTankEvent(event, displayPlayer = (id) => id) {
