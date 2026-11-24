@@ -9,3 +9,4 @@
 - 运行 `npm test`。新增玩法应含单元测试；修改接入链路要校验真实子进程和回放；界面改动尽量检查实时和本地回放。
 
 - 新增游戏必须自带 `games/<game-id>/RULES.md`，且足以让另一个 Agent 不读源码就能写 bot。通用接入及复盘说明维护在 `bots/README.md`。
+- 参赛 bot 的开发、隔离和复测规范见 [bots/AGENTS.md](bots/AGENTS.md)。
