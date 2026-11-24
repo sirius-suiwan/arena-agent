@@ -103,6 +103,23 @@ const weaponInks = {
   missile: '#34668c', remote: '#796239',
 };
 
+// Low, wide silhouette reads as a mine even at HUD size. The placed
+// version uses the same shape without the pickup badge and colors by owner.
+function mineGlyph(ctx, paint, outline, lamp, triggered = false) {
+  ctx.lineJoin = 'round';
+  if (triggered) {
+    ctx.beginPath(); ctx.arc(0, 0, 8.1, 0, Math.PI * 2);
+    ctx.lineWidth = 1.2; ctx.strokeStyle = '#a84a25'; ctx.stroke();
+  }
+  roundedGlyph(ctx, -5.8, -0.5, 11.6, 4.5, 1.6, paint, outline, 1.05);
+  ctx.beginPath(); ctx.ellipse(0, -1, 4.8, 2.65, 0, 0, Math.PI * 2);
+  ctx.fillStyle = paint; ctx.fill();
+  ctx.lineWidth = 1.05; ctx.strokeStyle = outline; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, -1.35, 1.3, 0, Math.PI * 2);
+  ctx.fillStyle = lamp; ctx.fill();
+  ctx.lineWidth = 0.85; ctx.stroke();
+}
+
 function weaponGlyph(ctx, kind) {
   const color = Object.hasOwn(weaponInks, kind) ? weaponInks[kind] : '#555d71';
   roundedGlyph(ctx, -7.2, -7.2, 14.4, 14.4, 2.3, '#f8f7f4', color, 1.05);
@@ -125,8 +142,7 @@ function weaponGlyph(ctx, kind) {
     }
     ctx.stroke();
   } else if (kind === 'mine') {
-    ctx.ellipse(0, 2, 4.5, 2.2, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -3.7); ctx.stroke();
+    mineGlyph(ctx, '#ded7ee', color, '#f5d489');
   } else if (kind === 'frag') {
     for (let i = 0; i < 6; i++) {
       const a = i * Math.PI / 3;
@@ -357,14 +373,13 @@ export function drawTankFrame(canvas, state, { mode, teams = state.teams ?? {}, 
   for (const pickup of state.pickups) if (pointIsValid(pickup)) drawCrate(ctx, pickup, crateScale);
   for (const mine of Array.isArray(state.mines) ? state.mines : []) {
     if (!pointIsValid(mine)) continue;
-    ctx.beginPath();
-    ctx.ellipse(mine.x, mine.y, 6.5, 4.5, 0, 0, Math.PI * 2);
     const color = teamForOwner(state, mode, mine.owner);
-    ctx.fillStyle = color.hull; ctx.fill();
-    ctx.strokeStyle = color.outline; ctx.lineWidth = 1.2; ctx.stroke();
-    ctx.fillStyle = Number.isFinite(mine.detonateAt) ? '#f5ad4b'
-      : (state.roundTick ?? state.tick) >= mine.armedAt ? color.outline : color.turret;
-    ctx.fillRect(mine.x - 1.5, mine.y - 1.5, 3, 3);
+    const triggered = Number.isFinite(mine.detonateAt);
+    const armed = (state.roundTick ?? state.tick) >= mine.armedAt;
+    ctx.save();
+    ctx.translate(mine.x, mine.y);
+    mineGlyph(ctx, color.hull, color.outline, triggered ? '#f5ad4b' : armed ? '#f9e4a7' : color.turret, triggered);
+    ctx.restore();
   }
   for (const [index, tank] of state.tanks.entries()) {
     if (!pointIsValid(tank) || tank.alive === false) continue;
