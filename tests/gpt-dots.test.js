@@ -209,3 +209,27 @@ test('GPT-dots waits before exposing its own hull to an airburst',()=>{
   const behindWall={...state,walls:[{x1:64,y1:64,x2:64,y2:128}]};
   assert.equal(makePolicy()(behindWall).fire,true);
 });
+
+test('GPT-dots leads a continuously crossing target without stopping its drive',()=>{
+  const rate=gameForRate(60);
+  let s=rate.init({seed:53,players:['A','B'],config:{cols:4,rows:4}});
+  s.walls=[];
+  Object.assign(s.tanks[0],{x:60,y:100,angle:-0.2});
+  Object.assign(s.tanks[1],{x:90,y:35,angle:Math.PI/2});
+  const enemy={throttle:1,turn:0,fire:false};
+  const choose=makePolicy(),bare=makePolicy();
+  for(let i=0;i<17;i++){
+    choose(rate.observe(s,'A'));
+    s=rate.step(s,{B:enemy}).state;
+  }
+  const seen=rate.observe(s,'A');
+  assert.equal(bare(seen).fire,false); // no opponent motion inferred from one snapshot
+  const action=choose(seen);
+  assert.deepEqual(action,{throttle:1,turn:1,fire:true});
+  const impacts=[];
+  for(let i=0;i<10;i++){
+    const n=rate.step(s,{B:enemy,...(i===0?{A:action}:{})});
+    s=n.state;impacts.push(...n.events);
+  }
+  assert.ok(impacts.some(e=>e.type==='hit'&&e.ownerId==='A'&&e.tankId==='B'));
+});

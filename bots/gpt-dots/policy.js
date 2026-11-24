@@ -501,6 +501,50 @@ function closeAttack(me,preferred,enemies,walls,obstacles,physics,speed,pursuing
   return null;
 }
 
+// Add a direct firing window against a reliably moving tank. This predicts
+// only from visible pose deltas, never from submitted opponent actions.
+function interceptAdvance(me,route,targets,motion,walls,obstacles,others,physics,speed,allowShot) {
+  const horizon=physics.ticks(25);
+  const crossing=targets.slice(0,3).flatMap(t=>{
+    const v=motion.get(t.id);
+    if(!v||v.steady<physics.ticks(4)||d2(me,t)>110**2||d2(me,t)<24**2) return [];
+    const wall=sweptWall(t.x,t.y,v.dx,v.dy,horizon,nearWalls(t,walls,horizon*physics.f+R),R);
+    const life=wall.found?wall.time:horizon;
+    return life>0?[{t,v,life}]:[];
+  });
+  if(!crossing.length) return null;
+  const nearby=nearWalls(me,walls,horizon*speed+physics.f+4);
+  const turns=[route.turn,...TURN_OPTIONS.filter(t=>t!==route.turn)];
+  for(const turn of turns) {
+    const move={...route,turn};
+    const pose=predictEscapeStep({x:me.x,y:me.y,a:me.angle},move,[],obstacles,others,physics);
+    if(move.throttle&&d2(me,pose)<EPS) continue;
+    const vx=Math.cos(pose.a)*speed,vy=Math.sin(pose.a)*speed;
+    const wall=sweptWall(pose.x,pose.y,vx,vy,horizon,nearby,3);
+    for(const {t,v,life} of crossing) {
+      // A smaller aim radius is deliberate: a marginal intercept isn't
+      // worth spending ammo on extrapolation of the enemy's next move.
+      const seg={x:pose.x,y:pose.y,t:Math.min(life,wall.time),vx:vx-v.dx,vy:vy-v.dy};
+      if(seg.vx**2+seg.vy**2>EPS&&tankIntersection(seg,t,R-3)<seg.t&&allowShot(move)) {
+        return {...move,fire:true};
+      }
+    }
+  }
+  return null;
+}
+
+function observeMotion(previous,tanks,tick,physics) {
+  const current=new Map();
+  for(const t of tanks) {
+    const prev=previous.get(t.id);
+    const dx=t.x-(prev?.x??t.x),dy=t.y-(prev?.y??t.y);
+    const moving=prev?.tick===tick-1&&dx*dx+dy*dy>(physics.b*0.55)**2;
+    const smooth=moving&&((dx-prev.dx)**2+(dy-prev.dy)**2)<(physics.b*0.42)**2;
+    current.set(t.id,{x:t.x,y:t.y,dx,dy,tick,steady:smooth?prev.steady+1:Number(moving)});
+  }
+  return current;
+}
+
 function zoneAt(zone,tick) {
   const f=clamp((tick-zone.startTick)/Math.max(1,zone.endTick-zone.startTick),0,1);
   return {
@@ -535,7 +579,7 @@ function zoneNavigation(zone,me,map,costs,tick,physics) {
 export function makePolicy() {
   let map=null,round=null,oldPose=null,stuck=0,escape=null,waypoint=null,cornerCell=-1,steer=1;
   let lockAim=null,aimStarted=null,navUntil=0;
-  let routeCache=null,routeCell=-1,arc=null;
+  let routeCache=null,routeCell=-1,arc=null,motion=new Map();
   return obs=>{
     if (!Array.isArray(obs?.tanks)||!Array.isArray(obs.walls)||!Array.isArray(obs.bullets)||!validProfile(obs.profile)) return neutral();
     const me=obs.tanks.find(t=>t.id===obs.playerId&&t.alive);
@@ -543,11 +587,12 @@ export function makePolicy() {
     if(!map||round!==(obs.round??1)) {
       map=newMap(obs);round=obs.round??1;oldPose=null;stuck=0;escape=null;waypoint=null;cornerCell=-1;steer=1;
       lockAim=null;aimStarted=null;navUntil=0;
-      routeCache=null;routeCell=-1;arc=laserProfile(obs,map.walls);
+      routeCache=null;routeCell=-1;arc=laserProfile(obs,map.walls);motion=new Map();
     }
     const tick=obs.roundTick??obs.tick??0;
     const profile=obs.profile, physics=kinetics(profile);
     const enemies=obs.tanks.filter(t=>t.alive&&t.id!==me.id).sort((a,b)=>d2(me,a)-d2(me,b));
+    motion=observeMotion(motion,enemies,tick,physics);
     const nearbyEnemies=enemies.filter(t=>d2(me,t)<500**2).slice(0,4);
     const obstacles=nearWalls(me,map.walls,60);
     const ammo=obs.bullets.reduce((n,b)=>n+Number(b.owner===me.id&&b.kind==='shell'),0);
@@ -668,7 +713,9 @@ export function makePolicy() {
     }
     if(!preferred.fire&&!weapon&&armed&&!me.fireHeld&&!escape&&!zonePressure&&nearbyEnemies.length) {
       const window=closeAttack(me,preferred,nearbyEnemies,map.walls,obstacles,physics,profile.shellSpeed,Boolean(supply),allowShot);
-      if(window) {preferred=window;navigating=Boolean(window.throttle)&&hasRoute;}
+      const intercept=window??interceptAdvance(me,route,nearbyEnemies,motion,map.walls,obstacles,nearbyEnemies,
+        physics,profile.shellSpeed,allowShot);
+      if(intercept) {preferred=intercept;navigating=Boolean(intercept.throttle)&&hasRoute;}
     }
     const mineThreat=(obs.mines??[]).filter(m=>d2(me,m)<65**2);
     const projectiles=hazardTrack(me,obs.bullets,map.walls,physics,arc);
